@@ -1,0 +1,54 @@
+# 编辑器配置
+# 确保跨编辑器和IDE的一致性
+
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+max_line_length = 88
+
+[*.py]
+indent_size = 4
+line_length = 88
+
+[*.{js,ts,jsx,tsx}]
+indent_size = 2
+line_length = 100
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = 0  # 不限制Markdown行长度
+
+[*.{sh,bash}]
+indent_size = 2
+shell = bash
+
+[*.sql]
+indent_size = 2
+keyword_case = upper
+identifier_case = lower
+
+[*.toml]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[.gitignore]
+trim_trailing_whitespace = false
+
+[LICENSE]
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+# 测试文件可能有特殊格式要求
+[*/tests/*.py]
+max_line_length = 100

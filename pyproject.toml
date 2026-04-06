@@ -1,0 +1,130 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geoai-system"
+version = "0.1.0"
+description = "GeoAI空间规划智能检索与可视化系统"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "GIS Development Team", email = "team@example.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Text Processing :: General",
+]
+keywords = ["gis", "rag", "llm", "postgis", "spatial-analysis"]
+requires-python = ">=3.12"
+dependencies = [
+    "geopandas>=1.1.0",
+    "psycopg2-binary>=2.9.0",
+    "pgvector>=0.2.0",
+    "zhipuai>=2.0.0",
+    "langchain-text-splitters>=0.0.1",
+    "pymysql>=1.1.0",
+    "selenium>=4.10.0",
+    "requests>=2.28.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "openlayers>=0.1.0",  # 前端依赖，实际可能需要其他方式
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "jupyter>=1.0.0",
+    "ipython>=8.0.0",
+]
+gui = [
+    "ttkbootstrap>=1.10.0",
+    "pyautogui>=0.9.0",
+]
+docs = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/geoai-system"
+Repository = "https://github.com/yourusername/geoai-system.git"
+Documentation = "https://yourusername.github.io/geoai-system/"
+Issues = "https://github.com/yourusername/geoai-system/issues"
+
+[project.scripts]
+build-vector-db = "scripts.build_vector_db:main"
+import-spatial-data = "scripts.import_spatial_data:main"
+run-gui = "scripts.run_gui:main"
+fix-db-schema = "scripts.fix_db_schema:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.conf", "*.json"]
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
