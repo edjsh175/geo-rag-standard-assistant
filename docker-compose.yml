@@ -1,0 +1,123 @@
+version: '3.8'
+
+services:
+  # PostgreSQL + PostGIS + pgvector 三合一数据库
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: geoai-postgis
+    environment:
+      POSTGRES_DB: geoai_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./docker/init-scripts:/docker-entrypoint-initdb.d  # 初始化脚本
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # GeoServer 地图服务（可选）
+  geoserver:
+    image: geoserver/geoserver:2.24.0
+    container_name: geoai-geoserver
+    environment:
+      GEOSERVER_ADMIN_USER: admin
+      GEOSERVER_ADMIN_PASSWORD: geoserver
+    ports:
+      - "8080:8080"
+    volumes:
+      - geoserver_data:/opt/geoserver/data_dir
+      - ./docker/geoserver/styles:/styles  # 自定义样式
+    depends_on:
+      postgis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # MySQL 元数据数据库
+  mysql:
+    image: mysql:8.0
+    container_name: geoai-mysql
+    environment:
+      MYSQL_DATABASE: disaster_knowledge
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI 后端服务
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: backend
+    container_name: geoai-backend
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgis:5432/geoai_db
+      - MYSQL_URL=mysql://root:root@mysql:3306/disaster_knowledge
+      - GEOSERVER_URL=http://geoserver:8080/geoserver
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data  # 挂载数据目录
+      - ./logs:/app/logs  # 挂载日志目录
+    depends_on:
+      postgis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    command: >
+      sh -c "python scripts/build_vector_db.py --init &&
+             uvicorn src.geoai.api.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # Nginx 前端代理（未来Vue前端）
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: frontend
+    container_name: geoai-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Redis 缓存（可选）
+  redis:
+    image: redis:7-alpine
+    container_name: geoai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+volumes:
+  postgis_data:
+    driver: local
+  mysql_data:
+    driver: local
+  geoserver_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: geoai-network

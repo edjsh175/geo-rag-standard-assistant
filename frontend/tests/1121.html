@@ -1,0 +1,1345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <!-- 2. 引入博客同款shpjs（3.6.3，无解析bug） -->
+  <script src='https://unpkg.com/shpjs@latest/dist/shp.js'> </script>
+
+  <!-- 3. 最后引入Cesium -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.135/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.135/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="index.js"></script>
+  <script src="cesium-wind.js"></script>
+
+<body>
+  <div id="cesiumContainer"></div>
+  <!-- 主控制面板 -->
+  <div id="mainControls" style="position:absolute;top:20px;right:20px;z-index:999;">
+    <!-- 地图控制按钮组 -->
+    <div class="control-group">
+      <button id="zoomIn" class="control-btn">放大</button>
+      <button id="zoomOut" class="control-btn">缩小</button>
+      <button id="resetView" class="control-btn">复位</button>
+    </div>
+    
+    <!-- 视角切换 -->
+    <div class="control-group">
+      <select id="viewSwitcher" class="control-select">
+        <option value="china">中国区域</option>
+        <option value="beijing">北京视角</option>
+        <option value="shanghai">上海视角</option>
+        <option value="global">全球视角</option>
+      </select>
+    </div>
+    
+    <!-- 多边形绘制控制 -->
+    <div class="control-group">
+      <div id="operation" class="control-label">按下“z”开始绘制多边形</div>
+      <button id="drawPolygonBtn" class="control-btn control-btn-primary">绘制多边形</button>
+      <button id="deletepolygon" class="control-btn control-btn-danger">清除多边形</button>
+      <button id="queryInPolygon" class="control-btn control-btn-primary">多边形内查询</button>
+    </div>
+  </div>
+  
+  <!-- 查询结果显示区 -->
+  <div id="queryResult" class="result-panel">
+  </div>
+  
+  <!-- 测量结果显示区 -->
+  <div id="measureResult" class="result-panel result-panel-bottom">
+  </div>
+  <!-- 可伸缩侧边栏 -->
+  <div id="sidebar" class="sidebar">
+    <!-- 侧边栏头部 -->
+    <div class="sidebar-header">
+      <div class="sidebar-title">功能面板</div>
+      <button id="sidebarToggle" class="sidebar-toggle"></button>
+    </div>
+    
+    <!-- 侧边栏内容 -->
+    <div class="sidebar-content">
+      <!-- 空间分析功能区 -->
+      <div class="sidebar-section">
+        <div class="section-title">空间分析</div>
+        
+        <!-- 距离测量 -->
+        <div class="function-item" id="distanceMeasureBtn">
+          <span class="item-text">距离测量</span>
+          <span class="item-status"></span>
+        </div>
+        
+        <!-- 面积测量 -->
+        <div class="function-item" id="areaMeasureBtn">
+          <span class="item-text">面积测量</span>
+          <span class="item-status"></span>
+        </div>
+        
+        <!-- 清除测量 -->
+        <div class="function-item function-item-clear" id="clearMeasureBtn">
+          <span class="item-text">清除测量</span>
+        </div>
+      </div>
+      
+      <!-- 图层管理功能区 -->
+      <div class="sidebar-section">
+        <div class="section-title">图层管理</div>
+        
+        <!-- JSON数据图层开关 -->
+        <div class="layer-item">
+          <span class="item-text">JSON数据图层</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="jsonLayerToggle" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        
+        <!-- 天地图图层开关 -->
+        <div class="layer-item">
+          <span class="item-text">天地图图层</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="tdtLayerToggle" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        
+        <!-- 风效果图层开关 -->
+        <div class="layer-item">
+          <span class="item-text">风效果图层</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="windLayerToggle">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        
+        <!-- 模型图层开关 -->
+        <div class="layer-item">
+          <span class="item-text">模型图层</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="modelLayerToggle" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        
+        <!-- 实体要素图层开关 -->
+        <div class="layer-item">
+          <span class="item-text">实体要素图层</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="entityLayerToggle" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  
+  
+  
+  
+  <script>
+    // Your access token can be found at: https://ion.cesium.com/tokens.
+    // This is the default access token from your ion account
+
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlOTFlNWMxMi0wNmI4LTQ4Y2UtYWVjNS05ODMzNTBjMzNkY2MiLCJpZCI6MzYyMDc0LCJpYXQiOjE3NjM2MjA5Mzd9.RGlJuqP5RIAlomb9lAzbG2UezOdEiiFqtNt3XXxyJWY';
+    // 创建Cesium Viewer实例
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      baseLayerPicker: false,
+      terrain: Cesium.Terrain.fromWorldTerrain(),
+      // 禁用自带的导航控件（包括缩放、旋转、倾斜等按钮）
+      navigation: false,
+      // 禁用全屏按钮
+      fullscreenButton: false,
+      // 禁用虚拟现实按钮
+      vrButton: false,
+      // 禁用信息框（点击实体时显示的信息面板）
+      infoBox: false,
+      // 禁用场景模式切换按钮（2D/3D/哥伦布视图）
+      sceneModePicker: false,
+      // 禁用时间轴
+      timeline: false,
+      // 禁用动画控件
+      animation: false,
+      // 禁用图层选择器
+      baseLayerPicker: false,
+      // 禁用帮助按钮
+      homeButton: false, // 这是"复位到初始视角"的按钮，若需保留可设为true
+      // 禁用地理编码搜索框
+      geocoder: false,
+      // 关闭导航提示按钮及提示信息
+      navigationHelpButton: false,
+    });
+    window._cesiumViewer = viewer;
+
+    // 添加城市连线到图层管理器
+    const cityLine = addCityLine(viewer);
+    if (window.layerManager) {
+      window.layerManager.addLayer(LAYER_IDS.CITY_LINE, '城市连线图层', cityLine, true);
+    }
+    
+    // 加载中国东部多边形并添加到图层管理器
+    loadEastChinaPolygon(viewer).then(createdEntities => {
+      if (window.layerManager) {
+        createdEntities.forEach((entity, index) => {
+          window.layerManager.addLayer(LAYER_IDS.EAST_CHINA_POLYGON + '_' + index, '中国东部多边形图层', entity, true);
+        });
+      }
+    });
+
+    // 在正在创建viewer时使用baseLayer: new Cesium.ImageryLayer(await Cesium.IonImageryProvider.fromAssetId(x)),
+    // 加载天地图图层并添加到图层管理器
+    const vecLayer = loadTdtLayer(viewer, 'vec_w');
+    const cvaLayer = loadTdtLayer(viewer, 'cva_w');// 天地图注记
+    // 添加到图层管理器
+    if (window.layerManager) {
+      window.layerManager.addLayer(LAYER_IDS.TDT_LAYER + '_vec', '天地图矢量图层', vecLayer, true);
+      window.layerManager.addLayer(LAYER_IDS.TDT_LAYER + '_cva', '天地图注记图层', cvaLayer, true);
+    }
+    // loadArcGISLayer(viewer, "USA")
+
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(105, 30, 7000000),
+      // 可选：补充视角朝向（默认水平向北，可省略）
+      orientation: {
+        heading: Cesium.Math.toRadians(0), // 朝向正北
+        pitch: Cesium.Math.toRadians(-90), // 俯视90°
+        roll: 0
+      }
+    });
+
+    //loadWmsLayer(viewer, 'https://demo.mapserver.org/cgi-bin/wms', "WMS_server");
+    //load3DTilesFromUrl(viewer, 'http://localhost/lidar/tileset.json');
+    //load3DTilesFromUrl(viewer, 'https://data.mars3d.cn/3dtiles/jzw-hefei/tileset.json');
+
+    // 加载飞机模型并添加到图层管理器
+    const planeModel = loadGLTFModel(viewer, 'http://localhost/lidar/Cesium_Air.gltf ');//加载飞机模型
+    if (window.layerManager) {
+      window.layerManager.addLayer(LAYER_IDS.MODEL_LAYER, '飞机模型图层', planeModel, true);
+    }
+
+    // 图片路径（本地图片需通过服务器访问，避免跨域）
+    const imageUrl = 'http://localhost/lidar/2025.png'; // 替换为你的图片路径
+    // 定义图片覆盖的地理范围（经纬度：[西, 南, 东, 北]）
+    const imageRectangle = Cesium.Rectangle.fromDegrees(
+      92.161281, 27.562949,  // 左下角（西经，南纬）
+      98.751974, 30.673588   // 右上角（东经，北纬）
+    );
+    // loadImgByPrimitive(viewer, imageUrl, imageRectangle);
+    //loadImgByProvider(viewer, imageUrl, imageRectangle);
+
+
+
+    //loadGeoJsonDataSource(viewer, 'https://geo.datav.aliyun.com/areas_v3/bound/540400_full.json')
+
+    const shpZipUrl = "http://localhost/lidar/sheng2022.zip";
+    //loadShpZipToCesium(viewer, shpZipUrl);
+
+    // Add Cesium OSM Buildings, a global 3D buildings layer.
+    // const buildingTileset = await Cesium.Cesium3DTileset.fromIonAssetId(96188);
+    //viewer.scene.primitives.add(buildingTileset);   
+
+    const styles = {
+      point: { color: Cesium.Color.BLUE, pixelSize: 6 },
+      polyline: { color: Cesium.Color.BLUE, width: 2 },
+      polygon: {
+        material: Cesium.Color.GREEN.withAlpha(0.2),
+        outline: true,
+        outlineColor: Cesium.Color.GREEN,
+        outlineWidth: 1
+      }
+    };
+    // // 3. 单个 GeoJSON 要素示例（合肥中心点）
+    // const hefeiPointFeature = {
+    //   type: 'Feature',
+    //   geometry: { type: 'Point', coordinates: [117.27, 31.86, 0] },
+    //   properties: { name: '合肥市中心点', adcode: '340100' }
+    // };
+    // // 4. 调用函数渲染
+    // addSingleFeature(viewer, hefeiPointFeature, 0, styles);
+
+    // 数据配置（多场景1）
+    const Options = {
+      viewer: viewer,
+      customColorRules: 'random', // 直接使用内置随机颜色规则
+      styleBase: {
+        polygon: { outlineWidth: 3 },
+        polyline: { width: 5 }
+      }
+    };
+    
+    // 使用新的GeoJson加载函数，支持空间查询
+    loadGeoJsonWithQuerySupport(viewer, 'https://geo.datav.aliyun.com/areas_v3/bound/540400_full.json', Options)
+      .then(result => {
+        console.log('GeoJson加载完成，共加载', result.features.length, '个要素');
+        // 将GeoJSON图层添加到图层管理器
+        if (window.layerManager && result.layers) {
+          result.layers.forEach((layer, index) => {
+            window.layerManager.addLayer(LAYER_IDS.JSON_LAYER + '_' + index, 'GeoJSON数据图层', layer, true);
+          });
+        }
+      })
+      .catch(error => {
+        console.error('GeoJson加载失败:', error);
+      });
+
+    // 多边形绘制初始化代码
+    window.polygonDraw = initPolygonDraw(viewer, {
+      coordDisplayId: 'coordDisplay'
+    });
+
+    // 风场数据加载
+    const windDataUrl = 'http://localhost/lidar/wind.json'; //
+    // 加载风图层并添加到图层管理器
+    window.loadWind = loadWind(viewer, windDataUrl);
+    // 注意：loadWind是异步函数，需要在函数内部处理图层添加
+
+    // 地图控制控件初始化
+    initMapControls(viewer);
+
+    // 调用已有函数添加城市地标
+    addCityLandmarksWithExistingFunction(viewer);
+    
+    // 添加绘制多边形按钮事件处理
+    document.getElementById('drawPolygonBtn').addEventListener('click', function() {
+      // 模拟Z键按下事件，触发绘制功能
+      const zKeyEvent = new KeyboardEvent('keydown', {
+        key: 'z',
+        code: 'KeyZ',
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        bubbles: true,
+        cancelable: true
+      });
+      document.dispatchEvent(zKeyEvent);
+    });
+    
+    // 添加清除多边形按钮事件处理
+    document.getElementById('deletepolygon').addEventListener('click', function() {
+      deletepolygon();
+    });
+    
+    // 添加多边形内查询按钮事件处理
+    document.getElementById('queryInPolygon').addEventListener('click', function() {
+      queryEntitiesInPolygon();
+    });
+    
+    // 侧边栏功能实现
+    (function() {
+      // 获取DOM元素
+      const sidebar = document.getElementById('sidebar');
+      const sidebarToggle = document.getElementById('sidebarToggle');
+      
+      // 侧边栏伸缩功能
+      sidebarToggle.addEventListener('click', function() {
+        sidebar.classList.toggle('collapsed');
+      });
+      
+      // 测量功能实现
+      let measureMode = null; // 'distance', 'area', or null
+      let measurePoints = [];
+      let measureEntities = [];
+      let measureHandler = null;
+      
+      // 距离测量按钮点击事件
+      document.getElementById('distanceMeasureBtn').addEventListener('click', function() {
+        toggleMeasureMode('distance');
+      });
+      
+      // 面积测量按钮点击事件
+      document.getElementById('areaMeasureBtn').addEventListener('click', function() {
+        toggleMeasureMode('area');
+      });
+      
+      // 清除测量按钮点击事件
+      document.getElementById('clearMeasureBtn').addEventListener('click', function() {
+        clearMeasurement();
+      });
+      
+      // 切换测量模式
+      function toggleMeasureMode(mode) {
+        // 如果当前已经是该模式，则退出
+        if (measureMode === mode) {
+          clearMeasurement();
+          return;
+        }
+        
+        // 清除之前的测量
+        clearMeasurement();
+        
+        // 设置当前模式
+        measureMode = mode;
+        
+        // 更新UI
+        updateMeasureUI();
+        
+        // 初始化测量
+        initMeasurement();
+      }
+      
+      // 更新测量UI
+      function updateMeasureUI() {
+        // 重置所有按钮状态
+        document.getElementById('distanceMeasureBtn').classList.remove('active');
+        document.getElementById('areaMeasureBtn').classList.remove('active');
+        
+        // 设置当前模式按钮为激活状态
+        if (measureMode === 'distance') {
+          document.getElementById('distanceMeasureBtn').classList.add('active');
+        } else if (measureMode === 'area') {
+          document.getElementById('areaMeasureBtn').classList.add('active');
+        }
+      }
+      
+      // 初始化测量
+      function initMeasurement() {
+        // 创建屏幕空间事件处理器
+        measureHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        
+        // 设置鼠标点击事件
+        measureHandler.setInputAction(function(click) {
+          // 获取点击位置的地理坐标
+          const cartesian = viewer.scene.pickPosition(click.position);
+          if (!cartesian) return;
+          
+          // 添加测量点
+          addMeasurePoint(cartesian);
+          
+          // 更新测量结果
+          updateMeasurement();
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+        
+        // 设置鼠标移动事件（用于绘制临时线/面）
+        measureHandler.setInputAction(function(movement) {
+          if (measurePoints.length === 0) return;
+          
+          // 获取鼠标位置的地理坐标
+          const cartesian = viewer.scene.pickPosition(movement.endPosition);
+          if (!cartesian) return;
+          
+          // 更新临时测量结果
+          updateTempMeasurement(cartesian);
+        }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+      }
+      
+      // 添加测量点
+      function addMeasurePoint(cartesian) {
+        // 添加点到数组
+        measurePoints.push(cartesian);
+        
+        // 创建点实体
+        const pointEntity = viewer.entities.add({
+          position: cartesian,
+          point: {
+            pixelSize: 8,
+            color: Cesium.Color.RED,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2
+          }
+        });
+        
+        // 添加到测量实体数组
+        measureEntities.push(pointEntity);
+      }
+      
+      // 更新临时测量结果
+      function updateTempMeasurement(cartesian) {
+        // 清除之前的临时实体
+        if (measureEntities.length > measurePoints.length) {
+          viewer.entities.remove(measureEntities[measureEntities.length - 1]);
+          measureEntities.pop();
+        }
+        
+        // 创建临时点数组
+        const tempPoints = [...measurePoints, cartesian];
+        
+        // 根据测量模式创建临时线或面
+        if (measureMode === 'distance') {
+          // 创建临时线
+          const polylineEntity = viewer.entities.add({
+            polyline: {
+              positions: tempPoints,
+              width: 2,
+              material: Cesium.Color.YELLOW
+            }
+          });
+          measureEntities.push(polylineEntity);
+          
+          // 计算临时距离
+          const distance = calculateDistance(tempPoints);
+          updateMeasureResult(distance, tempPoints.length - 1);
+        } else if (measureMode === 'area') {
+          // 创建临时面
+          const polygonEntity = viewer.entities.add({
+            polygon: {
+              hierarchy: new Cesium.PolygonHierarchy(tempPoints),
+              material: Cesium.Color.YELLOW.withAlpha(0.2),
+              outline: true,
+              outlineColor: Cesium.Color.YELLOW,
+              outlineWidth: 2
+            }
+          });
+          measureEntities.push(polygonEntity);
+          
+          // 计算临时面积
+          const area = calculateArea(tempPoints);
+          updateMeasureResult(area, tempPoints.length - 1);
+        }
+      }
+      
+      // 更新测量结果
+      function updateMeasurement() {
+        // 清除之前的非点实体
+        while (measureEntities.length > measurePoints.length) {
+          viewer.entities.remove(measureEntities[measurePoints.length]);
+          measureEntities.splice(measurePoints.length, 1);
+        }
+        
+        // 如果点数量不足，不绘制
+        if (measurePoints.length < 2) {
+          return;
+        }
+        
+        // 根据测量模式创建线或面
+        if (measureMode === 'distance') {
+          // 创建线
+          const polylineEntity = viewer.entities.add({
+            polyline: {
+              positions: measurePoints,
+              width: 2,
+              material: Cesium.Color.YELLOW
+            }
+          });
+          measureEntities.push(polylineEntity);
+          
+          // 计算距离
+          const distance = calculateDistance(measurePoints);
+          updateMeasureResult(distance, measurePoints.length - 1);
+        } else if (measureMode === 'area' && measurePoints.length >= 3) {
+          // 创建面
+          const polygonEntity = viewer.entities.add({
+            polygon: {
+              hierarchy: new Cesium.PolygonHierarchy(measurePoints),
+              material: Cesium.Color.YELLOW.withAlpha(0.2),
+              outline: true,
+              outlineColor: Cesium.Color.YELLOW,
+              outlineWidth: 2
+            }
+          });
+          measureEntities.push(polygonEntity);
+          
+          // 计算面积
+          const area = calculateArea(measurePoints);
+          updateMeasureResult(area, measurePoints.length - 1);
+        }
+      }
+      
+      // 计算距离
+      function calculateDistance(points) {
+        let totalDistance = 0;
+        const distances = [];
+        
+        for (let i = 0; i < points.length - 1; i++) {
+          const distance = Cesium.Cartesian3.distance(points[i], points[i + 1]);
+          distances.push(distance);
+          totalDistance += distance;
+        }
+        
+        return {
+          total: totalDistance,
+          segments: distances
+        };
+      }
+      
+      // 计算面积
+      function calculateArea(points) {
+        if (points.length < 3) return 0;
+        
+        // 使用多边形面积计算算法
+        let area = 0;
+        
+        // 将Cartesian3转换为经纬度
+        const positions = points.map(point => {
+          const cartographic = Cesium.Cartographic.fromCartesian(point);
+          return {
+            lon: Cesium.Math.toDegrees(cartographic.longitude),
+            lat: Cesium.Math.toDegrees(cartographic.latitude),
+            alt: cartographic.height
+          };
+        });
+        
+        // 计算多边形面积（使用球面多边形面积算法）
+        const R = 6371000; // 地球半径，单位米
+        
+        for (let i = 0; i < positions.length; i++) {
+          const j = (i + 1) % positions.length;
+          const lon1 = Cesium.Math.toRadians(positions[i].lon);
+          const lon2 = Cesium.Math.toRadians(positions[j].lon);
+          const lat1 = Cesium.Math.toRadians(positions[i].lat);
+          const lat2 = Cesium.Math.toRadians(positions[j].lat);
+          
+          const dlon = lon2 - lon1;
+          const dlat = lat2 - lat1;
+          
+          const a = Math.sin(dlat/2) * Math.sin(dlat/2) +
+                  Math.cos(lat1) * Math.cos(lat2) *
+                  Math.sin(dlon/2) * Math.sin(dlon/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          const d = R * c;
+          
+          // 累加面积
+          area += (lon2 - lon1) * Math.sin((lat1 + lat2) / 2);
+        }
+        
+        area = Math.abs(area) * R * R;
+        
+        return {
+          total: area,
+          segments: []
+        };
+      }
+      
+      // 更新测量结果显示
+      function updateMeasureResult(measureData, segmentCount) {
+        const resultEl = document.getElementById('measureResult');
+        let html = '';
+        
+        if (measureMode === 'distance') {
+          // 距离测量结果
+          html += '<div>距离测量结果：</div>';
+          
+          // 显示各段距离
+          measureData.segments.forEach((segment, index) => {
+            html += `<div>第 ${index + 1} 段：${formatDistance(segment)}</div>`;
+          });
+          
+          // 显示总距离
+          html += `<div class="total-distance">总距离：${formatDistance(measureData.total)}</div>`;
+        } else if (measureMode === 'area') {
+          // 面积测量结果
+          html += '<div>面积测量结果：</div>';
+          html += `<div class="total-distance">总面积：${formatArea(measureData.total)}</div>`;
+        }
+        
+        resultEl.innerHTML = html;
+      }
+      
+      // 格式化距离显示
+      function formatDistance(distance) {
+        if (distance < 1000) {
+          return distance.toFixed(2) + ' 米';
+        } else {
+          return (distance / 1000).toFixed(2) + ' 千米';
+        }
+      }
+      
+      // 格式化面积显示
+      function formatArea(area) {
+        if (area < 1000000) {
+          return area.toLocaleString() + ' 平方米';
+        } else {
+          return (area / 1000000).toFixed(2) + ' 平方千米';
+        }
+      }
+      
+      // 清除测量
+      function clearMeasurement() {
+        // 重置测量模式
+        measureMode = null;
+        
+        // 清除测量点
+        measurePoints = [];
+        
+        // 移除测量实体
+        measureEntities.forEach(entity => {
+          viewer.entities.remove(entity);
+        });
+        measureEntities = [];
+        
+        // 移除事件处理器
+        if (measureHandler) {
+          measureHandler.destroy();
+          measureHandler = null;
+        }
+        
+        // 更新UI
+        updateMeasureUI();
+        
+        // 清空测量结果
+        document.getElementById('measureResult').innerHTML = '';
+      }
+      
+      // 图层实例管理系统 - 重构为统一的图层集合数组
+    let layers = [];
+    
+    // 图层ID常量定义
+    const LAYER_IDS = {
+      TDT_LAYER: 'tdtLayer',
+      WIND_LAYER: 'windLayer',
+      MODEL_LAYER: 'modelLayer',
+      JSON_LAYER: 'jsonLayer',
+      ENTITY_LAYER: 'entityLayer',
+      EAST_CHINA_POLYGON: 'eastChinaPolygon',
+      CITY_LINE: 'cityLine'
+    };
+    
+    // 图层管理器重构实现
+    const layerManager = {
+      // 初始化图层管理器
+      init: function() {
+        // 加载保存的图层状态
+        this.loadLayerStates();
+        // 设置开关初始状态
+        this.updateToggleStates();
+        // 添加开关事件监听器
+        this.addToggleListeners();
+      },
+      
+      // 获取图层状态
+      getLayerState: function(layerId) {
+        return this.loadLayerStates()[layerId] || true;
+      },
+      
+      // 加载保存的图层状态
+      loadLayerStates: function() {
+        try {
+          const savedStates = localStorage.getItem('cesiumLayerStates');
+          return savedStates ? JSON.parse(savedStates) : {
+            [LAYER_IDS.TDT_LAYER]: true,
+            [LAYER_IDS.WIND_LAYER]: false,
+            [LAYER_IDS.MODEL_LAYER]: true,
+            [LAYER_IDS.JSON_LAYER]: true,
+            [LAYER_IDS.ENTITY_LAYER]: true,
+            [LAYER_IDS.EAST_CHINA_POLYGON]: true,
+            [LAYER_IDS.CITY_LINE]: true
+          };
+        } catch (error) {
+          console.error('加载图层状态失败:', error);
+          return {};
+        }
+      },
+      
+      // 保存图层状态到本地存储
+      saveLayerStates: function() {
+        try {
+          const states = {};
+          layers.forEach(layer => {
+            states[layer.id] = layer.visible;
+          });
+          localStorage.setItem('cesiumLayerStates', JSON.stringify(states));
+        } catch (error) {
+          console.error('保存图层状态失败:', error);
+        }
+      },
+      
+      // 更新开关初始状态
+      updateToggleStates: function() {
+        const states = this.loadLayerStates();
+        document.getElementById('tdtLayerToggle').checked = states[LAYER_IDS.TDT_LAYER] !== false;
+        document.getElementById('windLayerToggle').checked = states[LAYER_IDS.WIND_LAYER] === true;
+        document.getElementById('modelLayerToggle').checked = states[LAYER_IDS.MODEL_LAYER] !== false;
+        document.getElementById('jsonLayerToggle').checked = states[LAYER_IDS.JSON_LAYER] !== false;
+        document.getElementById('entityLayerToggle').checked = states[LAYER_IDS.ENTITY_LAYER] !== false;
+      },
+      
+      // 添加开关事件监听器
+      addToggleListeners: function() {
+        // 统一的事件处理函数
+        const handleLayerToggle = (layerId) => {
+          return function(e) {
+            const isVisible = e.target.checked;
+            layerManager.toggleLayer(layerId, isVisible);
+          };
+        };
+        
+        // 天地图图层开关
+        document.getElementById('tdtLayerToggle').addEventListener('change', handleLayerToggle(LAYER_IDS.TDT_LAYER));
+        
+        // 风效果图层开关
+        document.getElementById('windLayerToggle').addEventListener('change', handleLayerToggle(LAYER_IDS.WIND_LAYER));
+        
+        // 模型图层开关
+        document.getElementById('modelLayerToggle').addEventListener('change', handleLayerToggle(LAYER_IDS.MODEL_LAYER));
+        
+        // JSON数据图层开关
+        document.getElementById('jsonLayerToggle').addEventListener('change', handleLayerToggle(LAYER_IDS.JSON_LAYER));
+        
+        // 实体要素图层开关
+        document.getElementById('entityLayerToggle').addEventListener('change', handleLayerToggle(LAYER_IDS.ENTITY_LAYER));
+      },
+      
+      // 添加图层到管理器
+      addLayer: function(layerId, name, instance, visible = true) {
+        // 检查是否已存在该图层
+        const existingIndex = layers.findIndex(layer => layer.id === layerId);
+        
+        if (existingIndex !== -1) {
+          // 更新现有图层
+          layers[existingIndex] = {
+            id: layerId,
+            name: name,
+            instance: instance,
+            visible: visible
+          };
+        } else {
+          // 添加新图层
+          layers.push({
+            id: layerId,
+            name: name,
+            instance: instance,
+            visible: visible
+          });
+        }
+        
+        // 设置初始可见性
+        this.setLayerVisibility(instance, visible);
+      },
+      
+      // 切换图层显示/隐藏
+      toggleLayer: function(layerId, isVisible) {
+        const layer = layers.find(l => l.id === layerId);
+        if (layer) {
+          // 更新图层可见性
+          this.setLayerVisibility(layer.instance, isVisible);
+          // 更新图层状态
+          layer.visible = isVisible;
+          // 保存状态
+          this.saveLayerStates();
+        } else {
+          // 处理特殊情况：如果是天地图图层，可能有多个实例
+          if (layerId === LAYER_IDS.TDT_LAYER) {
+            // 切换所有天地图图层
+            layers.filter(l => l.id.startsWith(LAYER_IDS.TDT_LAYER)).forEach(l => {
+              this.setLayerVisibility(l.instance, isVisible);
+              l.visible = isVisible;
+            });
+            // 保存状态
+            this.saveLayerStates();
+          } else if (layerId === LAYER_IDS.JSON_LAYER) {
+            // 切换所有JSON图层
+            layers.filter(l => l.id.startsWith(LAYER_IDS.JSON_LAYER)).forEach(l => {
+              this.setLayerVisibility(l.instance, isVisible);
+              l.visible = isVisible;
+            });
+            // 保存状态
+            this.saveLayerStates();
+          }
+        }
+      },
+      
+      // 设置单个图层的可见性
+      setLayerVisibility: function(layerInstance, isVisible) {
+        if (!layerInstance) return;
+        
+        try {
+          if (layerInstance.show !== undefined) {
+            // ImageryLayer类型、实体类型或CesiumWind.WindLayer类型
+            layerInstance.show = isVisible;
+          } else if (layerInstance.primitiveType !== undefined || layerInstance._primitiveType !== undefined) {
+            // Primitive类型
+            layerInstance.show = isVisible;
+          } else if (layerInstance.tileset !== undefined) {
+            // Tileset类型
+            layerInstance.tileset.show = isVisible;
+          } else if (layerInstance.isDataSource !== undefined) {
+            // DataSource类型
+            layerInstance.isDataSource = isVisible;
+          } else if (layerInstance.polygon || layerInstance.polyline || layerInstance.point) {
+            // 实体要素类型
+            layerInstance.show = isVisible;
+          } else if (typeof layerInstance.setWindVisibility === 'function') {
+            // CesiumWind.WindLayer类型（自定义方法）
+            layerInstance.setWindVisibility(isVisible);
+          } else if (typeof layerInstance.setVisible === 'function') {
+            // 支持setVisible方法的图层类型
+            layerInstance.setVisible(isVisible);
+          } else {
+            // 尝试直接设置show属性
+            layerInstance.show = isVisible;
+          }
+        } catch (error) {
+          console.error('设置图层可见性失败:', error, layerInstance);
+        }
+      },
+      
+      // 移除图层
+      removeLayer: function(layerId) {
+        layers = layers.filter(layer => layer.id !== layerId);
+        this.saveLayerStates();
+      },
+      
+      // 获取图层列表
+      getLayers: function() {
+        return layers;
+      },
+      
+      // 根据ID获取图层
+      getLayerById: function(layerId) {
+        return layers.find(layer => layer.id === layerId);
+      }
+    };
+    
+    // 初始化图层管理器
+    layerManager.init();
+    
+    // 将图层管理器和图层集合暴露到全局
+    window.layerManager = layerManager;
+    window.layers = layers;
+    window.LAYER_IDS = LAYER_IDS;
+    })();
+  </script>
+  </div>
+
+  <style>
+    /* 全局样式重置和基础样式 */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      color: #333;
+    }
+    
+    /* 主容器 */
+    #cesiumContainer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    
+    /* 主控制面板样式 */
+    #mainControls {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      z-index: 999;
+      background: rgba(0, 0, 0, 0.8);
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    }
+    
+    /* 控制组样式 */
+    .control-group {
+      margin-bottom: 15px;
+    }
+    
+    .control-group:last-child {
+      margin-bottom: 0;
+    }
+    
+    /* 控制按钮样式 */
+    .control-btn {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      margin-right: 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s ease;
+    }
+    
+    .control-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    
+    .control-btn:active {
+      background: rgba(255, 255, 255, 0.4);
+    }
+    
+    .control-btn-primary {
+      background: rgba(52, 152, 219, 0.8);
+    }
+    
+    .control-btn-primary:hover {
+      background: rgba(52, 152, 219, 1);
+    }
+    
+    .control-btn-danger {
+      background: rgba(231, 76, 60, 0.8);
+    }
+    
+    .control-btn-danger:hover {
+      background: rgba(231, 76, 60, 1);
+    }
+    
+    /* 控制标签样式 */
+    .control-label {
+      color: white;
+      font-size: 13px;
+      margin-bottom: 8px;
+      display: block;
+    }
+    
+    /* 控制选择框样式 */
+    .control-select {
+      background: rgba(255, 255, 255, 0.9);
+      color: #333;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      width: 100%;
+    }
+    
+    /* 结果面板样式 */
+    .result-panel {
+      position: absolute;
+      right: 20px;
+      top: 250px;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      z-index: 999;
+      max-width: 350px;
+      max-height: 300px;
+      overflow: auto;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    }
+    
+    .result-panel-bottom {
+      top: auto;
+      bottom: 70px;
+      max-height: 200px;
+    }
+    
+    /* 测量结果样式 */
+    #measureResult {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    
+    /* 测量结果中的总距离 */
+    .total-distance {
+      font-weight: bold;
+      color: #2ecc71;
+    }
+    
+    /* 坐标显示框样式 - 强制覆盖内联样式 */
+    #coordDisplay {
+      position: absolute !important;
+      bottom: 20px !important;
+      right: 20px !important;
+      top: auto !important;
+      left: auto !important;
+      width: auto !important;
+      height: auto !important;
+      background: rgba(0, 0, 0, 0.8) !important;
+      color: white !important;
+      padding: 10px 15px !important;
+      border-radius: 8px !important;
+      font-size: 12px !important;
+      z-index: 999 !important;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
+      white-space: nowrap !important;
+      overflow: visible !important;
+    }
+    
+    /* 侧边栏样式 */
+    .sidebar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 220px;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      z-index: 1000;
+      transition: width 0.3s ease;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 2px 0 10px rgba(0, 0, 0, 0.5);
+    }
+    
+    /* 收起状态 */
+    .sidebar.collapsed {
+      width: 50px;
+    }
+    
+    /* 侧边栏头部 */
+    .sidebar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.1);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    
+    /* 侧边栏标题 */
+    .sidebar-title {
+      font-size: 15px;
+      font-weight: bold;
+      transition: all 0.3s ease;
+    }
+    
+    /* 收起状态下隐藏标题 */
+    .sidebar.collapsed .sidebar-title {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+    }
+    
+    /* 侧边栏切换按钮 */
+    .sidebar-toggle {
+      background: none;
+      border: none;
+      color: white;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 4px;
+      transition: background 0.2s ease;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .sidebar-toggle:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+    
+    /* 侧边栏内容 */
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 0;
+    }
+    
+    /* 侧边栏 section */
+    .sidebar-section {
+      margin-bottom: 20px;
+    }
+    
+    /* 区域标题 */
+    .section-title {
+      padding: 10px 15px;
+      font-size: 13px;
+      font-weight: bold;
+      background: rgba(255, 255, 255, 0.1);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    /* 收起状态下隐藏标题文本 */
+    .sidebar.collapsed .section-title {
+      text-align: center;
+      padding: 10px 0;
+      font-size: 10px;
+    }
+    
+    /* 功能项 */
+    .function-item {
+      display: flex;
+      align-items: center;
+      padding: 12px 15px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      border-left: 3px solid transparent;
+      font-size: 13px;
+    }
+    
+    .function-item:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    
+    /* 选中状态 */
+    .function-item.active {
+      background: rgba(255, 255, 255, 0.15);
+      border-left-color: #3498db;
+    }
+    
+    /* 清除测量项 */
+    .function-item-clear {
+      margin-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    
+    /* 图层项 */
+    .layer-item {
+      display: flex;
+      align-items: center;
+      padding: 12px 15px;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      font-size: 13px;
+    }
+    
+    .layer-item:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    
+    /* 文本 */
+    .item-text {
+      flex: 1;
+      transition: all 0.3s ease;
+    }
+    
+    /* 收起状态下隐藏文本 */
+    .sidebar.collapsed .item-text {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+    }
+    
+    /* 状态指示器 */
+    .item-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #2ecc71;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    
+    /* 激活状态下显示状态指示器 */
+    .function-item.active .item-status {
+      opacity: 1;
+    }
+    
+    /* 开关样式 */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+      transition: all 0.3s ease;
+    }
+    
+    /* 收起状态下隐藏开关 */
+    .sidebar.collapsed .toggle-switch {
+      opacity: 0;
+      width: 0;
+      overflow: hidden;
+    }
+    
+    /* 开关输入 */
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    /* 开关滑块 */
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #555;
+      transition: .4s;
+      border-radius: 20px;
+    }
+    
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    
+    /* 开关开启状态 */
+    input:checked + .toggle-slider {
+      background-color: #2ecc71;
+    }
+    
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+    
+    /* 滚动条样式 */
+    .sidebar-content::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .sidebar-content::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .sidebar-content::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 3px;
+    }
+    
+    .sidebar-content::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.4);
+    }
+    
+    /* 响应式设计 */
+    @media (max-width: 768px) {
+      #mainControls {
+        top: 10px;
+        right: 10px;
+        padding: 10px;
+      }
+      
+      .control-btn {
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      
+      .sidebar {
+        width: 200px;
+      }
+      
+      .sidebar.collapsed {
+        width: 40px;
+      }
+      
+      .result-panel {
+        right: 10px;
+        top: 180px;
+        max-width: 280px;
+      }
+      
+      .result-panel-bottom {
+        bottom: 10px;
+      }
+      
+      #coordDisplay {
+        bottom: 10px;
+        right: 10px;
+        font-size: 11px;
+        padding: 8px 12px;
+      }
+    }
+    
+    @media (max-width: 480px) {
+      .control-group {
+        display: flex;
+        flex-wrap: wrap;
+      }
+      
+      .control-btn {
+        margin-bottom: 8px;
+      }
+      
+      .result-panel {
+        max-width: 250px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</body>
+
+</html>

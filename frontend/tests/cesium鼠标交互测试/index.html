@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cesium React 测试</title>
+  <!-- 引入Cesium -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.135/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.135/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <!-- 引入shpjs -->
+  <script src='https://unpkg.com/shpjs@latest/dist/shp.js'> </script>
+  <!-- 引入CesiumWind -->
+  <script src="https://unpkg.com/cesium-wind@latest/dist/cesium-wind.min.js"></script>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    #root {
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <!-- 加载我们的React应用 -->
+  <script type="module" src="./index.jsx"></script>
+</body>
+</html>
