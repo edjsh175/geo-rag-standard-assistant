@@ -62,7 +62,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
   const entityByAdcodeRef = useRef<Map<string, Cesium.Entity[]>>(new Map());
   // 缓存每个省份扩大后的 Bounding Rectangle，用于精准同频放缩
   const regionRectanglesRef = useRef<Map<string, Cesium.Rectangle>>(new Map());
-  const baseLayersRef = useRef<{ osm?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
+  const baseLayersRef = useRef<{ tdtVec?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
   const suppressStoreSync = useRef(false);
 
   // 鼠标节流标记
@@ -558,18 +558,28 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
     // 获取 Cesium 默认自带的卫星影像地图（作为第一层）
     const defaultSatelliteLayer = viewer.imageryLayers.get(0);
 
-    const osmProvider = new Cesium.OpenStreetMapImageryProvider({
-      url: 'https://a.tile.openstreetmap.org/'
+    const TDT_TK = import.meta.env.VITE_TIANDITU_TK;
+    // 天地图电子底图
+    const tdtVecProvider = new Cesium.UrlTemplateImageryProvider({
+      url: `https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    });
+    // 天地图中文注记
+    const tdtCvaProvider = new Cesium.UrlTemplateImageryProvider({
+      url: `https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
     });
 
-    // 添加 OSM 电子地图
-    const osmLayer = viewer.imageryLayers.addImageryProvider(osmProvider);
+    // 添加天地图图层
+    const tdtVecLayer = viewer.imageryLayers.addImageryProvider(tdtVecProvider);
+    const tdtCvaLayer = viewer.imageryLayers.addImageryProvider(tdtCvaProvider);
 
-    // 初始状态 (wms === false 时显示 OSM 电子底图，true 显示卫星图)
-    osmLayer.show = !layers.wms;
+    // 初始状态 (wms === false 时显示天地图电子底图，true 显示卫星图)
+    tdtVecLayer.show = !layers.wms;
+    tdtCvaLayer.show = !layers.wms;
     if (defaultSatelliteLayer) defaultSatelliteLayer.show = layers.wms;
 
-    baseLayersRef.current = { osm: osmLayer, satellite: defaultSatelliteLayer };
+    baseLayersRef.current = { tdtVec: tdtVecLayer, tdtCva: tdtCvaLayer, satellite: defaultSatelliteLayer };
     // ===================================
 
     return () => {
@@ -608,9 +618,10 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
       });
     }
 
-    // 切换 WMS 卫星底图与电子底图
-    const { osm, satellite } = baseLayersRef.current;
-    if (osm) osm.show = !layers.wms;
+    // 切换卫星底图与天地图电子底图
+    const { tdtVec, tdtCva, satellite } = baseLayersRef.current;
+    if (tdtVec) tdtVec.show = !layers.wms;
+    if (tdtCva) tdtCva.show = !layers.wms;
     if (satellite) satellite.show = layers.wms;
 
     requestRender();

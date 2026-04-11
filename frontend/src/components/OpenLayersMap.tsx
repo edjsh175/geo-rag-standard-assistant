@@ -54,7 +54,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
   const mapRef = useRef<Map | null>(null);
   const provincesLayerRef = useRef<VectorImageLayer | null>(null);
   const provincesSourceRef = useRef<VectorSource | null>(null);
-  const baseLayersRef = useRef<{ osm?: TileLayer, tdt?: TileLayer }>({});
+  const baseLayersRef = useRef<{ tdtVec?: TileLayer, tdtCva?: TileLayer, satellite?: TileLayer }>({});
   const geoJsonCache = useRef<any>(null);
 
   // 交互状态
@@ -253,28 +253,43 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
     provincesSourceRef.current = provincesSource;
     provincesLayerRef.current = provincesLayer;
 
-    const osmLayer = new TileLayer({
-      source: new OSM(),
+    const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
+
+    // 天地图电子底图
+    const tdtVecLayer = new TileLayer({
+      source: new XYZ({
+        url: `https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+      }),
       preload: 4,
       visible: !layers.wms,
     });
 
-    const tdtLayer = new TileLayer({
+    // 天地图中文注记
+    const tdtCvaLayer = new TileLayer({
       source: new XYZ({
-        url: `http://t0.tianditu.gov.cn/img_w/wmts?tk=${import.meta.env.VITE_TIANDITU_TK || ''}&layer=img&style=default&tilematrixset=w&Service=WMTS&Request=GetTile&Version=1.0.0&Format=tiles&TileMatrix={z}&TileRow={y}&TileCol={x}`,
-        maxZoom: 18,
+        url: `https://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+      }),
+      preload: 4,
+      visible: !layers.wms,
+    });
+
+    // 天地图卫星影像
+    const satelliteLayer = new TileLayer({
+      source: new XYZ({
+        url: `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
       }),
       preload: 4,
       visible: layers.wms,
     });
 
-    baseLayersRef.current = { osm: osmLayer, tdt: tdtLayer };
+    baseLayersRef.current = { tdtVec: tdtVecLayer, tdtCva: tdtCvaLayer, satellite: satelliteLayer };
 
     const map = new Map({
       target: mapElement.current,
       layers: [
-        osmLayer,
-        tdtLayer,
+        tdtVecLayer,
+        tdtCvaLayer,
+        satelliteLayer,
         provincesLayer,
       ],
       view: new View({
@@ -415,10 +430,11 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
     if (provincesLayerRef.current) {
       provincesLayerRef.current.setVisible(layers.admin);
     }
-    const { osm, tdt } = baseLayersRef.current;
-    if (osm && tdt) {
-      osm.setVisible(!layers.wms);
-      tdt.setVisible(layers.wms);
+    const { tdtVec, tdtCva, satellite } = baseLayersRef.current;
+    if (tdtVec && tdtCva && satellite) {
+      tdtVec.setVisible(!layers.wms);
+      tdtCva.setVisible(!layers.wms);
+      satellite.setVisible(layers.wms);
     }
   }, [layers]);
 
