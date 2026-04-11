@@ -42,15 +42,13 @@ const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
   if (dotAnimation) {
     return (
       <div className={cn('flex items-center gap-4', className)}>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]" />
-            <div className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]" />
-            <div className="w-2 h-2 bg-primary rounded-full animate-bounce" />
-          </div>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full" style={{ background: 'rgba(240,112,64,0.06)', border: '0.5px solid rgba(240,112,64,0.15)' }}>
+          <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse-soft" style={{ boxShadow: '0 0 8px rgba(240,112,64,0.5)' }} />
+          <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse-soft [animation-delay:0.4s]" style={{ boxShadow: '0 0 8px rgba(240,112,64,0.5)' }} />
+          <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse-soft [animation-delay:0.8s]" style={{ boxShadow: '0 0 8px rgba(240,112,64,0.5)' }} />
         </div>
         {text && (
-          <span className={cn('text-sm text-[#90909a]', textClassName)}>
+          <span className={cn('text-[11px] font-medium tracking-wide uppercase italic', textClassName)} style={{ color: 'rgba(240,112,64,0.65)' }}>
             {text}
           </span>
         )}
@@ -65,7 +63,7 @@ const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
         <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
       </div>
       {text && (
-        <span className={cn('text-sm text-[#90909a]', textClassName)}>
+        <span className={cn('text-sm opacity-60 text-on-background', textClassName)}>
           {text}
         </span>
       )}

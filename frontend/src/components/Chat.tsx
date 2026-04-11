@@ -9,36 +9,20 @@ import LoadingIndicator from './LoadingIndicator';
 import { useAutoScroll } from '../hooks/useAutoScroll';
 
 export interface ChatProps {
-  /** 当前消息列表 */
   messages: ChatMessageType[];
-  /** 发送消息回调 */
   onSendMessage: (content: string) => Promise<void>;
-  /** 是否正在加载（AI响应中） */
   isLoading: boolean;
-  /** 停止生成回调 */
   onStopGeneration?: () => void;
-  /** 当前输入框值 */
   inputValue: string;
-  /** 输入框变更回调 */
   onInputChange: (value: string) => void;
-  /** 点击引用时的回调 */
   onCitationClick?: (documentId: string) => Promise<void>;
-  /** 是否禁用输入（例如在搜索中） */
   disabled?: boolean;
-  /** 标题 */
   title?: string;
-  /** 状态描述 */
   status?: string;
-  /** 快捷标签 */
   quickTags?: string[];
-  /** 类名 */
   className?: string;
 }
 
-/**
- * 企业级聊天对话组件
- * 包含智能防冲突滚动、加载反馈、请求中断控制等功能
- */
 const Chat: React.FC<ChatProps> = ({
   messages,
   onSendMessage,
@@ -50,189 +34,165 @@ const Chat: React.FC<ChatProps> = ({
   disabled = false,
   title = 'Sentinel GeoAI',
   status = '模型就绪 · RAG 已同步',
-  quickTags = ['# 城镇开发边界', '# 永久基本农田', '# 生态保护红线', '# 四川技术规范'],
+  quickTags = ['#城镇开发边界', '#永久基本农田', '#生态保护红线', '#四川技术规范'],
   className,
 }) => {
-  // ==================== 所有 Hooks 声明（严格置顶） ====================
-  // 1. useRef
   const inputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  // 2. 自定义 Hook
   const { scrollToBottom, lockAutoScroll, unlockAutoScroll, isAutoScrollLocked } =
     useAutoScroll(chatContainerRef, { threshold: 50 });
 
-  // 3. useEffect
   useEffect(() => {
-    console.log('[Chat] 消息变化触发滚动检查', {
-      消息数量: messages.length,
-      最后一条消息: messages[messages.length - 1]?.role,
-      是否锁定: isAutoScrollLocked,
-      容器存在: !!chatContainerRef.current,
-    });
-
-    if (!isAutoScrollLocked) {
-      console.log('[Chat] 自动滚动触发（消息变化）');
-      scrollToBottom({ behavior: 'smooth' });
-    } else {
-      console.log('[Chat] 自动滚动被锁定，跳过滚动');
-    }
+    if (!isAutoScrollLocked) scrollToBottom({ behavior: 'smooth' });
   }, [messages, isAutoScrollLocked, scrollToBottom]);
 
   useEffect(() => {
-    console.log('[Chat] 加载状态变化', {
-      正在加载: isLoading,
-      是否锁定: isAutoScrollLocked,
-    });
-
-    if (isLoading && !isAutoScrollLocked) {
-      console.log('[Chat] 自动滚动触发（加载状态）');
-      scrollToBottom({ behavior: 'smooth' });
-    } else if (isLoading && isAutoScrollLocked) {
-      console.log('[Chat] 加载中但滚动被锁定，跳过滚动');
-    }
+    if (isLoading && !isAutoScrollLocked) scrollToBottom({ behavior: 'smooth' });
   }, [isLoading, isAutoScrollLocked, scrollToBottom]);
 
-  useEffect(() => {
-    console.log('[Chat] 容器ref状态:', {
-      容器存在: !!chatContainerRef.current,
-      容器高度: chatContainerRef.current?.clientHeight,
-      滚动高度: chatContainerRef.current?.scrollHeight,
-      消息数量: messages.length,
-      正在加载: isLoading,
-    });
-  }, [messages, isLoading]);
-
-  // 4. useCallback
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isLoading || disabled) return;
-
     await onSendMessage(inputValue);
     onInputChange('');
     inputRef.current?.focus();
   }, [inputValue, isLoading, disabled, onSendMessage, onInputChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }, [handleSend]);
 
   const handleScroll = useCallback(() => {
     if (!chatContainerRef.current) return;
-
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
     const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-
-    if (isAtBottom) {
-      unlockAutoScroll();
-    } else if (!isAutoScrollLocked) {
-      lockAutoScroll();
-    }
+    if (isAtBottom) unlockAutoScroll();
+    else if (!isAutoScrollLocked) lockAutoScroll();
   }, [lockAutoScroll, unlockAutoScroll, isAutoScrollLocked]);
 
   const handleCitationClick = useCallback(async (citation: Citation) => {
-    if (onCitationClick) {
-      await onCitationClick(citation.document_id);
-    }
+    if (onCitationClick) await onCitationClick(citation.document_id);
   }, [onCitationClick]);
 
-  // ==================== Hooks 声明结束，下方可放置业务逻辑 ====================
-
   return (
-    <div className={cn('flex flex-col h-full min-h-0 overflow-hidden bg-surface-container-low', className)}>
-      {/* AI状态栏 */}
-      <div className="px-6 py-4 flex items-center justify-between bg-surface-dim/50 border-b border-outline-variant/5">
+    <div
+      className={cn('flex flex-col h-full min-h-0 overflow-hidden', className)}
+      style={{ background: 'transparent' }}
+    >
+      {/* ── Header ── */}
+      <div
+        className="px-5 py-3.5 flex items-center justify-between shrink-0 glass-light"
+        style={{ borderBottom: '0.5px solid var(--color-outline)' }}
+      >
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-primary-container flex items-center justify-center">
-            <Bot className="w-5 h-5 text-on-primary-fixed" />
+          {/* AI Avatar */}
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: 'rgba(240,112,64,0.12)', border: '0.5px solid rgba(240,112,64,0.28)', boxShadow: '0 0 12px rgba(240,112,64,0.15)' }}
+          >
+            <Bot className="w-4 h-4" style={{ color: '#f07040' }} />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-on-background font-headline">{title}</h2>
-            <p className="text-[10px] text-emerald-500 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-              {status}
-            </p>
+            <h2 className="text-[13px] font-semibold tracking-wide font-headline text-on-background">{title}</h2>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" style={{ boxShadow: '0 0 5px rgba(16,185,129,0.7)' }} />
+              <p className="text-[9px] font-medium text-emerald-500/80">{status}</p>
+            </div>
           </div>
         </div>
-        <History className="w-5 h-5 text-[#50505a] hover:text-[#f0f0f0] cursor-pointer transition-colors" />
+        <button
+          className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
+        >
+          <History className="w-3.5 h-3.5 opacity-60 text-on-background" />
+        </button>
       </div>
 
-      {/* 聊天区域 */}
+      {/* ── Messages ── */}
       <div
         ref={chatContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto p-6 space-y-8 no-scrollbar"
+        className="flex-1 min-h-0 overflow-y-auto no-scrollbar"
+        style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}
       >
-        {messages.map((msg) => (
-          <ChatMessage
-            key={msg.id}
-            message={msg}
-            onCitationClick={handleCitationClick}
-          />
+        {messages.map(msg => (
+          <ChatMessage key={msg.id} message={msg} onCitationClick={handleCitationClick} />
         ))}
 
-        {/* 加载指示器 */}
         {isLoading && (
-          <div className="flex gap-3 items-start mr-12">
-            <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center shrink-0 border border-outline-variant/20">
-              <Sparkles className="w-4 h-4 text-primary" />
+          <div className="flex gap-3 items-start" style={{ marginRight: '40px' }}>
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+              style={{ background: 'rgba(240,112,64,0.08)', border: '0.5px solid rgba(240,112,64,0.2)' }}
+            >
+              <Sparkles className="w-3.5 h-3.5" style={{ color: 'rgba(240,112,64,0.7)' }} />
             </div>
-            <div className="space-y-4 flex-1">
-              <div className="bg-surface-variant/40 glass rounded-bl-none border-l-2 border-primary-container p-4 rounded-xl text-sm">
+            <div className="flex-1 space-y-3">
+              <div
+                className="rounded-xl rounded-tl-sm p-4 text-sm bg-surface-container/60 border-l-[1.5px] border-primary-container"
+              >
                 <LoadingIndicator text="GeoAI 正在检索空间规划标准..." />
               </div>
-              {/* 停止生成按钮 */}
               {onStopGeneration && (
-                <div className="flex justify-start">
-                  <button
-                    onClick={onStopGeneration}
-                    className="px-3 py-1.5 text-xs font-medium bg-red-500/10 text-red-500 hover:bg-red-500/20 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    <X className="w-3 h-3" />
-                    停止生成
-                  </button>
-                </div>
+                <button
+                  onClick={onStopGeneration}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-colors"
+                  style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.75)', border: '0.5px solid rgba(239,68,68,0.2)' }}
+                >
+                  <X className="w-3 h-3" /> 停止生成
+                </button>
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* 输入区域 */}
-      <div className="p-6 bg-surface-dim/80 glass border-t border-outline-variant/10">
-        <div className="relative group">
+      {/* ── Input Area ── */}
+      <div
+        className="shrink-0 px-4 pb-4 pt-3 glass-light"
+        style={{ borderTop: '0.5px solid var(--color-outline)' }}
+      >
+        {/* Input */}
+        <div className="relative">
           <input
             ref={inputRef}
             value={inputValue}
-            onChange={(e) => onInputChange(e.target.value)}
+            onChange={e => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full bg-surface-container-highest border-none rounded-xl py-4 pl-6 pr-16 text-sm text-on-background placeholder:text-[#50505a] focus:ring-1 focus:ring-primary-container transition-all"
+            className="w-full rounded-xl py-3 pl-4 pr-20 text-[13px] transition-all outline-none bg-surface-variant/40 border border-outline text-on-background"
+            style={{
+              caretColor: '#f07040',
+            }}
+            onFocus={e => { e.currentTarget.style.border = '0.5px solid rgba(240,112,64,0.35)'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(240,112,64,0.07)'; }}
+            onBlur={e => { e.currentTarget.style.border = 'var(--color-outline)'; e.currentTarget.style.boxShadow = 'none'; }}
             placeholder="输入规划指令或搜索关键词..."
             type="text"
             disabled={disabled || isLoading}
           />
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-2">
-            <Mic className="w-5 h-5 text-[#50505a] hover:text-primary-container cursor-pointer transition-colors" />
-            <button
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+            <button className="w-6 h-6 flex items-center justify-center rounded-lg transition-all" style={{ color: 'rgba(255,255,255,0.25)' }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,112,64,0.7)'; }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; }}>
+              <Mic className="w-3.5 h-3.5" />
+            </button>
+            <motion.button
               onClick={handleSend}
               disabled={disabled || isLoading || !inputValue.trim()}
-              className="ember-gradient p-2 rounded-lg text-on-primary-fixed shadow-lg active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.93 }}
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
+              style={{ background: inputValue.trim() ? '#f07040' : 'rgba(240,112,64,0.12)', boxShadow: inputValue.trim() ? '0 0 12px rgba(240,112,64,0.4)' : 'none' }}
             >
-              <Send className="w-5 h-5" />
-            </button>
+              <Send className="w-3.5 h-3.5" style={{ color: inputValue.trim() ? '#1a0a00' : 'rgba(240,112,64,0.4)' }} />
+            </motion.button>
           </div>
         </div>
-        <div className="mt-4 flex gap-4 text-[10px] text-[#50505a] font-medium overflow-x-auto no-scrollbar">
+
+        {/* Quick Tags */}
+        <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
           {quickTags.map(tag => (
-            <span
+            <button
               key={tag}
-              className="bg-surface-container px-2 py-1 rounded cursor-pointer hover:text-primary-container transition-colors whitespace-nowrap"
-              onClick={() => onInputChange(tag)}
-            >
-              {tag}
-            </span>
+              onClick={() => onInputChange(tag.replace(/^#/, ''))}
+              className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all whitespace-nowrap bg-primary-container/[0.07] border border-primary-container/[0.18] text-primary-container/80 hover:bg-primary-container/[0.14] hover:text-primary-container"
+            >{tag}</button>
           ))}
         </div>
       </div>
@@ -240,52 +200,73 @@ const Chat: React.FC<ChatProps> = ({
   );
 };
 
-// 聊天消息子组件
+// ── ChatMessage sub-component ──
 interface ChatMessageProps {
   message: ChatMessageType;
   onCitationClick?: (citation: Citation) => void;
 }
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) => {
+  const isUser = message.role === 'user';
   return (
-    <div className={cn("flex", message.role === 'user' ? "justify-end ml-12" : "mr-12 gap-3 items-start")}>
-      {message.role === 'assistant' && (
-        <div className="w-8 h-8 rounded-full bg-surface-container-highest flex items-center justify-center shrink-0 border border-outline-variant/20">
-          <Sparkles className="w-4 h-4 text-primary" />
+    <div className={cn('flex', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
+      {/* AI avatar */}
+      {!isUser && (
+        <div
+          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+          style={{ background: 'rgba(240,112,64,0.08)', border: '0.5px solid rgba(240,112,64,0.2)' }}
+        >
+          <Sparkles className="w-3.5 h-3.5" style={{ color: 'rgba(240,112,64,0.65)' }} />
         </div>
       )}
-      <div className="space-y-4 flex-1">
-        <div className={cn(
-          "p-4 rounded-xl text-sm leading-relaxed shadow-sm",
-          message.role === 'user'
-            ? "bg-primary-container/5 border border-primary-container/20 rounded-br-none text-on-background"
-            : "bg-surface-variant/40 glass rounded-bl-none border-l-2 border-primary-container text-[#90909a]"
-        )}>
-          {message.role === 'assistant' ? (
-            <div className="prose prose-sm dark:prose-invert">
+
+      <div className="flex-1 space-y-3">
+        {/* Bubble */}
+        <div
+          className={cn(
+            "rounded-xl text-[13px] leading-[1.75] p-3.5 border",
+            isUser ? "bg-primary-container/[0.07] border-primary-container/[0.18] text-on-background/90" : "bg-surface-container/60 border-outline text-on-background/90"
+          )}
+          style={
+            isUser
+              ? { borderBottomRightRadius: '4px' }
+              : { borderLeft: '1.5px solid rgba(240,112,64,0.30)', borderRadius: '0 10px 10px 10px' }
+          }
+        >
+          {!isUser ? (
+            <div className="prose">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
             </div>
           ) : message.content}
         </div>
+
+        {/* Timestamp */}
+        <p className="text-[10px] font-mono mt-1 opacity-40" style={{ color: 'var(--color-on-background)', textAlign: isUser ? 'right' : 'left', letterSpacing: '0.05em' }}>
+          {new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+        </p>
+
+        {/* Citations */}
         {message.metadata?.citations && message.metadata.citations.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {message.metadata.citations.map((citation, idx) => (
               <motion.div
                 key={idx}
-                whileHover={{ x: 8 }}
+                whileHover={{ x: 4 }}
                 onClick={() => onCitationClick?.(citation)}
-                className="group bg-surface-container p-4 rounded-xl border-r-2 border-transparent hover:border-primary-container transition-all cursor-pointer shadow-md"
+                className="rounded-xl p-3.5 cursor-pointer transition-all bg-surface-container/70 border border-outline hover:border-primary-container/30"
               >
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-[10px] font-bold text-primary-container px-2 py-0.5 bg-primary-container/10 rounded">
+                <div className="flex justify-between items-center mb-1.5">
+                  <span
+                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded font-mono bg-primary-container/10 text-primary-container"
+                  >
                     {citation.document_id}
                   </span>
-                  <span className="text-[10px] text-emerald-500 font-mono">
-                    置信度: {(citation.confidence * 100).toFixed(1)}%
+                  <span className="text-[9px] font-mono text-emerald-500/70">
+                    {(citation.confidence * 100).toFixed(1)}%
                   </span>
                 </div>
-                <h4 className="text-sm font-bold text-on-background mb-1">{citation.title}</h4>
-                <p className="text-xs text-[#50505a] line-clamp-2">{citation.excerpt}</p>
+                <h4 className="text-[11px] font-semibold mb-1 text-on-background/80">{citation.title}</h4>
+                <p className="text-[10px] line-clamp-2 opacity-50 text-on-background">{citation.excerpt}</p>
               </motion.div>
             ))}
           </div>

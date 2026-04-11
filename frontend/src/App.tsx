@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Map as MapIcon,
   Microscope,
@@ -16,7 +16,9 @@ import {
   FileText,
   RotateCcw,
   Bell,
-  Radio
+  Radio,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import CesiumGlobe from './components/CesiumGlobe';
@@ -39,6 +41,35 @@ export default function App() {
   const setActiveRegion = useMapStore((s) => s.setActiveRegion);
   const setViewState = useMapStore((s) => s.setViewState);
   const resetView = useMapStore((s) => s.resetView);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  // ==================== 主题管理 ====================
+  useEffect(() => {
+    // 1. 检测系统偏好
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const initialTheme = mediaQuery.matches ? 'dark' : 'light';
+    setTheme(initialTheme);
+    document.documentElement.dataset.theme = initialTheme;
+
+    // 2. 监听系统偏好变化
+    const handler = (e: MediaQueryListEvent) => {
+      const newTheme = e.matches ? 'dark' : 'light';
+      setTheme(newTheme);
+      document.documentElement.dataset.theme = newTheme;
+    };
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
+  const handleThemeChange = (newTheme: 'dark' | 'light') => {
+    setTheme(newTheme);
+    document.documentElement.dataset.theme = newTheme;
+    
+    // 如果切换到日间模式，且当前是卫星图，则自动切换到电子底图以保持视觉一致
+    if (newTheme === 'light' && layers.wms) {
+      setLayers(prev => ({ ...prev, wms: false }));
+    }
+  };
 
   // 2D/3D 地图容器 ref，用于视角交接
   const olContainerRef = useRef<HTMLDivElement>(null);
@@ -85,7 +116,7 @@ export default function App() {
   }, [viewMode, setViewMode, setViewState]);
   const [layers, setLayers] = useState({
     admin: true,
-    wms: true
+    wms: false
   });
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedStandard, setSelectedStandard] = useState<any>(null);
@@ -494,353 +525,308 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex flex-col h-screen bg-surface-container-lowest text-on-background font-sans overflow-hidden">
-      {/* Header */}
-      <header className="h-[46px] w-full fixed top-0 left-0 z-50 glass flex items-center justify-between px-6 shadow-2xl border-b border-outline-variant/10">
+    <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
+      {/* Background Map Layer */}
+      <section className="absolute inset-0 z-0 overflow-hidden" style={{background:'#08080b'}}>
+        <CesiumGlobe visible={viewMode === '3D'} layers={layers} />
+        <OpenLayersMap visible={viewMode === '2D'} layers={layers} />
+      </section>
+
+      {/* Floating Header */}
+      <header className="fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6" style={{border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-lg font-bold text-[#f0f0f0] font-headline">
-            <div className="w-5 h-5 bg-primary-container rotate-45 flex items-center justify-center overflow-hidden">
-              <div className="w-full h-full bg-surface-container-lowest scale-75 rotate-[-45deg]"></div>
+          {/* Logo */}
+          <div className="flex items-center gap-2.5 font-headline">
+            <div className="relative w-5 h-5">
+              <div className="absolute inset-0 rotate-45 rounded-[3px]" style={{background:'#f07040',boxShadow:'0 0 10px rgba(240,112,64,0.7)'}} />
+              <div className="absolute inset-[3px] rotate-45 rounded-[1px]" style={{background:'var(--color-background)'}} />
             </div>
-            <span>标准规范-智能空间查询系统</span>
+            <span className="text-sm font-semibold tracking-wide text-on-background/90">标准规范</span>
+            <span className="text-sm font-light text-on-background/20">·</span>
+            <span className="text-sm font-light text-on-background/45">智能空间查询系统</span>
           </div>
-          <nav className="flex items-center h-[46px] ml-4">
-            <a className="text-primary-container font-bold border-b-2 border-primary-container h-full flex items-center px-4 transition-all" href="#">检索</a>
-            <a className="text-[#90909a] hover:text-[#f0f0f0] h-full flex items-center px-4 transition-colors" href="#">知识库</a>
-            <a className="text-[#90909a] hover:text-[#f0f0f0] h-full flex items-center px-4 transition-colors" href="#">系统管理</a>
+          <nav className="flex items-center h-[48px] ml-2 gap-1">
+            <a className="nav-active text-xs font-medium h-full flex items-center px-4 transition-all" href="#">检索</a>
+            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">知识库</a>
+            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">系统管理</a>
           </nav>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-surface-container px-3 py-1 rounded-full text-xs font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></span>
-            <span className="text-[#90909a]">已连接</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{background:'rgba(16,185,129,0.08)',border:'0.5px solid rgba(16,185,129,0.2)'}}>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" style={{boxShadow:'0 0 6px rgba(16,185,129,0.7)'}}></span>
+            <span className="text-[10px] font-medium" style={{color:'rgba(16,185,129,0.8)'}}>已连接</span>
           </div>
-          <div className="flex gap-2 items-center">
-            <Radio className="w-5 h-5 text-[#90909a] hover:text-[#f0f0f0] cursor-pointer" />
-            <Bell className="w-5 h-5 text-[#90909a] hover:text-[#f0f0f0] cursor-pointer" />
-            <div className="w-7 h-7 rounded-full bg-surface-container-highest border border-outline-variant/20 overflow-hidden ml-2">
-              <img
-                className="w-full h-full object-cover"
-                src="https://picsum.photos/seed/user/100/100"
-                alt="Avatar"
-                referrerPolicy="no-referrer"
-              />
+          <div className="flex gap-1.5 items-center mr-2">
+            {/* Theme Segmented Control */}
+            <div className="flex bg-on-background/5 p-0.5 rounded-lg border border-on-background/10 mr-2">
+              <button 
+                onClick={() => handleThemeChange('light')}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold transition-all",
+                  theme === 'light' ? "bg-white text-black shadow-sm" : "text-on-background/40 hover:text-on-background/70"
+                )}
+              >
+                <Sun className="w-3 h-3" /> 日间
+              </button>
+              <button 
+                onClick={() => handleThemeChange('dark')}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold transition-all",
+                  theme === 'dark' ? "bg-white/10 text-white shadow-sm" : "text-on-background/40 hover:text-on-background/70"
+                )}
+              >
+                <Moon className="w-3 h-3" /> 夜间
+              </button>
             </div>
+
+            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Radio className="w-3.5 h-3.5 text-on-background/40" /></button>
+            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all relative bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Bell className="w-3.5 h-3.5 text-on-background/40" /><span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-orange-glow" /></button>
+            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Settings className="w-3.5 h-3.5 text-on-background/40" /></button>
+          </div>
+          <div className="w-7 h-7 rounded-full overflow-hidden ml-1 border border-on-background/10">
+            <img className="w-full h-full object-cover" src="https://picsum.photos/seed/user/100/100" alt="Avatar" referrerPolicy="no-referrer" />
           </div>
         </div>
       </header>
 
-      {/* Side Nav */}
-      <aside className="w-[64px] h-screen fixed left-0 top-[46px] z-40 bg-surface flex flex-col items-center py-6 gap-8 shadow-[4px_0_24px_rgba(0,0,0,0.5)] border-r border-outline-variant/10">
-        <div className="group cursor-pointer">
-          <MapIcon className="w-6 h-6 text-primary-container bg-primary-container/10 p-1 rounded-lg group-hover:scale-110 transition-transform" />
-        </div>
-        <div className="group cursor-pointer">
-          <Microscope className="w-6 h-6 text-[#50505a] hover:text-[#90909a] group-hover:scale-110 transition-transform" />
-        </div>
-        <div className="group cursor-pointer">
-          <BarChart3 className="w-6 h-6 text-[#50505a] hover:text-[#90909a] group-hover:scale-110 transition-transform" />
-        </div>
-        <div className="mt-auto group cursor-pointer">
-          <Settings className="w-6 h-6 text-[#50505a] hover:text-[#90909a] group-hover:scale-110 transition-transform" />
-        </div>
-      </aside>
+      {/* Side Nav - Removed as requested */}
 
-      {/* Main Content */}
-      <main className="ml-[64px] pt-[46px] flex h-screen overflow-hidden">
-        {/* Map Section */}
-        <section className="w-[65%] h-full relative overflow-hidden bg-surface-container-lowest">
-          <div className="absolute inset-0 z-0 bg-black">
-            <CesiumGlobe visible={viewMode === '3D'} layers={layers} />
-            <OpenLayersMap visible={viewMode === '2D'} layers={layers} />
-          </div>
 
-          {/* Layer Controls */}
-          <div className="absolute top-6 left-6 z-10 flex flex-col gap-2">
-            <div className="bg-surface-dim/80 glass p-4 rounded-xl shadow-2xl space-y-4 min-w-[180px] border border-outline-variant/10">
-              <h3 className="text-xs font-bold text-primary-container uppercase tracking-widest flex items-center gap-2">
-                <Layers className="w-4 h-4" /> 图层控制
-              </h3>
-              <div className="space-y-3">
-                {[
-                  { id: 'admin', label: '行政区划' },
-                  { id: 'wms', label: 'WMS 底图' }
-                ].map(layer => (
-                  <div key={layer.id} className="flex items-center justify-between group">
-                    <span className="text-sm text-[#90909a] group-hover:text-on-background transition-colors">{layer.label}</span>
-                    <div
-                      onClick={() => toggleLayer(layer.id as keyof typeof layers)}
-                      className={cn(
-                        "w-8 h-4 rounded-full relative cursor-pointer flex items-center px-0.5 transition-colors",
-                        layers[layer.id as keyof typeof layers] ? "bg-primary-container/20" : "bg-surface-container-highest"
-                      )}
-                    >
-                      <motion.div
-                        animate={{ x: layers[layer.id as keyof typeof layers] ? 16 : 0 }}
-                        className={cn(
-                          "w-3 h-3 rounded-full shadow-lg transition-colors",
-                          layers[layer.id as keyof typeof layers] ? "bg-primary-container" : "bg-[#50505a]"
-                        )}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+      {/* Floating Overlay Controls / Content */}
+      <main className="absolute inset-0 pointer-events-none z-10">
+        {/* Layer Controls - Bottom Left */}
+        <div className="absolute bottom-16 left-6 z-10 pointer-events-auto">
+          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <Layers className="w-3 h-3" style={{color:'rgba(240,112,64,0.7)'}} />
+              <span className="text-[9px] font-semibold uppercase tracking-[0.15em]" style={{color:'rgba(240,112,64,0.65)'}}>图层控制</span>
             </div>
-          </div>
-
-          {/* Info Badge — 订阅 activeRegion，动态渲染 */}
-          <div className="absolute top-6 right-6 z-10">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeRegion?.adcode ?? 'overview'}
-                initial={{ opacity: 0, y: -8, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.96 }}
-                transition={{ duration: 0.25 }}
-                className="bg-primary-container/10 border border-primary-container/20 glass px-6 py-3 rounded-xl flex flex-col items-end shadow-xl"
-              >
-                {activeRegion ? (
-                  <>
-                    <span className="text-primary-container font-bold text-2xl tracking-tight font-headline">
-                      {activeRegion.name}
-                    </span>
-                    <span className="text-primary text-[10px] font-mono tracking-widest">
-                      ADCODE: {activeRegion.adcode}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-primary-container font-bold text-2xl tracking-tight font-headline">
-                      中国全貌
-                    </span>
-                    <span className="text-primary text-[10px] font-mono tracking-widest">
-                      OVERVIEW
-                    </span>
-                  </>
-                )}
-              </motion.div>
-            </AnimatePresence>
-          </div>
-
-          {/* Mode Switcher — 带"视角交接仪式" */}
-          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-10">
-            <div className="bg-surface-container-high/60 glass p-1 rounded-full flex gap-1 shadow-2xl border border-outline-variant/10">
-              <button
-                onClick={() => handleViewModeSwitch('3D')}
-                className={cn(
-                  "px-6 py-1.5 rounded-full text-sm font-bold transition-all",
-                  viewMode === '3D' ? "bg-primary-container text-on-primary-fixed shadow-lg" : "text-[#90909a] hover:text-[#f0f0f0]"
-                )}
-              >
-                3D 地球
-              </button>
-              <button
-                onClick={() => handleViewModeSwitch('2D')}
-                className={cn(
-                  "px-6 py-1.5 rounded-full text-sm font-bold transition-all",
-                  viewMode === '2D' ? "bg-primary-container text-on-primary-fixed shadow-lg" : "text-[#90909a] hover:text-[#f0f0f0]"
-                )}
-              >
-                2D 地图
-              </button>
-            </div>
-          </div>
-
-          {/* Lat-Long Display */}
-          <div className="absolute bottom-6 left-6 z-10 font-mono text-[10px] text-[#50505a] flex gap-4 bg-surface-container-lowest/50 glass px-3 py-1 rounded-md">
-            <span>LNG: 104.0665</span>
-            <span>LAT: 30.5723</span>
-            <span>ELE: 500M</span>
-            <span className="text-primary-container/50">WGS84</span>
-          </div>
-
-          {/* Reset View 按钮 — 清空选中 + 双引擎飞回初始视角 */}
-          <div className="absolute bottom-6 right-6 z-10">
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={resetView}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl
-                         bg-primary-container/10 glass border border-primary-container/20
-                         text-primary-container text-sm font-bold
-                         hover:bg-primary-container hover:text-on-primary-fixed
-                         shadow-xl transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-4 h-4" />
-              复位视角
-            </motion.button>
-          </div>
-        </section>
-
-        {/* AI Chat Section */}
-        <section className="w-[35%] h-full">
-          <Chat
-            messages={messages}
-            onSendMessage={handleChatSubmit}
-            isLoading={isChatLoading}
-            onStopGeneration={handleStopGeneration}
-            inputValue={chatInput}
-            onInputChange={setChatInput}
-            onCitationClick={handleCitationClick}
-            disabled={isSearching}
-            title="Sentinel GeoAI"
-            status="模型就绪 · RAG 已同步"
-            quickTags={['# 城镇开发边界', '# 永久基本农田', '# 生态保护红线', '# 四川技术规范']}
-          />
-        </section>
-
-        {/* Details Drawer */}
-        <AnimatePresence>
-          {isDrawerOpen && selectedDocument && (
-            <motion.section
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed right-0 top-[46px] w-[35%] h-[calc(100vh-46px)] bg-surface-dim z-50 border-l border-outline-variant/20 shadow-[-10px_0_40px_rgba(0,0,0,0.5)] flex flex-col"
-            >
-              <div className="p-6 border-b border-outline-variant/10 flex items-center justify-between">
-                <h3 className="text-lg font-bold text-on-background flex items-center gap-3 font-headline">
-                  <ArrowLeft
-                    className="w-5 h-5 text-[#90909a] hover:text-[#f0f0f0] cursor-pointer"
-                    onClick={() => setIsDrawerOpen(false)}
-                  />
-                  标准详情
-                </h3>
-                <X
-                  className="w-5 h-5 text-[#50505a] hover:text-red-500 cursor-pointer transition-colors"
-                  onClick={() => setIsDrawerOpen(false)}
-                />
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar">
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 bg-primary-container/10 flex items-center justify-center rounded-2xl">
-                      <FileText className="w-10 h-10 text-primary-container" />
-                    </div>
-                    <div>
-                      <h2 className="text-xl font-extrabold text-[#f0f0f0] leading-tight font-headline">{selectedDocument.metadata.title}</h2>
-                      <p className="text-primary-container font-mono text-xs mt-1">{selectedDocument.id}</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4 py-6 border-y border-outline-variant/10">
-                    <div>
-                      <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">文件类型</p>
-                      <p className="text-sm text-on-background">{selectedDocument.file_type}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">文件大小</p>
-                      <p className="text-sm text-on-background">
-                        {selectedDocument.file_size > 1024 * 1024
-                          ? `${(selectedDocument.file_size / (1024 * 1024)).toFixed(2)} MB`
-                          : `${(selectedDocument.file_size / 1024).toFixed(2)} KB`}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">上传时间</p>
-                      <p className="text-sm text-on-background">
-                        {new Date(selectedDocument.upload_time).toLocaleDateString('zh-CN')}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">索引状态</p>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        selectedDocument.indexing_status === 'completed'
-                          ? 'bg-emerald-500/10 text-emerald-500'
-                          : selectedDocument.indexing_status === 'processing'
-                          ? 'bg-blue-500/10 text-blue-500'
-                          : selectedDocument.indexing_status === 'failed'
-                          ? 'bg-red-500/10 text-red-500'
-                          : 'bg-yellow-500/10 text-yellow-500'
-                      }`}>
-                        {selectedDocument.indexing_status === 'completed' ? '已完成' :
-                         selectedDocument.indexing_status === 'processing' ? '处理中' :
-                         selectedDocument.indexing_status === 'failed' ? '失败' : '待处理'}
-                      </span>
-                    </div>
+            {[
+              { id: 'admin', label: '行政区划' },
+              { id: 'wms', label: '卫星底图' }
+            ].map(layer => {
+              const isOn = layers[layer.id as keyof typeof layers];
+              return (
+                <div key={layer.id} className="flex items-center justify-between gap-4">
+                  <span className={cn("text-[11px] font-medium transition-colors", isOn ? "text-on-background/80" : "text-on-background/35")}>{layer.label}</span>
+                  <div className={`toggle-track ${isOn ? 'on' : 'off'}`} onClick={() => toggleLayer(layer.id as keyof typeof layers)}>
+                    <motion.div
+                      className={`toggle-thumb ${isOn ? 'on' : 'off'}`}
+                      animate={{ x: isOn ? 17 : 3 }}
+                      transition={{ type:'spring', stiffness:500, damping:30 }}
+                    />
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        </div>
 
-                {selectedDocument.metadata.description && (
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-[#90909a] uppercase tracking-widest">描述</h4>
-                    <p className="text-sm text-[#90909a] leading-relaxed">
-                      {selectedDocument.metadata.description}
+        {/* Info Badge - Top Left (below header) */}
+        <div className="absolute top-[80px] left-5 z-10 pointer-events-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeRegion?.adcode ?? 'overview'}
+              initial={{ opacity: 0, x: -6, scale: 0.97 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 6, scale: 0.97 }}
+              transition={{ duration: 0.2 }}
+              className="glass-light flex flex-col items-start px-4 py-3 rounded-xl"
+              style={{border:'0.5px solid var(--color-outline-glow)',boxShadow:'0 0 24px rgba(0,0,0,0.1)'}}
+            >
+              {activeRegion ? (
+                <>
+                  <span className="font-headline font-bold text-xl tracking-tight text-glow" style={{color:'var(--color-primary)'}}>{activeRegion.name}</span>
+                  <span className="font-mono text-[9px] tracking-[0.18em] mt-0.5" style={{color:'var(--color-primary-container)', opacity: 0.6}}>ADCODE · {activeRegion.adcode}</span>
+                </>
+              ) : (
+                <>
+                  <span className="font-headline font-bold text-xl tracking-tight text-on-background/70">中国全貌</span>
+                  <span className="font-mono text-[9px] tracking-[0.18em] mt-0.5 text-on-background/20">OVERVIEW</span>
+                </>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        {/* Mode Switcher - Bottom Center */}
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
+          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+            {(['3D 地球','2D 地图'] as const).map((label,i) => {
+              const mode = i===0 ? '3D' : '2D';
+              const active = viewMode === mode;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => handleViewModeSwitch(mode)}
+                  className={cn("px-5 py-1.5 rounded-full text-xs font-semibold transition-all", !active && "text-on-background/35 hover:text-on-background/60")}
+                  style={active ? {background:'var(--color-primary-container)',color:'var(--color-on-primary-fixed)',boxShadow:'0 0 12px var(--color-primary-glow)'} : {}}
+                >{label}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* AI Chat Panel - Floating Right */}
+        <div className="absolute top-[80px] bottom-6 right-6 w-[420px] pointer-events-auto z-20">
+          <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl">
+            <Chat
+              messages={messages}
+              onSendMessage={handleChatSubmit}
+              isLoading={isChatLoading}
+              onStopGeneration={handleStopGeneration}
+              inputValue={chatInput}
+              onInputChange={setChatInput}
+              onCitationClick={handleCitationClick}
+              disabled={isSearching}
+              title="Sentinel GeoAI"
+              status="模型就绪 · RAG 已同步"
+              quickTags={['#城镇开发边界', '#永久基本农田', '#生态保护红线', '#四川技术规范']}
+            />
+          </div>
+        </div>
+
+        {/* Coordinate Display */}
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[9px] text-on-background/30">
+          <span>LNG 104.0665</span>
+          <span className="opacity-40">|</span>
+          <span>LAT 30.5723</span>
+          <span className="opacity-40">|</span>
+          <span>ELE 500m</span>
+          <span className="text-primary-container/40">WGS84</span>
+        </div>
+
+        {/* Reset View - Optimized Position to Bottom-Left Cluster */}
+        <div className="absolute bottom-[200px] left-6 z-10 pointer-events-auto">
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={resetView}
+            className="glass-light flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer"
+            style={{border:'0.5px solid var(--color-outline-glow)', color:'var(--color-primary-container)', boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
+            onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(240,112,64,0.12)'}}
+            onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background=''}}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            复位视角
+          </motion.button>
+        </div>
+      </main>
+
+      {/* Details Drawer */}
+      <AnimatePresence>
+        {isDrawerOpen && selectedDocument && (
+          <motion.section
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ type: 'spring', damping: 28, stiffness: 220 }}
+            className="fixed right-6 top-[80px] bottom-6 w-[420px] z-[60] flex flex-col"
+            style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(32px)', border: '0.5px solid var(--color-outline)', borderRadius: '1.5rem', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}
+          >
+            {/* Details Drawer Header */}
+            <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: '0.5px solid var(--color-outline)' }}>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsDrawerOpen(false)}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 text-on-background/40" />
+                </button>
+                <h3 className="text-sm font-semibold font-headline text-on-background/85">标准详情</h3>
+              </div>
+              <button
+                onClick={() => setIsDrawerOpen(false)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"
+              >
+                <X className="w-3.5 h-3.5 text-on-background/35" />
+              </button>
+            </div>
+            
+            {/* Skip middle part for this specific edit to avoid too much text if needed, but here I should include enough to match */}
+            <div className="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar">
+              <div className="space-y-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 bg-primary-container/10 flex items-center justify-center rounded-2xl">
+                    <FileText className="w-10 h-10 text-primary-container" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-extrabold text-[#f0f0f0] leading-tight font-headline">{selectedDocument.metadata.title}</h2>
+                    <p className="text-primary-container font-mono text-xs mt-1">{selectedDocument.id}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 py-6 border-y border-outline-variant/10">
+                  <div>
+                    <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">文件类型</p>
+                    <p className="text-sm text-on-background">{selectedDocument.file_type}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">文件大小</p>
+                    <p className="text-sm text-on-background">
+                      {selectedDocument.file_size > 1024 * 1024
+                        ? `${(selectedDocument.file_size / (1024 * 1024)).toFixed(2)} MB`
+                        : `${(selectedDocument.file_size / 1024).toFixed(2)} KB`}
                     </p>
                   </div>
-                )}
-
-                {selectedDocument.metadata.keywords && selectedDocument.metadata.keywords.length > 0 && (
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-[#90909a] uppercase tracking-widest">关键词</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedDocument.metadata.keywords.map((keyword, idx) => (
-                        <span key={idx} className="bg-surface-container px-2 py-1 rounded text-xs text-on-background">
-                          {keyword}
-                        </span>
-                      ))}
-                    </div>
+                  <div>
+                    <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">上传时间</p>
+                    <p className="text-sm text-on-background">
+                      {new Date(selectedDocument.upload_time).toLocaleDateString('zh-CN')}
+                    </p>
                   </div>
-                )}
-
-                {selectedDocument.spatial_metadata && (
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-[#90909a] uppercase tracking-widest">空间信息</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      {selectedDocument.spatial_metadata.address && (
-                        <div>
-                          <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">地址</p>
-                          <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.address}</p>
-                        </div>
-                      )}
-                      {selectedDocument.spatial_metadata.city && (
-                        <div>
-                          <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">城市</p>
-                          <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.city}</p>
-                        </div>
-                      )}
-                      {selectedDocument.spatial_metadata.province && (
-                        <div>
-                          <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">省份</p>
-                          <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.province}</p>
-                        </div>
-                      )}
-                      {selectedDocument.spatial_metadata.country && (
-                        <div>
-                          <p className="text-[10px] text-[#50505a] uppercase font-bold tracking-widest mb-1">国家</p>
-                          <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.country}</p>
-                        </div>
-                      )}
-                    </div>
+                   <div>
+                    <p className="text-[10px] opacity-40 text-on-background uppercase font-bold tracking-widest mb-1">索引状态</p>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      selectedDocument.indexing_status === 'completed'
+                        ? 'bg-emerald-500/15 text-emerald-500'
+                        : 'bg-yellow-500/15 text-yellow-500'
+                    }`}>
+                      {selectedDocument.indexing_status === 'completed' ? '已完成' : '待处理'}
+                    </span>
                   </div>
-                )}
-
-                <div className="pt-8">
-                  {selectedDocument.access_url ? (
-                    <a
-                      href={selectedDocument.access_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full bg-surface-container-highest border border-outline-variant/30 py-4 rounded-xl text-on-background text-sm font-bold hover:bg-surface-bright transition-colors flex items-center justify-center gap-3"
-                    >
-                      <Download className="w-5 h-5 text-primary-container" /> 下载文档
-                    </a>
-                  ) : (
-                    <button
-                      onClick={() => alert('文档暂不可下载')}
-                      className="w-full bg-surface-container-highest border border-outline-variant/30 py-4 rounded-xl text-on-background text-sm font-bold hover:bg-surface-bright transition-colors flex items-center justify-center gap-3 opacity-50 cursor-not-allowed"
-                    >
-                      <Download className="w-5 h-5 text-primary-container" /> 文档暂不可下载
-                    </button>
-                  )}
                 </div>
               </div>
-            </motion.section>
-          )}
-        </AnimatePresence>
-      </main>
+
+              {selectedDocument.spatial_metadata && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-[#90909a] uppercase tracking-widest">空间信息</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    {selectedDocument.spatial_metadata.city && (
+                      <div>
+                        <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">城市</p>
+                        <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.city}</p>
+                      </div>
+                    )}
+                    {selectedDocument.spatial_metadata.province && (
+                      <div>
+                        <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">省份</p>
+                        <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.province}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-8 mb-4">
+                {selectedDocument.access_url ? (
+                  <a
+                    href={selectedDocument.access_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-surface-container-highest border border-outline-variant/30 py-4 rounded-xl text-on-background text-sm font-bold hover:bg-surface-bright transition-colors flex items-center justify-center gap-3"
+                  >
+                    <Download className="w-5 h-5 text-primary-container" /> 下载标准文档
+                  </a>
+                ) : (
+                  <button className="w-full bg-surface-container-highest border border-outline-variant/30 py-4 rounded-xl text-on-background text-sm font-bold opacity-50 cursor-not-allowed flex items-center justify-center gap-3">
+                    <Download className="w-5 h-5 text-primary-container" /> 文档锁定
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.section>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

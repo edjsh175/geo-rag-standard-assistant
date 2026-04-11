@@ -31,23 +31,30 @@ interface OpenLayersMapProps {
 
 // ==================== 三态样式 ====================
 
-// 默认：对齐 Cesium 的 default
+const TECH_ORANGE = '#f07040';
+
+// 默认：极细边框，低透明填充
 const DEFAULT_STYLE = new Style({
-  stroke: new Stroke({ color: 'rgba(255, 165, 0, 0.6)', width: 2 }),
-  fill: new Fill({ color: 'rgba(255, 165, 0, 0.15)' }),
+  stroke: new Stroke({ color: 'rgba(240, 112, 64, 0.25)', width: 1.2 }),
+  fill: new Fill({ color: 'rgba(240, 112, 64, 0.08)' }),
 });
 
-// 悬浮：对齐 Cesium 的 hover
+// 悬浮：中等边框，中透明填充
 const HOVER_STYLE = new Style({
-  stroke: new Stroke({ color: 'rgba(255, 165, 0, 0.9)', width: 3 }),
-  fill: new Fill({ color: 'rgba(255, 165, 0, 0.4)' }),
+  stroke: new Stroke({ color: 'rgba(240, 112, 64, 0.85)', width: 2.2 }),
+  fill: new Fill({ color: 'rgba(240, 112, 64, 0.25)' }),
 });
 
-// 选中/高亮：对齐 Cesium 的 clicked
-const SELECTED_STYLE = new Style({
-  stroke: new Stroke({ color: 'rgba(255, 165, 0, 1.0)', width: 5 }),
-  fill: new Fill({ color: 'rgba(255, 165, 0, 0.6)' }),
-});
+// 选中/高亮：加粗边框并模拟发光效果 (双层 Stroke)
+const SELECTED_STYLE = [
+  new Style({
+    stroke: new Stroke({ color: 'rgba(240, 112, 64, 0.3)', width: 8 }),
+  }),
+  new Style({
+    stroke: new Stroke({ color: 'rgba(240, 112, 64, 1.0)', width: 4 }),
+    fill: new Fill({ color: 'rgba(240, 112, 64, 0.4)' }),
+  })
+];
 
 const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
   const mapElement = useRef<HTMLDivElement>(null);

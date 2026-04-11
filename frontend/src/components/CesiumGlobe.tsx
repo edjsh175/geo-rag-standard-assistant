@@ -30,21 +30,25 @@ interface CesiumGlobeProps {
 }
 
 // ==================== 样式常量 ====================
+const TECH_ORANGE = Cesium.Color.fromCssColorString('#f07040');
 const STYLE_DEFAULT = {
-  material: Cesium.Color.ORANGE.withAlpha(0.15),
-  outlineColor: Cesium.Color.ORANGE.withAlpha(0.6),
+  material: TECH_ORANGE.withAlpha(0.08),
+  outlineColor: TECH_ORANGE.withAlpha(0.35),
+  outlineWidth: 1.2,
 };
-// 中国全境矩形范围
-const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
-
 const STYLE_HOVER = {
-  material: Cesium.Color.ORANGE.withAlpha(0.4),
+  material: TECH_ORANGE.withAlpha(0.25),
+  outlineColor: TECH_ORANGE.withAlpha(0.85),
+  outlineWidth: 2.2,
 };
 const STYLE_CLICKED = {
-  material: Cesium.Color.ORANGE.withAlpha(0.6),
-  outlineWidth: 5,
-  outlineColor: Cesium.Color.ORANGE,
+  material: TECH_ORANGE.withAlpha(0.4),
+  outlineColor: TECH_ORANGE.withAlpha(1.0),
+  outlineWidth: 4.0,
 };
+
+// 中国全境矩形范围
+const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
 
 const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -161,7 +165,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
           id: `geojson-outline-${adcode}-${index}-${polyIndex}`,
           polyline: new Cesium.PolylineGraphics({
             positions: [...positions, positions[0]], // 闭合
-            width: 2,
+            width: STYLE_DEFAULT.outlineWidth,
             material: STYLE_DEFAULT.outlineColor,
             // 关闭 clampToGround 获取最高性能，因为我们在用平面椭球体
           }),
@@ -230,11 +234,11 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
             (outline.polyline as any).material = STYLE_CLICKED.outlineColor;
             break;
           case 'hover':
-            (outline.polyline as any).width = 3;
-            (outline.polyline as any).material = Cesium.Color.ORANGE.withAlpha(0.9);
+            (outline.polyline as any).width = STYLE_HOVER.outlineWidth;
+            (outline.polyline as any).material = STYLE_HOVER.outlineColor;
             break;
           default:
-            (outline.polyline as any).width = 2;
+            (outline.polyline as any).width = STYLE_DEFAULT.outlineWidth;
             (outline.polyline as any).material = STYLE_DEFAULT.outlineColor;
             break;
         }
