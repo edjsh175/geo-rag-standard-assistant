@@ -239,7 +239,7 @@ export default function App() {
    * @param content 原始消息内容
    * @returns 包含净化后内容和adcode的对象
    */
-  const extractAdcodeAndPurify = (content: string): { purifiedContent: string; adcode?: string } => {
+  const extractAdcodeAndPurify = (content: string): { purifiedContent: string; adcode?: string; name?: string } => {
     // 正则表达式匹配Markdown JSON代码块
     const regex = /```json\n([\s\S]*?)\n```/;
     const match = content.match(regex);
@@ -252,11 +252,12 @@ export default function App() {
       const jsonStr = match[1];
       const parsed = JSON.parse(jsonStr);
       const adcode = parsed.adcode;
+      const name = parsed.name;
 
       if (typeof adcode === 'string' && /^\d{6}$/.test(adcode)) {
         // 移除JSON代码块，净化内容
         const purifiedContent = content.replace(regex, '').trim();
-        return { purifiedContent, adcode };
+        return { purifiedContent, adcode, name };
       }
     } catch (error) {
       console.warn('解析ADCODE JSON失败:', error);
@@ -350,12 +351,12 @@ export default function App() {
       }));
 
       // 提取ADCODE并净化消息内容
-      const { purifiedContent, adcode } = extractAdcodeAndPurify(response.message);
+      const { purifiedContent, adcode, name } = extractAdcodeAndPurify(response.message);
 
       // 如果提取到有效的ADCODE，写入全局 Store（双引擎自动响应）
       if (adcode) {
-        console.log(`提取到行政区划代码: ${adcode}，触发地图飞行`);
-        setActiveRegion({ adcode, name: adcode });
+        console.log(`提取到地理位置信息: ${name || adcode}(${adcode})，触发地图飞行`);
+        setActiveRegion({ adcode, name: name || adcode });
       }
 
       const assistantMessage: ChatMessageType = {
@@ -378,7 +379,7 @@ export default function App() {
         const newSearchResults: SearchResult[] = documents.map(doc => ({
           id: doc.id,
           score: 0.8, // 默认分数
-          document: doc,
+          document: { ...doc, indexing_status: doc.indexing_status as Document['indexing_status'] },
           highlights: {},
           explanation: '来自聊天上下文'
         }));
@@ -501,7 +502,7 @@ export default function App() {
             <div className="w-5 h-5 bg-primary-container rotate-45 flex items-center justify-center overflow-hidden">
               <div className="w-full h-full bg-surface-container-lowest scale-75 rotate-[-45deg]"></div>
             </div>
-            <span>GeoAI 空间规划智能检索系统</span>
+            <span>标准规范-智能空间查询系统</span>
           </div>
           <nav className="flex items-center h-[46px] ml-4">
             <a className="text-primary-container font-bold border-b-2 border-primary-container h-full flex items-center px-4 transition-all" href="#">检索</a>
