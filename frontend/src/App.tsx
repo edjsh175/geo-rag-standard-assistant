@@ -90,7 +90,7 @@ export default function App() {
         }
         // 此时 store.viewState.height 已更新，补算 zoom
         const { height, center } = useMapStore.getState().viewState;
-        const zoom = heightToZoom(height);
+        const zoom = heightToZoom(height, center[1]);
         setViewState({ zoom, center });
       }
     } else {
@@ -108,7 +108,7 @@ export default function App() {
         });
       }
       const { zoom, center } = useMapStore.getState().viewState;
-      const height = zoomToHeight(zoom);
+      const height = zoomToHeight(zoom, center[1]);
       setViewState({ height, center });
     }
 
@@ -544,8 +544,8 @@ export default function App() {
     <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
       {/* Background Map Layer */}
       <section className="absolute inset-0 z-0 overflow-hidden" style={{background:'#08080b'}}>
-        <CesiumGlobe visible={viewMode === '3D'} layers={layers} />
-        <OpenLayersMap visible={viewMode === '2D'} layers={layers} />
+        <CesiumGlobe theme={theme} visible={viewMode === '3D'} layers={layers} />
+        <OpenLayersMap theme={theme} visible={viewMode === '2D'} layers={layers} />
       </section>
 
       {/* Floating Header */}
@@ -570,7 +570,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{background:'rgba(16,185,129,0.08)',border:'0.5px solid rgba(16,185,129,0.2)'}}>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" style={{boxShadow:'0 0 6px rgba(16,185,129,0.7)'}}></span>
-            <span className="text-[10px] font-medium" style={{color:'rgba(16,185,129,0.8)'}}>已连接</span>
+            <span className="text-[12.5px] font-medium" style={{color:'rgba(16,185,129,0.8)'}}>已连接</span>
           </div>
           <div className="flex gap-1.5 items-center mr-2">
             {/* Theme Segmented Control */}
@@ -578,7 +578,7 @@ export default function App() {
               <button 
                 onClick={() => handleThemeChange('light')}
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold transition-all",
+                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-[12.5px] font-semibold transition-all",
                   theme === 'light' ? "bg-white text-black shadow-sm" : "text-on-background/40 hover:text-on-background/70"
                 )}
               >
@@ -587,7 +587,7 @@ export default function App() {
               <button 
                 onClick={() => handleThemeChange('dark')}
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold transition-all",
+                  "flex items-center gap-1.5 px-3 py-1 rounded-md text-[12.5px] font-semibold transition-all",
                   theme === 'dark' ? "bg-white/10 text-white shadow-sm" : "text-on-background/40 hover:text-on-background/70"
                 )}
               >
@@ -615,7 +615,7 @@ export default function App() {
           <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             <div className="flex items-center gap-1.5 mb-0.5">
               <Layers className="w-3 h-3" style={{color:'rgba(240,112,64,0.7)'}} />
-              <span className="text-[9px] font-semibold uppercase tracking-[0.15em]" style={{color:'rgba(240,112,64,0.65)'}}>图层控制</span>
+              <span className="text-[11.5px] font-semibold uppercase tracking-[0.15em]" style={{color:'rgba(240,112,64,0.65)'}}>图层控制</span>
             </div>
             {[
               { id: 'admin', label: '行政区划' },
@@ -624,7 +624,7 @@ export default function App() {
               const isOn = layers[layer.id as keyof typeof layers];
               return (
                 <div key={layer.id} className="flex items-center justify-between gap-4">
-                  <span className={cn("text-[11px] font-medium transition-colors", isOn ? "text-on-background/80" : "text-on-background/35")}>{layer.label}</span>
+                  <span className={cn("text-[13.5px] font-medium transition-colors", isOn ? "text-on-background/80" : "text-on-background/35")}>{layer.label}</span>
                   <div className={`toggle-track ${isOn ? 'on' : 'off'}`} onClick={() => toggleLayer(layer.id as keyof typeof layers)}>
                     <motion.div
                       className={`toggle-thumb ${isOn ? 'on' : 'off'}`}
@@ -653,12 +653,12 @@ export default function App() {
               {activeRegion ? (
                 <>
                   <span className="font-headline font-bold text-xl tracking-tight text-glow" style={{color:'var(--color-primary)'}}>{activeRegion.name}</span>
-                  <span className="font-mono text-[9px] tracking-[0.18em] mt-0.5" style={{color:'var(--color-primary-container)', opacity: 0.6}}>ADCODE · {activeRegion.adcode}</span>
+                  <span className="font-mono text-[11.5px] tracking-[0.18em] mt-0.5" style={{color:'var(--color-primary-container)', opacity: 0.6}}>ADCODE · {activeRegion.adcode}</span>
                 </>
               ) : (
                 <>
                   <span className="font-headline font-bold text-xl tracking-tight text-on-background/70">中国全貌</span>
-                  <span className="font-mono text-[9px] tracking-[0.18em] mt-0.5 text-on-background/20">OVERVIEW</span>
+                  <span className="font-mono text-[11.5px] tracking-[0.18em] mt-0.5 text-on-background/20">OVERVIEW</span>
                 </>
               )}
             </motion.div>
@@ -703,7 +703,7 @@ export default function App() {
         </div>
 
         {/* Coordinate Display */}
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[9px] text-on-background/30">
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px] text-on-background/30">
           <span>LNG 104.0665</span>
           <span className="opacity-40">|</span>
           <span>LAT 30.5723</span>
@@ -773,11 +773,11 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 py-6 border-y border-outline-variant/10">
                   <div>
-                    <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">文件类型</p>
+                    <p className="text-[12.5px] text-on-background/40 uppercase font-bold tracking-widest mb-1">文件类型</p>
                     <p className="text-sm text-on-background">{selectedDocument.file_type}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">文件大小</p>
+                    <p className="text-[12.5px] text-on-background/40 uppercase font-bold tracking-widest mb-1">文件大小</p>
                     <p className="text-sm text-on-background">
                       {selectedDocument.file_size > 1024 * 1024
                         ? `${(selectedDocument.file_size / (1024 * 1024)).toFixed(2)} MB`
@@ -785,14 +785,14 @@ export default function App() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">上传时间</p>
+                    <p className="text-[12.5px] text-on-background/40 uppercase font-bold tracking-widest mb-1">上传时间</p>
                     <p className="text-sm text-on-background">
                       {new Date(selectedDocument.upload_time).toLocaleDateString('zh-CN')}
                     </p>
                   </div>
                    <div>
-                    <p className="text-[10px] opacity-40 text-on-background uppercase font-bold tracking-widest mb-1">索引状态</p>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    <p className="text-[12.5px] opacity-40 text-on-background uppercase font-bold tracking-widest mb-1">索引状态</p>
+                    <span className={`px-2 py-0.5 rounded text-[12.5px] font-bold ${
                       selectedDocument.indexing_status === 'completed'
                         ? 'bg-emerald-500/15 text-emerald-500'
                         : 'bg-yellow-500/15 text-yellow-500'
@@ -809,13 +809,13 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-4">
                     {selectedDocument.spatial_metadata.city && (
                       <div>
-                        <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">城市</p>
+                        <p className="text-[12.5px] text-on-background/40 uppercase font-bold tracking-widest mb-1">城市</p>
                         <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.city}</p>
                       </div>
                     )}
                     {selectedDocument.spatial_metadata.province && (
                       <div>
-                        <p className="text-[10px] text-on-background/40 uppercase font-bold tracking-widest mb-1">省份</p>
+                        <p className="text-[12.5px] text-on-background/40 uppercase font-bold tracking-widest mb-1">省份</p>
                         <p className="text-sm text-on-background">{selectedDocument.spatial_metadata.province}</p>
                       </div>
                     )}

@@ -12,6 +12,9 @@ import tempfile
 from pathlib import Path
 import datetime
 from functools import wraps
+import json
+from minio import Minio
+from minio.error import S3Error
 
 # 从新配置模块导入
 from src.geoai.core.config import (
@@ -30,13 +33,9 @@ from src.geoai.core.config import (
     FORCE_EXTRACT,
     DELETE_AFTER_EXTRACT,
     RECURSIVE_EXTRACT,
-    HEADERS_TO_SPLIT_ON,
-    CHUNK_SIZE,
-    CHUNK_OVERLAP,
-    ZHIPU_API_KEY,
-    EMBEDDING_MODEL,
     VECTOR_DIMENSION,
-    DB_CONFIG
+    DB_CONFIG,
+    MINIO_CONFIG
 )
 
 # ================= MySQL 连接配置（从新配置模块读取）=================
@@ -84,6 +83,74 @@ def exponential_backoff(max_retries=4, base_delay=1):
                     time.sleep(delay)
         return wrapper
     return decorator
+
+def init_minio():
+    """初始化 MinIO 客户端并确保 Bucket 存在 (同步版)"""
+    try:
+        minio_client = Minio(
+            MINIO_CONFIG["endpoint"],
+            access_key=MINIO_CONFIG["access_key"],
+            secret_key=MINIO_CONFIG["secret_key"],
+            secure=MINIO_CONFIG["secure"]
+        )
+        
+        bucket_name = MINIO_CONFIG["bucket"]
+        if not minio_client.bucket_exists(bucket_name):
+            print(f"[MinIO] 正在创建 Bucket: {bucket_name}")
+            minio_client.make_bucket(bucket_name)
+            
+            # 设置公共读取策略
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"AWS": ["*"]},
+                        "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+                        "Resource": [f"arn:aws:s3:::{bucket_name}"]
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"AWS": ["*"]},
+                        "Action": ["s3:GetObject"],
+                        "Resource": [f"arn:aws:s3:::{bucket_name}/*"]
+                    }
+                ]
+            }
+            minio_client.set_bucket_policy(bucket_name, json.dumps(policy))
+            print(f"[MinIO] 已设置公共读取策略")
+        return minio_client
+    except Exception as e:
+        print(f"[MinIO 错误] 初始化失败: {e}")
+        return None
+
+def sync_from_minio(minio_client, target_dir):
+    """从 MinIO 同步所有压缩包到本地目录"""
+    if not minio_client:
+        return
+    
+    bucket_name = MINIO_CONFIG["bucket"]
+    print(f"[MinIO] 正在从 Bucket '{bucket_name}' 同步文档到 {target_dir}...")
+    
+    try:
+        objects = minio_client.list_objects(bucket_name, recursive=True)
+        synced_count = 0
+        for obj in objects:
+            if any(obj.object_name.lower().endswith(ext) for ext in SUPPORTED_ARCHIVE_EXTENSIONS):
+                local_path = os.path.join(target_dir, obj.object_name)
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                # 如果本地版本已经存在且大小一致，则跳过
+                if os.path.exists(local_path) and os.path.getsize(local_path) == obj.size:
+                    continue
+                
+                print(f"  [下载] {obj.object_name}...")
+                minio_client.fget_object(bucket_name, obj.object_name, local_path)
+                synced_count += 1
+        
+        print(f"[MinIO] 同步完成，共下载 {synced_count} 个文件")
+    except Exception as e:
+        print(f"[MinIO 错误] 同步失败: {e}")
 
 def extract_archives():
     """
@@ -621,6 +688,14 @@ def process_markdown_file(file_path, conn, cur, mysql_conn=None):
 
 def main():
     print("[开始] 开始企业级知识库构建流程（双库联动版本）...")
+
+    # ================= 第零步：从 MinIO 同步文档 =================
+    print("\n[阶段0] 初始化 MinIO 并同步源文档...")
+    minio_client = init_minio()
+    if minio_client:
+        sync_from_minio(minio_client, COMPRESSED_DIR)
+    else:
+        print("[警告] 无法连接 MinIO，将仅使用本地现有文档")
 
     # ================= 第一步：安全解压压缩包 =================
     print("\n[阶段1] 安全解压压缩包（按分类/标准名创建独立目录）...")

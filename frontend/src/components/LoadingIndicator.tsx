@@ -48,7 +48,7 @@ const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({
           <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse-soft [animation-delay:0.8s]" style={{ boxShadow: '0 0 8px rgba(240,112,64,0.5)' }} />
         </div>
         {text && (
-          <span className={cn('text-[11px] font-medium tracking-wide uppercase italic', textClassName)} style={{ color: 'rgba(240,112,64,0.65)' }}>
+          <span className={cn('text-[13.5px] font-medium tracking-wide uppercase italic', textClassName)} style={{ color: 'rgba(240,112,64,0.65)' }}>
             {text}
           </span>
         )}

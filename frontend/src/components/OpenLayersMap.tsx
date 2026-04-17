@@ -23,6 +23,7 @@ import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapSto
 
 interface OpenLayersMapProps {
   visible: boolean;
+  theme?: 'light' | 'dark';
   layers: {
     admin: boolean;
     wms: boolean;
@@ -56,12 +57,12 @@ const SELECTED_STYLE = [
   })
 ];
 
-const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
+const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', layers }) => {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const provincesLayerRef = useRef<VectorImageLayer | null>(null);
   const provincesSourceRef = useRef<VectorSource | null>(null);
-  const baseLayersRef = useRef<{ tdtVec?: TileLayer, tdtCva?: TileLayer, satellite?: TileLayer }>({});
+  const baseLayersRef = useRef<{ cartoLight?: TileLayer, cartoDark?: TileLayer, tdtCva?: TileLayer, satellite?: TileLayer }>({});
   const geoJsonCache = useRef<any>(null);
 
   // 交互状态
@@ -262,13 +263,32 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
 
-    // 天地图电子底图
-    const tdtVecLayer = new TileLayer({
+    // CartoDB 极简底图（日间，使用 Fastly 节点抗代理拦截）
+    const cartoLightLayer = new TileLayer({
       source: new XYZ({
-        url: `https://t0.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+        urls: [
+          'https://cartodb-basemaps-a.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
+          'https://cartodb-basemaps-b.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
+          'https://cartodb-basemaps-c.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
+          'https://cartodb-basemaps-d.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png'
+        ]
       }),
       preload: 4,
-      visible: !layers.wms,
+      visible: !layers.wms && theme === 'light',
+    });
+
+    // CartoDB 极简底图（夜间，使用 Fastly 节点抗代理拦截）
+    const cartoDarkLayer = new TileLayer({
+      source: new XYZ({
+        urls: [
+          'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
+          'https://cartodb-basemaps-b.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
+          'https://cartodb-basemaps-c.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
+          'https://cartodb-basemaps-d.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png'
+        ]
+      }),
+      preload: 4,
+      visible: !layers.wms && theme === 'dark',
     });
 
     // 天地图中文注记
@@ -277,8 +297,10 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
         url: `https://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
       }),
       preload: 4,
-      visible: !layers.wms,
+      visible: true, // 注记始终保持在上面（如果你希望在卫星下也显示的话。如果没有字就不显示，可以改为 !layers.wms）
     });
+    // 如果用户希望保留原有逻辑(wms下没字)：
+    tdtCvaLayer.setVisible(!layers.wms);
 
     // 天地图卫星影像
     const satelliteLayer = new TileLayer({
@@ -289,12 +311,13 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
       visible: layers.wms,
     });
 
-    baseLayersRef.current = { tdtVec: tdtVecLayer, tdtCva: tdtCvaLayer, satellite: satelliteLayer };
+    baseLayersRef.current = { cartoLight: cartoLightLayer, cartoDark: cartoDarkLayer, tdtCva: tdtCvaLayer, satellite: satelliteLayer };
 
     const map = new Map({
       target: mapElement.current,
       layers: [
-        tdtVecLayer,
+        cartoLightLayer,
+        cartoDarkLayer,
         tdtCvaLayer,
         satelliteLayer,
         provincesLayer,
@@ -437,13 +460,14 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, layers }) => {
     if (provincesLayerRef.current) {
       provincesLayerRef.current.setVisible(layers.admin);
     }
-    const { tdtVec, tdtCva, satellite } = baseLayersRef.current;
-    if (tdtVec && tdtCva && satellite) {
-      tdtVec.setVisible(!layers.wms);
+    const { cartoLight, cartoDark, tdtCva, satellite } = baseLayersRef.current;
+    if (cartoLight && cartoDark && tdtCva && satellite) {
+      cartoLight.setVisible(!layers.wms && theme === 'light');
+      cartoDark.setVisible(!layers.wms && theme === 'dark');
       tdtCva.setVisible(!layers.wms);
       satellite.setVisible(layers.wms);
     }
-  }, [layers]);
+  }, [layers, theme]);
 
   return (
     <div

@@ -19,23 +19,65 @@ export interface MapViewState {
   height: number;             // Cesium 相机高度（米）
 }
 
-// ==================== 视角转换公式 ====================
-// 近似关系：Cesium height ≈ 140_800_000 / 2^zoom （已按4倍比例补偿）
-// 逆推：zoom ≈ log2(140_800_000 / height)
+// ==================== 视角转换公式 (The Math Engine) ====================
+// 完美的数学无缝转换：
+// OpenLayers 基于 WebMercator (EPSG:3857)，赤道分辨率 = 156543.03392804097 / 2^zoom
+// 实际维度的物理距离需要乘上 cos(latitude)。
+// Cesium 的基于垂直视野角 (fov) 的相机，距地高度 height = (视锥体垂直地表范围 / 2) / tan(fov / 2)。
+// 默认 Cesium vertical fov = Math.PI / 3 (60度)。
+
+const R0 = 156543.03392804097;
+
+/** 动态获取当前窗口大小（默认 1920x1080） */
+const getViewportSize = () => {
+  if (typeof window !== 'undefined') {
+    return { w: window.innerWidth, h: window.innerHeight };
+  }
+  return { w: 1920, h: 1080 };
+};
+
+/** 
+ * 计算 Cesium 当前的垂直半视场角的正切值 tan(fovy / 2)
+ * Cesium 默认的 frustum.fov (Math.PI / 3) 作用于较长的那一边（通常是宽度）
+ */
+const getTanHalfFovy = (w: number, h: number) => {
+  const tanHalfFov = Math.tan(Math.PI / 6); // fov/2 = 30度
+  if (w > h) {
+    // 宽屏：fov 决定 fovx，fovy 被 aspect ratio 压缩
+    const aspect = w / h;
+    return tanHalfFov / aspect;
+  }
+  // 竖屏：fov 决定 fovy
+  return tanHalfFov;
+};
 
 /** OL zoom → Cesium camera height（米） */
-export const zoomToHeight = (zoom: number): number =>
-  140_800_000 / Math.pow(2, zoom);
+export const zoomToHeight = (zoom: number, lat: number = 33.0): number => {
+  const { w, h } = getViewportSize();
+  const resAtEquator = R0 / Math.pow(2, zoom);
+  const trueRes = resAtEquator * Math.cos(lat * Math.PI / 180);
+  const visibleVerticalMeters = h * trueRes;
+  
+  const tanHalfFovy = getTanHalfFovy(w, h);
+  return (visibleVerticalMeters / 2) / tanHalfFovy;
+};
 
 /** Cesium camera height → OL zoom */
-export const heightToZoom = (height: number): number =>
-  Math.log2(140_800_000 / Math.max(height, 1));
+export const heightToZoom = (height: number, lat: number = 33.0): number => {
+  const { w, h } = getViewportSize();
+  const tanHalfFovy = getTanHalfFovy(w, h);
+  
+  const visibleVerticalMeters = 2 * Math.max(height, 1) * tanHalfFovy;
+  const trueRes = visibleVerticalMeters / h;
+  const resAtEquator = trueRes / Math.cos(lat * Math.PI / 180);
+  return Math.log2(R0 / resAtEquator);
+};
 
 // ==================== 初始视角（中国全貌） ====================
 export const INITIAL_VIEW: MapViewState = {
   center: [104.0, 33.0], // 对齐 Cesium 中 [73.0, 12.0, 135.0, 54.0] 的矩阵中心
-  zoom: 4.8,             // 缩小 zoom 挡位以匹配 Cesium 的广角视野
-  height: zoomToHeight(4.8), 
+  zoom: 4.8,             // 保持 OL 的舒适展示 zoom
+  height: zoomToHeight(4.8, 33.0), // 根据完美数学公式推导出的真实 3D 相机高度
 };
 
 // ==================== Store 定义 ====================

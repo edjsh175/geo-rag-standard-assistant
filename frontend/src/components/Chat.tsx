@@ -93,10 +93,10 @@ const Chat: React.FC<ChatProps> = ({
             <Bot className="w-4 h-4" style={{ color: '#f07040' }} />
           </div>
           <div>
-            <h2 className="text-[13px] font-semibold tracking-wide font-headline text-on-background">{title}</h2>
+            <h2 className="text-[15px] font-semibold tracking-wide font-headline text-on-background">{title}</h2>
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" style={{ boxShadow: '0 0 5px rgba(16,185,129,0.7)' }} />
-              <p className="text-[9px] font-medium text-emerald-500/80">{status}</p>
+              <p className="text-[11.5px] font-medium text-emerald-500/80">{status}</p>
             </div>
           </div>
         </div>
@@ -135,7 +135,7 @@ const Chat: React.FC<ChatProps> = ({
               {onStopGeneration && (
                 <button
                   onClick={onStopGeneration}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-medium transition-colors"
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] font-medium transition-colors"
                   style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.75)', border: '0.5px solid rgba(239,68,68,0.2)' }}
                 >
                   <X className="w-3 h-3" /> 停止生成
@@ -158,7 +158,7 @@ const Chat: React.FC<ChatProps> = ({
             value={inputValue}
             onChange={e => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full rounded-xl py-3 pl-4 pr-20 text-[13px] transition-all outline-none bg-surface-variant/40 border border-outline text-on-background"
+            className="w-full rounded-xl py-3 pl-4 pr-20 text-[15px] transition-all outline-none bg-surface-variant/40 border border-outline text-on-background"
             style={{
               caretColor: '#f07040',
             }}
@@ -191,7 +191,7 @@ const Chat: React.FC<ChatProps> = ({
             <button
               key={tag}
               onClick={() => onInputChange(tag.replace(/^#/, ''))}
-              className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-medium transition-all whitespace-nowrap bg-primary-container/[0.07] border border-primary-container/[0.18] text-primary-container/80 hover:bg-primary-container/[0.14] hover:text-primary-container"
+              className="shrink-0 px-2.5 py-1 rounded-full text-[12.5px] font-medium transition-all whitespace-nowrap bg-primary-container/[0.07] border border-primary-container/[0.18] text-primary-container/80 hover:bg-primary-container/[0.14] hover:text-primary-container"
             >{tag}</button>
           ))}
         </div>
@@ -224,7 +224,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
         {/* Bubble */}
         <div
           className={cn(
-            "rounded-xl text-[13px] leading-[1.75] p-3.5 border",
+            "rounded-xl text-[15px] leading-[1.75] p-3.5 border",
             isUser ? "bg-primary-container/[0.07] border-primary-container/[0.18] text-on-background/90" : "bg-surface-container/60 border-outline text-on-background/90"
           )}
           style={
@@ -241,7 +241,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
         </div>
 
         {/* Timestamp */}
-        <p className="text-[10px] font-mono mt-1 opacity-40" style={{ color: 'var(--color-on-background)', textAlign: isUser ? 'right' : 'left', letterSpacing: '0.05em' }}>
+        <p className="text-[12.5px] font-mono mt-1 opacity-40" style={{ color: 'var(--color-on-background)', textAlign: isUser ? 'right' : 'left', letterSpacing: '0.05em' }}>
           {new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
         </p>
 
@@ -257,16 +257,16 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
               >
                 <div className="flex justify-between items-center mb-1.5">
                   <span
-                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded font-mono bg-primary-container/10 text-primary-container"
+                    className="text-[11.5px] font-semibold px-1.5 py-0.5 rounded font-mono bg-primary-container/10 text-primary-container"
                   >
                     {citation.document_id}
                   </span>
-                  <span className="text-[9px] font-mono text-emerald-500/70">
+                  <span className="text-[11.5px] font-mono text-emerald-500/70">
                     {(citation.confidence * 100).toFixed(1)}%
                   </span>
                 </div>
-                <h4 className="text-[11px] font-semibold mb-1 text-on-background/80">{citation.title}</h4>
-                <p className="text-[10px] line-clamp-2 opacity-50 text-on-background">{citation.excerpt}</p>
+                <h4 className="text-[13.5px] font-semibold mb-1 text-on-background/80">{citation.title}</h4>
+                <p className="text-[12.5px] line-clamp-2 opacity-50 text-on-background">{citation.excerpt}</p>
               </motion.div>
             ))}
           </div>

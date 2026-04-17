@@ -23,6 +23,7 @@ declare module 'cesium' {
 
 interface CesiumGlobeProps {
   visible: boolean;
+  theme?: 'light' | 'dark';
   layers: {
     admin: boolean;
     wms: boolean;
@@ -50,7 +51,7 @@ const STYLE_CLICKED = {
 // 中国全境矩形范围
 const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
 
-const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
+const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', layers }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
 
@@ -66,7 +67,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
   const entityByAdcodeRef = useRef<Map<string, Cesium.Entity[]>>(new Map());
   // 缓存每个省份扩大后的 Bounding Rectangle，用于精准同频放缩
   const regionRectanglesRef = useRef<Map<string, Cesium.Rectangle>>(new Map());
-  const baseLayersRef = useRef<{ tdtVec?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
+  const baseLayersRef = useRef<{ cartoLight?: Cesium.ImageryLayer, cartoDark?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
   const suppressStoreSync = useRef(false);
 
   // 鼠标节流标记
@@ -332,7 +333,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
 
         suppressStoreSync.current = true;
         viewer.camera.flyTo({
-          destination: CHINA_RECTANGLE,
+          destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
           orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
           duration: 0.8,
         });
@@ -369,7 +370,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
         clickedEntityRef.current = null;
         suppressStoreSync.current = true;
         viewer.camera.flyTo({
-          destination: CHINA_RECTANGLE,
+          destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
           orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
           duration: 0.8,
         });
@@ -485,7 +486,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
           const viewer = viewerRef.current;
           if (viewer) {
             viewer.camera.flyTo({
-              destination: CHINA_RECTANGLE,
+              destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
               orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
               duration: 1.8,
             });
@@ -538,6 +539,8 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
       // ★ 性能关键：按需渲染模式，不再 60fps 空转
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
+      // 禁用默认的版权信息，解决 cdn.jsdelivr.net 的 Tracking Prevention 报错以及加载缓慢
+      creditContainer: document.createElement('div'),
     });
 
     viewerRef.current = viewer;
@@ -548,7 +551,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
     viewer.scene.skyAtmosphere.show = false;
 
     viewer.camera.setView({
-      destination: CHINA_RECTANGLE,
+      destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
       orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
     });
 
@@ -563,27 +566,40 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
     const defaultSatelliteLayer = viewer.imageryLayers.get(0);
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK;
-    // 天地图电子底图
-    const tdtVecProvider = new Cesium.UrlTemplateImageryProvider({
-      url: `https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
-      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    
+    // CartoDB 极简底图（使用 Fastly 全球加速节点，实测不会被代理或墙阻断）
+    const cartoLightProvider = new Cesium.UrlTemplateImageryProvider({
+      url: 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
+      subdomains: ['a', 'b', 'c', 'd']
     });
-    // 天地图中文注记
+    // CartoDB 深色/蓝黑-夜间
+    const cartoDarkProvider = new Cesium.UrlTemplateImageryProvider({
+      url: 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
+      subdomains: ['a', 'b', 'c', 'd']
+    });
+
+    // 天地图中文注记（透明叠加层）
     const tdtCvaProvider = new Cesium.UrlTemplateImageryProvider({
       url: `https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
       subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
     });
 
-    // 添加天地图图层
-    const tdtVecLayer = viewer.imageryLayers.addImageryProvider(tdtVecProvider);
+    // 添加图层
+    const cartoLightLayer = viewer.imageryLayers.addImageryProvider(cartoLightProvider);
+    const cartoDarkLayer = viewer.imageryLayers.addImageryProvider(cartoDarkProvider);
     const tdtCvaLayer = viewer.imageryLayers.addImageryProvider(tdtCvaProvider);
 
-    // 初始状态 (wms === false 时显示天地图电子底图，true 显示卫星图)
-    tdtVecLayer.show = !layers.wms;
-    tdtCvaLayer.show = !layers.wms;
+    // 初始状态 (wms === false 时同时渲染日夜底图，通过透明度控制显示，实现无缝秒切)
+    cartoLightLayer.show = !layers.wms;
+    cartoLightLayer.alpha = theme === 'light' ? 1.0 : 0.01;
+    
+    cartoDarkLayer.show = !layers.wms;
+    cartoDarkLayer.alpha = theme === 'dark' ? 1.0 : 0.01;
+    
+    tdtCvaLayer.show = !layers.wms; // 注记层仅在非卫星图下显示，或者都显示，按照原逻辑是!layers.wms
     if (defaultSatelliteLayer) defaultSatelliteLayer.show = layers.wms;
 
-    baseLayersRef.current = { tdtVec: tdtVecLayer, tdtCva: tdtCvaLayer, satellite: defaultSatelliteLayer };
+    baseLayersRef.current = { cartoLight: cartoLightLayer, cartoDark: cartoDarkLayer, tdtCva: tdtCvaLayer, satellite: defaultSatelliteLayer };
     // ===================================
 
     return () => {
@@ -622,14 +638,26 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, layers }) => {
       });
     }
 
-    // 切换卫星底图与天地图电子底图
-    const { tdtVec, tdtCva, satellite } = baseLayersRef.current;
-    if (tdtVec) tdtVec.show = !layers.wms;
+    // 切换卫星底图与 Carto 极简底图（使用双加载+透明度切换，避免重新请求闪白）
+    const { cartoLight, cartoDark, tdtCva, satellite } = baseLayersRef.current;
+    if (cartoLight) {
+      cartoLight.show = !layers.wms;
+      // 当非激活状态时，设置0.01极小透明度，强制Cesium在后台同步加载此图层，实现切题秒开
+      cartoLight.alpha = theme === 'light' ? 1.0 : 0.01;
+    }
+    if (cartoDark) {
+      cartoDark.show = !layers.wms;
+      cartoDark.alpha = theme === 'dark' ? 1.0 : 0.01;
+    }
+    
+    if (tdtCva) tdtCva.show = true; // 注记始终保持在上面 (或者 !layers.wms，其实天地图字更清楚，咱们保持它存在，无论模式)
+    // 如果用户希望保留原有逻辑(wms下没字)：
     if (tdtCva) tdtCva.show = !layers.wms;
+
     if (satellite) satellite.show = layers.wms;
 
     requestRender();
-  }, [layers, requestRender]);
+  }, [layers, theme, requestRender]);
 
   return (
     <div

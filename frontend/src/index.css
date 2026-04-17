@@ -30,6 +30,14 @@
   --font-sans:    "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-headline:"Manrope", sans-serif;
   --font-mono:    "JetBrains Mono", ui-monospace, monospace;
+
+  /* ── 全局字号放大 (提升约 12-15% 的可读性) ── */
+  --text-xs: 0.85rem;     /* 默认 0.75rem */
+  --text-sm: 0.95rem;     /* 默认 0.875rem */
+  --text-base: 1.05rem;   /* 默认 1rem */
+  --text-lg: 1.15rem;     /* 默认 1.125rem */
+  --text-xl: 1.3rem;      /* 默认 1.25rem */
+  --text-2xl: 1.6rem;     /* 默认 1.5rem */
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Theme Variables ━━━━━━━━━━━━━━━━━━━━ */
@@ -188,13 +196,13 @@
 .toggle-thumb.off { transform: translateX(3px);  background: #4a4a55; }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Prose ━━━━━━━━━━━━━━━━━━━━ */
-.prose { color: var(--color-on-background); opacity: 0.8; font-size: 0.825rem; line-height: 1.75; }
+.prose { color: var(--color-on-background); opacity: 0.85; font-size: 0.95rem; line-height: 1.8; }
 .prose strong { color: var(--color-on-background); font-weight: 600; }
-.prose code  { color: #f07040; font-family: var(--font-mono); font-size: 0.78rem; }
+.prose code  { color: #f07040; font-family: var(--font-mono); font-size: 0.85rem; }
 .prose p { margin: 0.5em 0; }
 .prose ul, .prose ol { padding-left: 1.25em; margin: 0.4em 0; }
-.prose li { margin: 0.2em 0; }
-.prose h1, .prose h2, .prose h3 { color: var(--color-on-background); font-family: var(--font-headline); }
+.prose li { margin: 0.25em 0; }
+.prose h1, .prose h2, .prose h3 { color: var(--color-on-background); font-family: var(--font-headline); margin-top: 1em; margin-bottom: 0.5em; }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Nav underline ━━━━━━━━━━━━━━━━━━━━ */
 .nav-active {

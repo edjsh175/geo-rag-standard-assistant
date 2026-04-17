@@ -165,6 +165,10 @@ data/external/
 *.prj
 *.cpg
 
+# Docker volumes
+docker_data/
+
+
 # Project-specific
 md_extracted/
 md_extracted_safe/
