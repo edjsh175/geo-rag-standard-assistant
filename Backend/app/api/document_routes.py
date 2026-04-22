@@ -2,13 +2,14 @@
 文档管理 API 路由
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
-from typing import List, Optional
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends
+from typing import List, Optional, Dict
 from pydantic import BaseModel
 import shutil
 import os
 
 from app.core.config import settings
+from app.services.document_service import DocumentService
 
 router = APIRouter()
 
@@ -31,53 +32,60 @@ class UploadResponse(BaseModel):
     message: str
 
 
+class PresignedRequest(BaseModel):
+    filename: str
+
+class PresignedResponse(BaseModel):
+    document_id: str
+    upload_url: str
+    object_name: str
+    access_url: str
+
+@router.post("/presigned-url", response_model=PresignedResponse)
+async def generate_presigned_url(
+    request: PresignedRequest,
+    document_service: DocumentService = Depends(DocumentService)
+):
+    """前端直接请求 MinIO 预签名 URL 用于直传"""
+    try:
+        url_data = await document_service.generate_presigned_url_for_upload(request.filename)
+        return PresignedResponse(**url_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取上传预签名失败: {str(e)}")
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(..., description="上传的文件"),
     title: Optional[str] = Form(None, description="文档标题"),
-    metadata: Optional[str] = Form(None, description="JSON格式的元数据")
+    metadata: Optional[str] = Form(None, description="JSON格式的元数据"),
+    document_service: DocumentService = Depends(DocumentService)
 ):
     """
-    上传文档
-
-    Args:
-        file: 上传的文件
-        title: 文档标题
-        metadata: 元数据
-
-    Returns:
-        上传结果
+    服务端上传文档 (Legacy/Fallback)
     """
     try:
-        # 确保上传目录存在
-        upload_dir = settings.UPLOAD_DIR
-        upload_dir.mkdir(parents=True, exist_ok=True)
-
-        # 生成唯一文件名
-        import uuid
-        file_extension = os.path.splitext(file.filename)[1]
-        unique_filename = f"{uuid.uuid4()}{file_extension}"
-        file_path = upload_dir / unique_filename
-
-        # 保存文件
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        # 获取文件大小
-        file_size = os.path.getsize(file_path)
-
-        # 解析元数据
+        file_content = await file.read()
+        
         import json
+        from app.models.document_models import DocumentMetadata
         metadata_dict = json.loads(metadata) if metadata else {}
+        doc_meta = DocumentMetadata(
+            title=title or file.filename,
+            source=metadata_dict.get("source", "upload"),
+            document_type=metadata_dict.get("document_type", "unknown")
+        )
 
-        # TODO: 将文档信息保存到数据库
-        # TODO: 提取文本内容并生成向量嵌入
+        doc = await document_service.upload_document(
+            file_content=file_content,
+            filename=file.filename,
+            metadata=doc_meta
+        )
 
         return UploadResponse(
-            document_id=str(uuid.uuid4()),
-            filename=file.filename,
-            size=file_size,
-            message="文件上传成功"
+            document_id=doc.id,
+            filename=doc.filename,
+            size=doc.file_size,
+            message="文件上传通过服务端中转成功"
         )
 
     except Exception as e:

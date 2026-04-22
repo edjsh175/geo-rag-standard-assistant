@@ -4,7 +4,9 @@
 
 import logging
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import StreamingResponse
 from typing import List, Optional
+import json
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -31,7 +33,7 @@ async def health_check():
     )
 
 
-@router.post("/query", response_model=SearchResponse)
+@router.post("/query")
 async def search_documents(
     request: SearchRequest,
     search_service: SearchService = Depends(SearchService)
@@ -126,38 +128,56 @@ async def search_documents(
             spatial_filter=request.spatial_filter,
             metadata_filter=request.metadata_filter
         )
-
-        search_time = (datetime.now() - start_time).total_seconds()
-
-        generated_answer = None
-        generation_time = None
-
-        # 2. 如果需要生成答案
-        if request.use_generation and results:
-            try:
-                gen_start_time = datetime.now()
-                generated_answer, gen_time = await search_service.generate_answer(
-                    query=request.query,
-                    results=results,
-                    top_context_docs=min(5, len(results)),  # 最多使用5个文档作为上下文
-                    history=request.history
-                )
-                generation_time = (datetime.now() - gen_start_time).total_seconds()
-                logger.info(f"答案生成完成，耗时={generation_time:.2f}秒")
-            except Exception as gen_error:
-                logger.error(f"生成答案失败，但检索结果仍然返回: {gen_error}")
-                # 不阻塞主要检索流程，仅记录错误
-
-        # 3. 构建响应
-        return SearchResponse(
+        # 生成检索响应的基础数据
+        base_response = SearchResponse(
             query=request.query,
             results=results,
             total_count=len(results),
             search_time=search_time,
             search_mode=request.search_mode,
-            generated_answer=generated_answer,
-            generation_time=generation_time
+            generated_answer=None,
+            generation_time=None
         )
+
+        # 2. 检查是否开启大模型生成
+        if not request.use_generation or not results:
+            return base_response
+
+        # 如果开启大模型生成，并且启用了 SSE 流式传输
+        if getattr(request, "stream", False):
+            async def event_generator():
+                # 1. 首先下发 context 检索结果（供前端渲染列表）
+                context_payload = json.dumps(base_response.model_dump(), ensure_ascii=False)
+                yield f"event: context\ndata: {context_payload}\n\n"
+                
+                # 2. 下发流式推理过程 (同时包含 map_action 追加事件)
+                stream = search_service.generate_stream_answer(
+                    query=request.query,
+                    results=results,
+                    top_context_docs=min(5, len(results)),
+                    history=request.history
+                )
+                async for event_chunk in stream:
+                    yield event_chunk
+                    
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
+        
+        # 否则使用同步的一把梭返回
+        try:
+            gen_start_time = datetime.now()
+            generated_answer, gen_time = await search_service.generate_answer(
+                query=request.query,
+                results=results,
+                top_context_docs=min(5, len(results)),
+                history=request.history
+            )
+            base_response.generation_time = (datetime.now() - gen_start_time).total_seconds()
+            base_response.generated_answer = generated_answer
+            logger.info(f"答案生成完成，耗时={base_response.generation_time:.2f}秒")
+        except Exception as gen_error:
+            logger.error(f"生成答案失败，但检索结果仍然返回: {gen_error}")
+
+        return base_response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"检索失败: {str(e)}")

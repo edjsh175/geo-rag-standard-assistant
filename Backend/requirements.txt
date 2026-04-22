@@ -41,6 +41,7 @@ rasterio==1.3.9
 
 # 配置管理
 python-dotenv==1.0.0
+minio==7.2.5
 
 # 工具类
 loguru==0.7.2

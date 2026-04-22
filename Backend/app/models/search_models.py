@@ -55,6 +55,7 @@ class SearchRequest(BaseModel):
     use_rerank: bool = Field(True, description="是否使用重排序")
     search_mode: str = Field("hybrid", description="检索模式: semantic, keyword, hybrid")
     use_generation: bool = Field(False, description="是否使用大模型生成答案")
+    stream: bool = Field(False, description="是否使用流式传输(SSE)返回答案")
     history: Optional[List[Dict[str, str]]] = Field([], description="历史对话记录")
 
 

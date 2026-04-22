@@ -4,9 +4,11 @@
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, AsyncGenerator
 from enum import Enum
+import asyncio
 
+from fastapi import HTTPException
 from openai import AsyncOpenAI
 import httpx
 
@@ -154,13 +156,17 @@ class LLMConfig:
             raise RuntimeError("OpenAI 客户端未初始化")
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            coro = self.openai_client.chat.completions.create(
                 model=model or settings.OPENAI_MODEL,
                 messages=messages,
                 temperature=temperature,
                 **kwargs
             )
+            response = await asyncio.wait_for(coro, timeout=30.0)
             return response.choices[0].message.content
+        except asyncio.TimeoutError:
+            logger.error("OpenAI 聊天请求超时 (Circuit Breaker触发)")
+            raise HTTPException(status_code=504, detail="大模型上游服务响应超时")
         except Exception as e:
             logger.error(f"OpenAI 聊天请求失败: {e}")
             raise
@@ -198,16 +204,65 @@ class LLMConfig:
                 base_url="https://api.deepseek.com",
             )
 
-            response = await client.chat.completions.create(
+            coro = client.chat.completions.create(
                 model=model or settings.DEEPSEEK_MODEL,
                 messages=messages,
                 temperature=temperature,
                 **kwargs
             )
+            response = await asyncio.wait_for(coro, timeout=30.0)
             return response.choices[0].message.content
+        except asyncio.TimeoutError:
+            logger.error("DeepSeek 聊天请求超时 (Circuit Breaker触发)")
+            from fastapi import HTTPException
+            raise HTTPException(status_code=504, detail="大模型上游服务响应超时")
         except Exception as e:
             logger.error(f"DeepSeek 聊天请求失败: {e}")
             raise
+
+    async def stream_chat_completion(
+        self,
+        messages: list[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        **kwargs
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式聊天补全接口
+        """
+        provider = settings.LLM_PROVIDER
+        if provider == LLMProvider.OPENAI:
+            client = self.openai_client
+            target_model = model or settings.OPENAI_MODEL
+        elif provider == LLMProvider.DEEPSEEK:
+            if not settings.DEEPSEEK_API_KEY:
+                raise RuntimeError("DeepSeek API Key 未配置")
+            client = AsyncOpenAI(
+                api_key=settings.DEEPSEEK_API_KEY,
+                base_url="https://api.deepseek.com",
+            )
+            target_model = model or settings.DEEPSEEK_MODEL
+        else:
+            raise ValueError(f"流式输出尚未支持 LLM 提供商: {provider}")
+            
+        if not client:
+            raise RuntimeError(f"{provider} 客户端未初始化")
+
+        try:
+            # 开启 stream=True
+            response_stream = await client.chat.completions.create(
+                model=target_model,
+                messages=messages,
+                temperature=temperature,
+                stream=True,
+                **kwargs
+            )
+            async for chunk in response_stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            logger.error(f"流式聊天请求失败: {e}")
+            yield f"\n[后台报错: 流式输出异常 {str(e)}]"
 
 
 # 全局 LLM 配置实例

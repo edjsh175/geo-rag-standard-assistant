@@ -59,7 +59,13 @@ class Settings(BaseSettings):
     SPATIAL_SEARCH_RADIUS: float = 5000.0  # 默认搜索半径5公里
     COORDINATE_SYSTEM: str = "EPSG:4326"  # WGS84坐标系
 
-    # 文件存储配置
+    # 文件存储配置 (MinIO)
+    MINIO_URL: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "geoai-assets"
+    
+    # 遗留的本地存储上传项 (临时兼容)
     UPLOAD_DIR: Path = Path("uploads")
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100MB
 

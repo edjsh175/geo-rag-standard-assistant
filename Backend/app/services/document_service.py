@@ -20,11 +20,70 @@ from app.models.document_models import (
 logger = logging.getLogger(__name__)
 
 
+from minio import Minio
+from minio.error import S3Error
+from datetime import timedelta
+
 class DocumentService:
-    """文档管理服务"""
+    """文档/空间资产管理服务 (MinIO Native)"""
 
     def __init__(self):
         self.upload_dir = settings.UPLOAD_DIR
+        self.minio_client = Minio(
+            settings.MINIO_URL,
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            secure=False
+        )
+        self.bucket_name = settings.MINIO_BUCKET
+        self._ensure_bucket()
+
+    def _ensure_bucket(self):
+        """确保 MinIO bucket 存在"""
+        try:
+            if not self.minio_client.bucket_exists(self.bucket_name):
+                self.minio_client.make_bucket(self.bucket_name)
+                # 设置桶策略为可公开读取
+                policy = f'{{"Version":"2012-10-17","Statement":[{{"Effect":"Allow","Principal":{{"AWS":["*"]}},"Action":["s3:GetBucketLocation","s3:ListBucket"],"Resource":["arn:aws:s3:::{self.bucket_name}"]}},{{"Effect":"Allow","Principal":{{"AWS":["*"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{self.bucket_name}/*"]}}]}}'
+                self.minio_client.set_bucket_policy(self.bucket_name, policy)
+                logger.info(f"MinIO 桶 '{self.bucket_name}' 创建成功并设置为了公开只读")
+        except Exception as e:
+            logger.warning(f"确保 MinIO bucket 存在时发生异常: {e}")
+
+    async def generate_presigned_url_for_upload(self, filename: str) -> Dict[str, str]:
+        """
+        生成前端直传 MinIO 的预签名 URL (Presigned URL)
+        极大释放 FastAPI 网络 I/O，前端拿 URL 后直接 PUT 数据到存储。
+        
+        Args:
+            filename: 文件名
+            
+        Returns:
+            {"upload_url": "...", "object_name": "...", "document_id": "..."}
+        """
+        try:
+            file_extension = Path(filename).suffix
+            document_id = str(uuid.uuid4())
+            object_name = f"{document_id}{file_extension}"
+            
+            # 生成 1 小时有效的上传 URL，无需网络请求（纯本地密码学计算）
+            upload_url = self.minio_client.presigned_put_object(
+                self.bucket_name,
+                object_name,
+                expires=timedelta(hours=1)
+            )
+            
+            access_url = f"http://{settings.MINIO_URL}/{self.bucket_name}/{object_name}"
+            
+            return {
+                "document_id": document_id,
+                "upload_url": upload_url,
+                "object_name": object_name,
+                "access_url": access_url
+            }
+        except Exception as e:
+            logger.error(f"生成 Presigned URL 失败: {e}", exc_info=True)
+            raise
 
     async def upload_document(
         self,
@@ -34,39 +93,33 @@ class DocumentService:
         spatial_metadata: Optional[SpatialMetadata] = None
     ) -> Document:
         """
-        上传文档
-
-        Args:
-            file_content: 文件内容字节
-            filename: 文件名
-            metadata: 文档元数据
-            spatial_metadata: 空间元数据
-
-        Returns:
-            文档对象
+        [Legacy / Fallback] 服务端直接上传文档（对于小文件保留向后兼容）
         """
         try:
-            # 确保上传目录存在
-            self.upload_dir.mkdir(parents=True, exist_ok=True)
-
-            # 生成唯一文件名和ID
+            import io
+            
             file_extension = Path(filename).suffix
-            unique_filename = f"{uuid.uuid4()}{file_extension}"
-            file_path = self.upload_dir / unique_filename
-
-            # 保存文件
-            with open(file_path, "wb") as f:
-                f.write(file_content)
-
-            # 计算文件大小和哈希
+            document_id = str(uuid.uuid4())
+            object_name = f"{document_id}{file_extension}"
+            
             file_size = len(file_content)
+            
+            # 使用 io.BytesIO 转换为流，以便 minio 客户端上传
+            data_stream = io.BytesIO(file_content)
+            
+            self.minio_client.put_object(
+                self.bucket_name,
+                object_name,
+                data_stream,
+                length=file_size
+            )
+            
             import hashlib
             content_hash = hashlib.md5(file_content).hexdigest()
 
-            # 创建文档对象
             now = datetime.now()
             document = Document(
-                id=str(uuid.uuid4()),
+                id=document_id,
                 filename=filename,
                 file_type=file_extension.lstrip(".").lower(),
                 file_size=file_size,
@@ -78,19 +131,16 @@ class DocumentService:
                 vector_embedding=None,
                 is_indexed=False,
                 indexing_status="pending",
-                storage_path=str(file_path),
-                access_url=f"/uploads/{unique_filename}",
+                storage_path=object_name,
+                access_url=f"http://{settings.MINIO_URL}/{self.bucket_name}/{object_name}",
                 version=1
             )
 
-            # TODO: 保存到数据库
-            # TODO: 异步处理文档索引
-
-            logger.info(f"文档上传成功: {document.id}, 文件名: {filename}")
+            logger.info(f"服务端 fallback 模式文档上传 MinIO 成功: {document.id}")
             return document
 
         except Exception as e:
-            logger.error(f"文档上传失败: {e}")
+            logger.error(f"服务端文档上传失败: {e}")
             raise
 
     async def get_document(self, doc_id: str) -> Optional[Document]:

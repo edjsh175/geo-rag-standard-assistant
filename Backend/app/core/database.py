@@ -38,9 +38,18 @@ class DatabaseManager:
         self.mysql_sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
 
         self.redis_client: Optional[Redis] = None
+        
+        import asyncio
+        self._init_lock = asyncio.Lock()
+        self._initialized = False
 
     async def initialize(self):
         """初始化所有数据库连接，容忍部分失败"""
+        async with self._init_lock:
+            if self._initialized:
+                return
+            self._initialized = True
+
         # 初始化 PostgreSQL (核心组件)
         try:
             await self._init_postgres()

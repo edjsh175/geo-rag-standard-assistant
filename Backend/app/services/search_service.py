@@ -262,19 +262,8 @@ class SearchService:
         try:
             # 检查 PostgreSQL 连接是否已初始化
             if not db_manager.postgres_sessionmaker:
-                logger.warning("PostgreSQL 连接未初始化，尝试初始化...")
-                try:
-                    await db_manager.initialize()
-                    logger.info("PostgreSQL 连接初始化成功")
-                except Exception as e:
-                    logger.error(f"PostgreSQL 连接初始化失败: {e}")
-                    logger.error("向量搜索功能不可用，请按以下步骤检查：")
-                    logger.error("1. 确保 PostgreSQL 服务正在运行（命令: pg_ctl status 或 systemctl status postgresql）")
-                    logger.error("2. 创建数据库: createdb -U postgres geoai_db")
-                    logger.error("3. 在数据库中启用扩展: psql -U postgres -d geoai_db -c 'CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS postgis;'")
-                    logger.error("4. 检查 .env 文件中的 DATABASE_URL 配置")
-                    logger.error("5. 确保用户 'postgres' 密码为 'password'（或修改 .env 中的配置）")
-                    return []
+                logger.error("PostgreSQL 连接未初始化，向量搜索功能不可用。请检查数据库服务及 .env 配置。")
+                return []
 
             if not query_embedding:
                 logger.warning("查询嵌入为空，返回空结果")
@@ -320,10 +309,10 @@ class SearchService:
                     # 向量搜索命中日志（调试级别，生产环境不显示）
                     logger.debug(f"[VectorSearch] 命中 | doc={row.document_name} | score={similarity:.4f}")
 
-                    # 💡 把门槛降到极低，只要查出来的数据，统统放行！
-                    if similarity < -1.0:
-                        logger.debug(f"  低于阈值 -1.0，跳过")
+                    if similarity < threshold:
+                        logger.debug(f"  低于阈值 {threshold}，跳过")
                         continue
+
 
                     # 构建元数据
                     metadata = {
@@ -631,6 +620,80 @@ class SearchService:
         except Exception as e:
             logger.error(f"生成答案失败: {e}", exc_info=True)
             raise
+
+    async def generate_stream_answer(
+        self,
+        query: str,
+        results: List[DocumentResult],
+        top_context_docs: int = 5,
+        history: Optional[List[Dict[str, str]]] = None
+    ):
+        """流式生成答案 (SSE Generator)"""
+        import json
+        import re
+
+        # 0. 截断历史记录
+        truncated_history = self._truncate_history(history)
+        # 1. 构建上下文
+        context_text = self._build_context(results, top_context_docs)
+        # 2. 构建系统提示词
+        system_prompt = f"""
+你是一个专业的地理信息与测绘政策助手。请基于以下提供的【参考标准片段】和【对话历史】来回答用户的【问题】。
+要求：
+1. 你的回答必须客观、严谨，直接引用标准中的规定。
+2. 如果【参考标准片段】中没有包含问题的答案，请诚实地回答“未在库中检索到相关标准规定”，绝不允许编造或产生幻觉。
+3. 请尽可能给出具体的标准编号（如 DB51_T...、GB_T...）。
+4. 如果用户询问对话历史，请基于【对话历史】回答。
+
+【参考标准片段】：
+{context_text}
+
+【空间信息提取任务】
+请分析你的回答中涉及的最核心的省级或市级行政区划。如果有，请务必在回答的最末尾，严格以如下 Markdown 代码块的格式输出其行政区划代码 (adcode) 和中文全称 (name)。如果没有涉及具体区域，请不要输出该代码块。
+示例格式：
+```json
+{{"adcode": "510000", "name": "四川省"}}
+```"""
+        messages = [{"role": "system", "content": system_prompt}]
+        if truncated_history:
+            messages.extend(truncated_history)
+        messages.append({"role": "user", "content": query})
+
+        full_answer = ""
+        try:
+            # 流式获取并转发文本
+            stream = llm_config.stream_chat_completion(
+                messages=messages,
+                temperature=0.3,
+                max_tokens=1000
+            )
+            async for chunk in stream:
+                full_answer += chunk
+                # 构造 SSE message 事件数据
+                payload = json.dumps({"content": chunk}, ensure_ascii=False)
+                yield f"event: message\ndata: {payload}\n\n"
+
+            # 抓取末尾的 JSON map_action
+            match = re.search(r'```json\s*(\{.*?\})\s*```', full_answer, re.DOTALL)
+            if match:
+                map_action_str = match.group(1)
+                try:
+                    # 验证是个合法 JSON
+                    json.loads(map_action_str)
+                    # 发送特殊的 map_action 事件
+                    yield f"event: map_action\ndata: {map_action_str}\n\n"
+                    logger.info(f"解析并下发 map_action 成功: {map_action_str}")
+                except Exception as e:
+                    logger.error(f"解析 map_action 失败: {e}")
+
+            # 结束标志
+            yield f"event: done\ndata: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"流式生成答案失败: {e}", exc_info=True)
+            error_payload = json.dumps({"error": str(e)}, ensure_ascii=False)
+            yield f"event: error\ndata: {error_payload}\n\n"
+            yield f"event: done\ndata: [DONE]\n\n"
 
     def _build_context(self, results: List[DocumentResult], top_n: int = 5) -> str:
         """构建上下文文本"""

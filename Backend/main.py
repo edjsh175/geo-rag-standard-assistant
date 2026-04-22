@@ -20,63 +20,33 @@ from app.core.config import settings
 from app.core.database import db_manager
 from app.core.llm_config import llm_config
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动时初始化
-    print("正在初始化数据库连接...")
+    logger.info("正在初始化数据库连接...")
 
-    # 初始化状态跟踪
-    app.state.postgres_initialized = False
-    app.state.mysql_initialized = False
-    app.state.redis_initialized = False
+    # 使用 db_manager 统一初始化的锁机制
+    await db_manager.initialize()
+    
+    app.state.postgres_initialized = db_manager.postgres_engine is not None
+    app.state.mysql_initialized = db_manager.mysql_engine is not None
+    app.state.redis_initialized = db_manager.redis_client is not None
+    
+    if not app.state.postgres_initialized:
+        logger.error("PostgreSQL 连接初始化失败。向量搜索功能将会不可用。")
 
-    # 1. 初始化 PostgreSQL (核心组件)
-    try:
-        await db_manager._init_postgres()
-        app.state.postgres_initialized = True
-        print("[OK] PostgreSQL 连接初始化成功")
-    except Exception as e:
-        print(f"[ERROR] PostgreSQL 连接初始化失败: {e}")
-        print("警告: 向量搜索功能将不可用，请检查以下配置:")
-        print("1. 确保 PostgreSQL 服务正在运行")
-        print("2. 检查 .env 中的 DATABASE_URL 配置")
-        print("3. 确认数据库 'geoai_db' 已创建")
-        print("4. 确保 PostgreSQL 已安装 pgvector 和 postgis 扩展")
-
-    # 2. 初始化 MySQL (元数据存储)
-    try:
-        await db_manager._init_mysql()
-        app.state.mysql_initialized = True
-        print("[OK] MySQL 连接初始化成功")
-    except Exception as e:
-        print(f"[WARNING] MySQL 连接初始化失败，元数据功能将受限: {e}")
-
-    # 3. 初始化 Redis (缓存，非核心组件)
-    try:
-        await db_manager._init_redis()
-        app.state.redis_initialized = True
-        print("[OK] Redis 连接初始化成功")
-    except Exception as e:
-        print(f"[WARNING] Redis 连接初始化失败，暂时禁用缓存功能: {e}")
-        # Redis 是非核心组件，不影响主流程
-        app.state.redis_initialized = False
-
-    # 测试连接状态
-    try:
-        await db_manager.test_connections()
-    except Exception as e:
-        print(f"⚠️ 连接测试过程中出现异常: {e}")
-
-    # 大模型配置已在导入时初始化
-    print("大模型配置已加载")
+    logger.info("大模型配置已加载")
 
     yield
 
     # 关闭时清理
-    print("正在关闭数据库连接...")
+    logger.info("正在关闭数据库连接...")
     await db_manager.close()
-    print("数据库连接已关闭")
+    logger.info("数据库连接已关闭")
 
 
 # 创建 FastAPI 应用实例
