@@ -1,5 +1,5 @@
-services:
-  # PostgreSQL + PostGIS + pgvector 三合一数据库
+﻿services:
+  # PostgreSQL + PostGIS + pgvector
   postgis:
     image: postgis/postgis:16-3.4
     container_name: geoai-postgis
@@ -11,7 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgis_data:/var/lib/postgresql/data
-      - ./docker/init-scripts:/docker-entrypoint-initdb.d  # 初始化脚本
+      - ./docker/init-scripts:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -19,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # GeoServer 地图服务（可选）
+  # GeoServer (optional)
   geoserver:
     image: osgeo/geoserver:2.24.0
     container_name: geoai-geoserver
@@ -30,13 +30,13 @@ services:
       - "8080:8080"
     volumes:
       - geoserver_data:/opt/geoserver/data_dir
-      - ./docker/geoserver/styles:/styles  # 自定义样式
+      - ./docker/geoserver/styles:/styles
     depends_on:
       postgis:
         condition: service_healthy
     restart: unless-stopped
 
-  # MySQL 元数据数据库
+  # MySQL metadata database
   mysql:
     image: mysql:8.0
     container_name: geoai-mysql
@@ -55,7 +55,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI 后端服务
+  # FastAPI backend (single entrypoint: Backend.main)
   backend:
     build:
       context: .
@@ -63,8 +63,8 @@ services:
       target: backend
     container_name: geoai-backend
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgis:5432/geoai_db
-      - MYSQL_URL=mysql://root:root@mysql:3306/disaster_knowledge
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgis:5432/geoai_db
+      - MYSQL_URL=mysql+aiomysql://root:root@mysql:3306/disaster_knowledge
       - GEOSERVER_URL=http://geoserver:8080/geoserver
       - REDIS_URL=redis://:123456@redis:6379/0
       - MINIO_ENDPOINT=minio:9000
@@ -75,19 +75,17 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data  # 挂载数据目录
-      - ./logs:/app/logs  # 挂载日志目录
+      - ./data:/app/data
+      - ./logs:/app/logs
     depends_on:
       postgis:
         condition: service_healthy
       mysql:
         condition: service_healthy
     restart: unless-stopped
-    command: >
-      sh -c "python scripts/build_vector_db.py --init &&
-             uvicorn src.geoai.api.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: uvicorn Backend.main:app --host 0.0.0.0 --port 8000
 
-  # Nginx 前端代理（未来Vue前端）
+  # Frontend proxy container
   frontend:
     build:
       context: .
@@ -100,7 +98,7 @@ services:
       - backend
     restart: unless-stopped
 
-  # Redis 缓存（可选）
+  # Redis (optional)
   redis:
     image: redis:7-alpine
     container_name: geoai-redis
@@ -111,7 +109,7 @@ services:
     restart: unless-stopped
     command: redis-server --requirepass 123456 --appendonly yes
 
-  # MinIO 对象存储
+  # MinIO object storage
   minio:
     image: minio/minio
     container_name: geoai-minio
