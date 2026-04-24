@@ -1,21 +1,28 @@
 """
-系统管理 API 路由
+System management API routes.
 """
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-import platform
-import psutil
+from datetime import datetime
 import os
+import platform
+import subprocess
+import sys
+
+import psutil
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.database import db_manager
+from app.core.security import (
+    require_clear_cache_confirmation,
+    require_system_api_key,
+)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_system_api_key)])
 
 
 class SystemInfo(BaseModel):
-    """系统信息响应"""
     app_name: str
     app_version: str
     python_version: str
@@ -27,14 +34,12 @@ class SystemInfo(BaseModel):
 
 
 class DatabaseStatus(BaseModel):
-    """数据库状态响应"""
     postgresql: str
     mysql: str
     redis: str
 
 
 class HealthStatus(BaseModel):
-    """健康状态响应"""
     status: str
     timestamp: str
     system: SystemInfo
@@ -42,18 +47,11 @@ class HealthStatus(BaseModel):
 
 
 @router.get("/info", response_model=SystemInfo)
-async def get_system_info():
-    """
-    获取系统信息
-
-    Returns:
-        系统信息
-    """
+async def get_system_info() -> SystemInfo:
     try:
-        # 获取内存使用情况
         memory = psutil.virtual_memory()
-        memory_total_gb = memory.total / (1024**3)
-        memory_used_gb = memory.used / (1024**3)
+        memory_total_gb = memory.total / (1024 ** 3)
+        memory_used_gb = memory.used / (1024 ** 3)
 
         return SystemInfo(
             app_name=settings.APP_NAME,
@@ -61,30 +59,24 @@ async def get_system_info():
             python_version=platform.python_version(),
             platform=platform.platform(),
             hostname=platform.node(),
-            cpu_count=psutil.cpu_count(),
+            cpu_count=psutil.cpu_count() or 0,
             memory_total=f"{memory_total_gb:.2f} GB",
-            memory_used=f"{memory_used_gb:.2f} GB"
+            memory_used=f"{memory_used_gb:.2f} GB",
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取系统信息失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch system info: {exc}",
+        ) from exc
 
 
 @router.get("/health", response_model=HealthStatus)
-async def get_health_status():
-    """
-    获取系统健康状态
-
-    Returns:
-        健康状态信息
-    """
+async def get_health_status() -> HealthStatus:
     try:
-        import datetime
-
-        # 检查数据库连接状态
         db_status = {
             "postgresql": "unknown",
             "mysql": "unknown",
-            "redis": "unknown"
+            "redis": "unknown",
         }
 
         try:
@@ -108,36 +100,26 @@ async def get_health_status():
         except Exception:
             db_status["redis"] = "unhealthy"
 
-        # 获取系统信息
-        system_info = await get_system_info()
-
-        # 总体状态
-        all_healthy = all(status == "healthy" for status in db_status.values())
-        overall_status = "healthy" if all_healthy else "degraded"
+        overall_status = "healthy" if all(value == "healthy" for value in db_status.values()) else "degraded"
 
         return HealthStatus(
             status=overall_status,
-            timestamp=datetime.datetime.now().isoformat(),
-            system=system_info,
-            database=DatabaseStatus(**db_status)
+            timestamp=datetime.now().isoformat(),
+            system=await get_system_info(),
+            database=DatabaseStatus(**db_status),
         )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取健康状态失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch health status: {exc}",
+        ) from exc
 
 
 @router.get("/config")
 async def get_configuration():
-    """
-    获取应用配置（不包含敏感信息）
-
-    Returns:
-        应用配置信息
-    """
     try:
-        # 过滤掉敏感信息
-        config_dict = settings.dict()
-        sensitive_fields = ["api_key", "secret", "password", "token"]
+        config_dict = settings.model_dump()
+        sensitive_fields = {"api_key", "secret", "password", "token"}
 
         filtered_config = {}
         for key, value in config_dict.items():
@@ -147,147 +129,116 @@ async def get_configuration():
                 filtered_config[key] = value
 
         return filtered_config
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取配置失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch configuration: {exc}",
+        ) from exc
 
 
 @router.get("/logs")
 async def get_logs(
-    lines: int = 100,
-    level: str = "INFO"
+    lines: int = Query(default=100, ge=1, le=1000),
+    level: str = Query(default="INFO"),
 ):
-    """
-    获取应用日志
-
-    Args:
-        lines: 返回的行数
-        level: 日志级别过滤
-
-    Returns:
-        日志内容
-    """
     try:
         log_file = settings.LOG_FILE
         if not log_file or not log_file.exists():
-            return {"logs": [], "message": "日志文件不存在"}
+            return {"logs": [], "message": "Log file does not exist."}
 
-        # 读取日志文件最后 N 行
-        with open(log_file, "r", encoding="utf-8") as f:
-            all_lines = f.readlines()
+        with open(log_file, "r", encoding="utf-8") as log_handle:
+            all_lines = log_handle.readlines()
             recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
 
-        # 按级别过滤
         filtered_lines = [
-            line for line in recent_lines
-            if level in line or level == "ALL"
+            line for line in recent_lines if level == "ALL" or level in line
         ]
 
         return {
             "total_lines": len(all_lines),
             "filtered_lines": len(filtered_lines),
-            "logs": filtered_lines
+            "logs": filtered_lines,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取日志失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch logs: {exc}",
+        ) from exc
 
 
-@router.post("/clear-cache")
+@router.post("/clear-cache", dependencies=[Depends(require_clear_cache_confirmation)])
 async def clear_cache():
-    """
-    清除系统缓存
-
-    Returns:
-        清除结果
-    """
     try:
-        # TODO: 实现缓存清除逻辑
-        # 清除 Redis 缓存
         if db_manager.redis_client:
             await db_manager.redis_client.flushdb()
 
         return {
-            "message": "缓存清除成功",
-            "redis": "flushed"
+            "message": "Cache cleared successfully.",
+            "redis": "flushed" if db_manager.redis_client else "not-configured",
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"清除缓存失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear cache: {exc}",
+        ) from exc
 
 
 @router.get("/metrics")
 async def get_metrics():
-    """
-    获取系统指标
-
-    Returns:
-        系统指标数据
-    """
     try:
-        # CPU 使用率
         cpu_percent = psutil.cpu_percent(interval=1)
-
-        # 内存使用率
         memory = psutil.virtual_memory()
-        memory_percent = memory.percent
-
-        # 磁盘使用率
         disk = psutil.disk_usage("/")
-        disk_percent = disk.percent
-
-        # 网络IO
         net_io = psutil.net_io_counters()
 
         return {
             "cpu": {
                 "percent": cpu_percent,
                 "cores": psutil.cpu_count(),
-                "frequency": psutil.cpu_freq().current if psutil.cpu_freq() else None
+                "frequency": psutil.cpu_freq().current if psutil.cpu_freq() else None,
             },
             "memory": {
-                "percent": memory_percent,
+                "percent": memory.percent,
                 "total": memory.total,
                 "available": memory.available,
-                "used": memory.used
+                "used": memory.used,
             },
             "disk": {
-                "percent": disk_percent,
+                "percent": disk.percent,
                 "total": disk.total,
                 "used": disk.used,
-                "free": disk.free
+                "free": disk.free,
             },
             "network": {
                 "bytes_sent": net_io.bytes_sent,
                 "bytes_recv": net_io.bytes_recv,
                 "packets_sent": net_io.packets_sent,
-                "packets_recv": net_io.packets_recv
-            }
+                "packets_recv": net_io.packets_recv,
+            },
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取指标失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch metrics: {exc}",
+        ) from exc
 
 
 @router.post("/restart")
 async def restart_service():
-    """
-    重启服务（需要管理员权限）
+    if not settings.DEBUG:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Restart is disabled outside DEBUG mode.",
+        )
 
-    Returns:
-        重启结果
-    """
-    # 注意：这是一个危险操作，实际项目中应该需要身份验证
     try:
-        import sys
-        import subprocess
-
-        # 获取当前 Python 解释器和脚本路径
         python = sys.executable
         script = sys.argv[0]
 
-        # 在新进程中启动应用
         subprocess.Popen([python, script])
-
-        # 退出当前进程
         os._exit(0)
-
-        return {"message": "服务重启中..."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"重启服务失败: {str(e)}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to restart service: {exc}",
+        ) from exc

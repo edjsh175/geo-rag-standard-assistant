@@ -58,6 +58,8 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = "change_me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    SYSTEM_API_KEY: Optional[str] = None
+    SYSTEM_CLEAR_CACHE_CONFIRM_VALUE: str = "clear-cache"
 
     LOG_LEVEL: str = "INFO"
     LOG_FILE: Optional[Path] = Path("logs/geoai.log")
