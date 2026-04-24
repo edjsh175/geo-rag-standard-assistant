@@ -1,5 +1,5 @@
 import { apiClient } from '../lib/api/config';
-import type { ChatMessage, ChatRequest, ChatResponse, DocumentResult } from '../types/api';
+import type { ChatMessage, ChatRequest, ChatResponse, DocumentResult, SearchResponse } from '../types/api';
 
 /**
  * 聊天服务
@@ -30,13 +30,18 @@ export const chatService = {
         history: history,
       };
 
-      const searchResponse = await apiClient.post('/search/query', searchRequest, {
+      const response = await apiClient.post<SearchResponse>('/search/query', searchRequest, {
         signal,
       });
+      const searchResponse = response.data;
 
       // 转换搜索响应为聊天响应
+      const fallbackMessage = (searchResponse.results?.length ?? 0) > 0
+        ? '已检索到相关标准，请查看下方参考文档。'
+        : '未在库中检索到相关标准规定。';
+
       const chatResponse: ChatResponse = {
-        message: searchResponse.generated_answer || '抱歉，我无法生成答案。',
+        message: searchResponse.generated_answer || fallbackMessage,
         conversation_id: conversationId || `conv_${Date.now()}`,
         references: searchResponse.results || [],
         timestamp: new Date().toISOString(),

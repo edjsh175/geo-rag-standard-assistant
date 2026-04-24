@@ -16,7 +16,7 @@ export const searchService = {
   async search(request: SearchRequest): Promise<SearchResponse> {
     try {
       const response = await apiClient.post<SearchResponse>('/search/query', request);
-      return response;
+      return response.data;
     } catch (error) {
       console.error('搜索失败:', error);
       throw error;
@@ -38,7 +38,7 @@ export const searchService = {
         top_k: topK,
       };
       const response = await apiClient.post<SearchResponse>('/search/hybrid', null, { params });
-      return response;
+      return response.data;
     } catch (error) {
       console.error('混合检索失败:', error);
       throw error;
@@ -52,7 +52,7 @@ export const searchService = {
     try {
       const params = { prefix, limit };
       const response = await apiClient.get<{ suggestions: string[] }>('/search/suggest', { params });
-      return response.suggestions || [];
+      return response.data.suggestions || [];
     } catch (error) {
       console.error('获取搜索建议失败:', error);
       return [];
@@ -69,7 +69,7 @@ export const searchService = {
         `/search/similar/${docId}`,
         { params }
       );
-      return response.similar_documents || [];
+      return response.data.similar_documents || [];
     } catch (error) {
       console.error('查找相似文档失败:', error);
       return [];

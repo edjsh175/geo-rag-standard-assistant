@@ -165,6 +165,13 @@ data/external/
 *.prj
 *.cpg
 
+# Keep reproducible frontend build config under version control
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/tsconfig.json
+!frontend/src/lib/
+!frontend/src/lib/**
+
 # Docker volumes
 docker_data/
 

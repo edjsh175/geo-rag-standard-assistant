@@ -11,7 +11,7 @@ export const documentService = {
   async getDocumentById(id: string): Promise<DocumentDetail | null> {
     try {
       const response = await apiClient.get<DocumentDetail>(`/documents/${id}`);
-      return response;
+      return response.data;
     } catch (error) {
       console.error(`获取文档详情失败 (ID: ${id}):`, error);
       return null;
@@ -32,7 +32,7 @@ export const documentService = {
         '/documents/list',
         { params }
       );
-      return response;
+      return response.data;
     } catch (error) {
       console.error('获取文档列表失败:', error);
       return { documents: [], total: 0 };
@@ -59,7 +59,7 @@ export const documentService = {
           },
         }
       );
-      return response.document_id;
+      return response.data.document_id;
     } catch (error) {
       console.error('上传文档失败:', error);
       throw error;
@@ -95,10 +95,10 @@ export const documentService = {
    */
   async downloadDocument(id: string): Promise<Blob> {
     try {
-      const response = await apiClient.get(`/documents/${id}/download`, {
+      const response = await apiClient.get<Blob>(`/documents/${id}/download`, {
         responseType: 'blob',
       });
-      return response;
+      return response.data;
     } catch (error) {
       console.error(`下载文档失败 (ID: ${id}):`, error);
       throw error;
