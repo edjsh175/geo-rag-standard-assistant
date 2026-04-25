@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from app.core.config import settings
 from app.core.security import require_system_api_key
 from app.models.document_models import DocumentMetadata
 from app.services.document_service import DocumentService
@@ -58,6 +59,27 @@ def _raise_validation_error(exc: ValueError) -> None:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message) from exc
 
 
+async def _read_upload_with_limit(file: UploadFile) -> bytes:
+    max_size = settings.MAX_UPLOAD_SIZE
+    chunks: list[bytes] = []
+    total_size = 0
+
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+
+        total_size += len(chunk)
+        if total_size > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds max upload size of {max_size} bytes.",
+            )
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
 @router.post(
     "/presigned-url",
     response_model=PresignedResponse,
@@ -91,7 +113,7 @@ async def upload_document(
     document_service: DocumentService = Depends(DocumentService),
 ):
     try:
-        file_content = await file.read()
+        file_content = await _read_upload_with_limit(file)
         metadata_dict = json.loads(metadata) if metadata else {}
         document_metadata = DocumentMetadata(
             title=title or file.filename or "untitled",
@@ -114,13 +136,13 @@ async def upload_document(
             message="File uploaded successfully.",
             access_url=document.access_url or "",
         )
-    except ValueError as exc:
-        _raise_validation_error(exc)
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid metadata JSON: {exc}",
         ) from exc
+    except ValueError as exc:
+        _raise_validation_error(exc)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -177,7 +199,7 @@ async def batch_upload_documents(
 ):
     results = []
     for upload in files:
-        file_content = await upload.read()
+        file_content = await _read_upload_with_limit(upload)
         try:
             document_metadata = DocumentMetadata(
                 title=upload.filename or "untitled",
@@ -208,7 +230,7 @@ async def batch_upload_documents(
     }
 
 
-@router.post("/reindex/{doc_id}")
+@router.post("/reindex/{doc_id}", dependencies=[Depends(require_system_api_key)])
 async def reindex_document(doc_id: str):
     return {
         "document_id": doc_id,
@@ -242,7 +264,7 @@ async def get_document_info(doc_id: str):
     }
 
 
-@router.delete("/{doc_id}")
+@router.delete("/{doc_id}", dependencies=[Depends(require_system_api_key)])
 async def delete_document(doc_id: str):
     return {
         "document_id": doc_id,

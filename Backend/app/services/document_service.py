@@ -53,6 +53,7 @@ class DocumentService:
     def __init__(self):
         self.upload_dir = settings.UPLOAD_DIR
         self.bucket_name = settings.MINIO_BUCKET
+        self.bucket_private_ready = False
         self.minio_client = Minio(
             settings.MINIO_URL,
             access_key=settings.MINIO_ACCESS_KEY,
@@ -69,8 +70,19 @@ class DocumentService:
                 logger.info("Created MinIO bucket '%s'.", self.bucket_name)
 
             self.minio_client.set_bucket_policy(self.bucket_name, PRIVATE_BUCKET_POLICY)
+            self.bucket_private_ready = True
         except Exception as exc:
-            logger.warning("Failed to ensure private MinIO bucket '%s': %s", self.bucket_name, exc)
+            self.bucket_private_ready = False
+            if settings.DEBUG:
+                logger.warning("Failed to ensure private MinIO bucket '%s': %s", self.bucket_name, exc)
+                return
+            raise RuntimeError(
+                f"Failed to ensure private MinIO bucket '{self.bucket_name}': {exc}"
+            ) from exc
+
+    def _require_private_bucket(self) -> None:
+        if not self.bucket_private_ready:
+            raise RuntimeError("Private MinIO bucket policy is not active.")
 
     def _normalize_filename(self, filename: str) -> str:
         raw_filename = (filename or "").strip()
@@ -126,6 +138,7 @@ class DocumentService:
         content_type: str,
         file_size: int,
     ) -> Dict[str, str]:
+        self._require_private_bucket()
         normalized_filename = self._validate_upload_request(filename, content_type, file_size)
         file_extension = Path(normalized_filename).suffix.lower()
         document_id = str(uuid.uuid4())
@@ -152,6 +165,7 @@ class DocumentService:
         metadata: DocumentMetadata,
         spatial_metadata: Optional[SpatialMetadata] = None,
     ) -> Document:
+        self._require_private_bucket()
         normalized_filename = self._validate_upload_request(filename, content_type, len(file_content))
         file_extension = Path(normalized_filename).suffix.lower()
         document_id = str(uuid.uuid4())
@@ -186,6 +200,7 @@ class DocumentService:
         )
 
     def get_download_stream(self, object_name: str):
+        self._require_private_bucket()
         normalized_object_name = self._normalize_filename(object_name)
         response = self.minio_client.get_object(self.bucket_name, normalized_object_name)
         guessed_content_type = mimetypes.guess_type(normalized_object_name)[0] or "application/octet-stream"
