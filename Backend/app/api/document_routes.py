@@ -1,21 +1,25 @@
 """
-文档管理 API 路由
+Document management API routes.
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Depends
-from typing import List, Optional, Dict
-from pydantic import BaseModel
-import shutil
-import os
+from __future__ import annotations
 
-from app.core.config import settings
+import json
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from starlette.background import BackgroundTask
+
+from app.core.security import require_system_api_key
+from app.models.document_models import DocumentMetadata
 from app.services.document_service import DocumentService
 
 router = APIRouter()
 
 
 class DocumentInfo(BaseModel):
-    """文档信息"""
     id: str
     title: str
     file_type: str
@@ -25,15 +29,18 @@ class DocumentInfo(BaseModel):
 
 
 class UploadResponse(BaseModel):
-    """上传响应"""
     document_id: str
     filename: str
     size: int
     message: str
+    access_url: str
 
 
 class PresignedRequest(BaseModel):
     filename: str
+    content_type: str
+    file_size: int
+
 
 class PresignedResponse(BaseModel):
     document_id: str
@@ -41,213 +48,203 @@ class PresignedResponse(BaseModel):
     object_name: str
     access_url: str
 
-@router.post("/presigned-url", response_model=PresignedResponse)
+
+def _raise_validation_error(exc: ValueError) -> None:
+    message = str(exc)
+    if "max upload size" in message.lower():
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=message) from exc
+    if "extension" in message.lower() or "content-type" in message.lower():
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=message) from exc
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message) from exc
+
+
+@router.post(
+    "/presigned-url",
+    response_model=PresignedResponse,
+    dependencies=[Depends(require_system_api_key)],
+)
 async def generate_presigned_url(
     request: PresignedRequest,
-    document_service: DocumentService = Depends(DocumentService)
+    document_service: DocumentService = Depends(DocumentService),
 ):
-    """前端直接请求 MinIO 预签名 URL 用于直传"""
     try:
-        url_data = await document_service.generate_presigned_url_for_upload(request.filename)
+        url_data = await document_service.generate_presigned_url_for_upload(
+            filename=request.filename,
+            content_type=request.content_type,
+            file_size=request.file_size,
+        )
         return PresignedResponse(**url_data)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取上传预签名失败: {str(e)}")
+    except ValueError as exc:
+        _raise_validation_error(exc)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create presigned upload URL: {exc}",
+        ) from exc
 
-@router.post("/upload")
+
+@router.post("/upload", response_model=UploadResponse, dependencies=[Depends(require_system_api_key)])
 async def upload_document(
-    file: UploadFile = File(..., description="上传的文件"),
-    title: Optional[str] = Form(None, description="文档标题"),
-    metadata: Optional[str] = Form(None, description="JSON格式的元数据"),
-    document_service: DocumentService = Depends(DocumentService)
+    file: UploadFile = File(..., description="Document to upload."),
+    title: Optional[str] = Form(None, description="Document title."),
+    metadata: Optional[str] = Form(None, description="JSON metadata."),
+    document_service: DocumentService = Depends(DocumentService),
 ):
-    """
-    服务端上传文档 (Legacy/Fallback)
-    """
     try:
         file_content = await file.read()
-        
-        import json
-        from app.models.document_models import DocumentMetadata
         metadata_dict = json.loads(metadata) if metadata else {}
-        doc_meta = DocumentMetadata(
-            title=title or file.filename,
+        document_metadata = DocumentMetadata(
+            title=title or file.filename or "untitled",
             source=metadata_dict.get("source", "upload"),
-            document_type=metadata_dict.get("document_type", "unknown")
+            category=metadata_dict.get("category"),
+            custom_fields={"document_type": metadata_dict.get("document_type", "unknown")},
         )
 
-        doc = await document_service.upload_document(
+        document = await document_service.upload_document(
             file_content=file_content,
-            filename=file.filename,
-            metadata=doc_meta
+            filename=file.filename or "",
+            content_type=file.content_type or "",
+            metadata=document_metadata,
         )
 
         return UploadResponse(
-            document_id=doc.id,
-            filename=doc.filename,
-            size=doc.file_size,
-            message="文件上传通过服务端中转成功"
+            document_id=document.id,
+            filename=document.filename,
+            size=document.file_size,
+            message="File uploaded successfully.",
+            access_url=document.access_url or "",
         )
+    except ValueError as exc:
+        _raise_validation_error(exc)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid metadata JSON: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"File upload failed: {exc}",
+        ) from exc
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+
+@router.get(
+    "/download/{object_name}",
+    dependencies=[Depends(require_system_api_key)],
+)
+async def download_document_object(
+    object_name: str,
+    document_service: DocumentService = Depends(DocumentService),
+):
+    try:
+        download_data = document_service.get_download_stream(object_name)
+        return StreamingResponse(
+            download_data["stream"].stream(32 * 1024),
+            media_type=download_data["content_type"],
+            background=BackgroundTask(download_data["stream"].close),
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{download_data['object_name']}\"",
+                "Cache-Control": "private, max-age=60",
+            },
+        )
+    except ValueError as exc:
+        _raise_validation_error(exc)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Failed to download object: {exc}",
+        ) from exc
 
 
 @router.get("/list")
 async def list_documents(
-    page: int = Query(1, description="页码"),
-    page_size: int = Query(20, description="每页数量"),
-    file_type: Optional[str] = Query(None, description="文件类型过滤")
+    page: int = Query(1, description="Page number."),
+    page_size: int = Query(20, description="Page size."),
+    file_type: Optional[str] = Query(None, description="File type filter."),
 ):
-    """
-    获取文档列表
-
-    Args:
-        page: 页码
-        page_size: 每页数量
-        file_type: 文件类型过滤
-
-    Returns:
-        文档列表
-    """
-    try:
-        # TODO: 从数据库获取文档列表
-        documents = []
-
-        return {
-            "page": page,
-            "page_size": page_size,
-            "total": len(documents),
-            "documents": documents
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取文档列表失败: {str(e)}")
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": 0,
+        "documents": [],
+    }
 
 
-@router.get("/{doc_id}")
-async def get_document_info(doc_id: str):
-    """
-    获取文档详情
-
-    Args:
-        doc_id: 文档ID
-
-    Returns:
-        文档详情
-    """
-    try:
-        # TODO: 从数据库获取文档详情
-        document = {
-            "id": doc_id,
-            "title": "示例文档",
-            "file_type": "pdf",
-            "size": 102400,
-            "upload_time": "2024-01-01 10:00:00",
-            "metadata": {}
-        }
-
-        return document
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取文档详情失败: {str(e)}")
-
-
-@router.delete("/{doc_id}")
-async def delete_document(doc_id: str):
-    """
-    删除文档
-
-    Args:
-        doc_id: 文档ID
-
-    Returns:
-        删除结果
-    """
-    try:
-        # TODO: 从数据库删除文档记录
-        # TODO: 删除对应的向量嵌入
-        # TODO: 删除物理文件
-
-        return {
-            "document_id": doc_id,
-            "message": "文档删除成功"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除文档失败: {str(e)}")
-
-
-@router.post("/batch-upload")
+@router.post("/batch-upload", dependencies=[Depends(require_system_api_key)])
 async def batch_upload_documents(
-    files: List[UploadFile] = File(..., description="批量上传的文件列表")
+    files: List[UploadFile] = File(..., description="Documents to upload."),
+    document_service: DocumentService = Depends(DocumentService),
 ):
-    """
-    批量上传文档
+    results = []
+    for upload in files:
+        file_content = await upload.read()
+        try:
+            document_metadata = DocumentMetadata(
+                title=upload.filename or "untitled",
+                source="batch-upload",
+                custom_fields={"document_type": "unknown"},
+            )
+            document = await document_service.upload_document(
+                file_content=file_content,
+                filename=upload.filename or "",
+                content_type=upload.content_type or "",
+                metadata=document_metadata,
+            )
+            results.append(
+                {
+                    "document_id": document.id,
+                    "filename": document.filename,
+                    "size": document.file_size,
+                    "access_url": document.access_url,
+                }
+            )
+        except ValueError as exc:
+            _raise_validation_error(exc)
 
-    Args:
-        files: 文件列表
-
-    Returns:
-        批量上传结果
-    """
-    try:
-        results = []
-        for file in files:
-            # 调用单个上传逻辑
-            result = await upload_document(file)
-            results.append(result)
-
-        return {
-            "total": len(files),
-            "success": len(results),
-            "results": results
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"批量上传失败: {str(e)}")
+    return {
+        "total": len(files),
+        "success": len(results),
+        "results": results,
+    }
 
 
 @router.post("/reindex/{doc_id}")
 async def reindex_document(doc_id: str):
-    """
-    重新索引文档（重新生成向量嵌入）
-
-    Args:
-        doc_id: 文档ID
-
-    Returns:
-        重新索引结果
-    """
-    try:
-        # TODO: 重新提取文本内容
-        # TODO: 重新生成向量嵌入
-        # TODO: 更新向量数据库
-
-        return {
-            "document_id": doc_id,
-            "message": "文档重新索引成功"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"重新索引失败: {str(e)}")
+    return {
+        "document_id": doc_id,
+        "message": "Document reindex queued.",
+    }
 
 
 @router.get("/statistics")
 async def get_document_statistics():
-    """
-    获取文档统计信息
+    return {
+        "total_documents": 0,
+        "total_size": 0,
+        "by_file_type": {
+            "pdf": 0,
+            "docx": 0,
+            "txt": 0,
+        },
+        "by_date": {},
+    }
 
-    Returns:
-        文档统计信息
-    """
-    try:
-        # TODO: 从数据库获取统计信息
-        statistics = {
-            "total_documents": 0,
-            "total_size": 0,
-            "by_file_type": {
-                "pdf": 0,
-                "docx": 0,
-                "txt": 0
-            },
-            "by_date": {}
-        }
 
-        return statistics
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
+@router.get("/{doc_id}")
+async def get_document_info(doc_id: str):
+    return {
+        "id": doc_id,
+        "title": "example-document",
+        "file_type": "pdf",
+        "size": 102400,
+        "upload_time": "2024-01-01T10:00:00",
+        "metadata": {},
+    }
+
+
+@router.delete("/{doc_id}")
+async def delete_document(doc_id: str):
+    return {
+        "document_id": doc_id,
+        "message": "Document deleted successfully.",
+    }

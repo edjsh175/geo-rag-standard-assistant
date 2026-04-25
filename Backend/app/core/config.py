@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "change_me"
     MINIO_BUCKET: str = "geoai-assets"
+    MINIO_SECURE: bool = False
+    MINIO_PRESIGNED_UPLOAD_EXPIRES_SECONDS: int = 300
+    PUBLIC_API_BASE_URL: Optional[str] = None
 
     UPLOAD_DIR: Path = Path("uploads")
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024
