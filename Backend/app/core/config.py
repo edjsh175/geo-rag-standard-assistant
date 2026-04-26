@@ -23,8 +23,8 @@ class Settings(BaseSettings):
         "http://localhost:3000",
     ]
 
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:change_me@localhost:5432/geoai_db"
-    MYSQL_URL: str = "mysql+aiomysql://root:change_me@localhost:3306/geoai_metadata"
+    DATABASE_URL: str = "postgresql+asyncpg://geoai:geoai_dev_password@localhost:5432/geoai_db"
+    MYSQL_URL: str = "mysql+aiomysql://geoai_mysql:geoai_dev_password@localhost:3306/geoai_metadata"
     REDIS_URL: str = "redis://localhost:6379/0"
 
     VECTOR_DB_TYPE: str = "pgvector"
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     MINIO_URL: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "change_me"
+    MINIO_SECRET_KEY: str = ""
     MINIO_BUCKET: str = "geoai-assets"
     MINIO_SECURE: bool = False
     MINIO_PRESIGNED_UPLOAD_EXPIRES_SECONDS: int = 300
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: Path = Path("uploads")
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024
 
-    SECRET_KEY: str = "change_me"
+    SECRET_KEY: str = "dev-only-secret-key-set-SECRET_KEY-in-env"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     SYSTEM_API_KEY: Optional[str] = None
     SYSTEM_CLEAR_CACHE_CONFIRM_VALUE: str = "clear-cache"
@@ -71,6 +71,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+        extra = "ignore"
 
 
 settings = Settings()

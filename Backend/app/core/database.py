@@ -1,21 +1,20 @@
 """
-数据库连接管理器
-支持 PostgreSQL (pgvector + PostGIS) 和 MySQL
+Database connection manager for PostgreSQL, MySQL, and Redis.
 """
 
-import logging
-from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
+import logging
+from typing import AsyncGenerator, Optional
 
+from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
-    AsyncEngine,
 )
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import text
-from redis.asyncio import Redis
 
 from .config import settings
 
@@ -23,12 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
-    """SQLAlchemy 声明式基类"""
+    """SQLAlchemy declarative base."""
+
     pass
 
 
 class DatabaseManager:
-    """数据库管理器"""
+    """Manage database and cache clients."""
 
     def __init__(self):
         self.postgres_engine: Optional[AsyncEngine] = None
@@ -38,118 +38,112 @@ class DatabaseManager:
         self.mysql_sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
 
         self.redis_client: Optional[Redis] = None
-        
+
         import asyncio
+
         self._init_lock = asyncio.Lock()
         self._initialized = False
 
-    async def initialize(self):
-        """初始化所有数据库连接，容忍部分失败"""
+    async def initialize(self) -> None:
+        """Initialize required databases and optional cache.
+
+        PostgreSQL backs vector/spatial search and MySQL backs standard
+        metadata. Both are required for the current application path. Redis is
+        a cache dependency and may be unavailable without blocking startup.
+        """
+
         async with self._init_lock:
             if self._initialized:
                 return
             self._initialized = True
 
-        # 初始化 PostgreSQL (核心组件)
+        required_errors: list[str] = []
+
         try:
             await self._init_postgres()
-            logger.info("PostgreSQL 初始化成功")
-        except Exception as e:
-            logger.error(f"PostgreSQL 初始化失败: {e}")
-            # 继续初始化其他组件，但 PostgreSQL 不可用将影响核心功能
+            await self._test_engine("PostgreSQL", self.postgres_engine)
+            logger.info("PostgreSQL initialized successfully")
+        except Exception as exc:
+            logger.error("PostgreSQL initialization failed: %s", exc)
+            required_errors.append(f"PostgreSQL: {exc}")
 
-        # 初始化 MySQL (元数据存储)
         try:
             await self._init_mysql()
-            logger.info("MySQL 初始化成功")
-        except Exception as e:
-            logger.warning(f"MySQL 初始化失败，元数据功能将受限: {e}")
+            await self._test_engine("MySQL", self.mysql_engine)
+            logger.info("MySQL initialized successfully")
+        except Exception as exc:
+            logger.error("MySQL initialization failed: %s", exc)
+            required_errors.append(f"MySQL: {exc}")
 
-        # 初始化 Redis (缓存，非核心组件)
         try:
             await self._init_redis()
-            logger.info("Redis 初始化成功")
-        except Exception as e:
-            logger.warning(f"Redis 初始化失败，缓存功能将不可用: {e}")
+            logger.info("Redis initialized successfully")
+        except Exception as exc:
+            logger.warning("Redis initialization failed; cache will be unavailable: %s", exc)
 
-        # 测试连接
-        await self.test_connections()
-
-    async def _init_postgres(self):
-        """初始化 PostgreSQL 连接"""
-        try:
-            self.postgres_engine = create_async_engine(
-                settings.DATABASE_URL,
-                echo=settings.DEBUG,
-                pool_size=20,
-                max_overflow=30,
-                pool_pre_ping=True,
+        if required_errors:
+            await self.close()
+            raise RuntimeError(
+                "Required database initialization failed: "
+                + "; ".join(required_errors)
             )
 
-            self.postgres_sessionmaker = async_sessionmaker(
-                self.postgres_engine,
-                class_=AsyncSession,
-                expire_on_commit=False,
-                autocommit=False,
-                autoflush=False,
-            )
+    async def _init_postgres(self) -> None:
+        self.postgres_engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=settings.DEBUG,
+            pool_size=20,
+            max_overflow=30,
+            pool_pre_ping=True,
+        )
 
-            logger.info("PostgreSQL 连接池初始化成功")
+        self.postgres_sessionmaker = async_sessionmaker(
+            self.postgres_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
 
-            # 创建 pgvector 扩展（如果不存在）
-            async with self.postgres_engine.begin() as conn:
-                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
-                logger.info("PostgreSQL 扩展 (vector, postgis) 已启用")
+        async with self.postgres_engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
 
-        except Exception as e:
-            logger.error(f"PostgreSQL 连接初始化失败: {e}")
-            raise
+    async def _init_mysql(self) -> None:
+        self.mysql_engine = create_async_engine(
+            settings.MYSQL_URL,
+            echo=settings.DEBUG,
+            pool_size=10,
+            max_overflow=15,
+            pool_pre_ping=True,
+        )
 
-    async def _init_mysql(self):
-        """初始化 MySQL 连接"""
-        try:
-            self.mysql_engine = create_async_engine(
-                settings.MYSQL_URL,
-                echo=settings.DEBUG,
-                pool_size=10,
-                max_overflow=15,
-                pool_pre_ping=True,
-            )
+        self.mysql_sessionmaker = async_sessionmaker(
+            self.mysql_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
 
-            self.mysql_sessionmaker = async_sessionmaker(
-                self.mysql_engine,
-                class_=AsyncSession,
-                expire_on_commit=False,
-                autocommit=False,
-                autoflush=False,
-            )
+    async def _init_redis(self) -> None:
+        self.redis_client = Redis.from_url(
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True,
+        )
+        await self.redis_client.ping()
 
-            logger.info("MySQL 连接池初始化成功")
+    async def _test_engine(self, name: str, engine: Optional[AsyncEngine]) -> None:
+        if engine is None:
+            raise RuntimeError(f"{name} engine was not initialized")
 
-        except Exception as e:
-            logger.error(f"MySQL 连接初始化失败: {e}")
-            raise
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
 
-    async def _init_redis(self):
-        """初始化 Redis 连接"""
-        try:
-            self.redis_client = Redis.from_url(
-                settings.REDIS_URL,
-                encoding="utf-8",
-                decode_responses=True,
-            )
+    async def test_connections(self) -> None:
+        """Log the current connectivity state for all initialized clients."""
 
-            # 测试连接
-            await self.redis_client.ping()
-            logger.info("Redis 连接初始化成功")
-
-        except Exception as e:
-            logger.error(f"Redis 连接初始化失败: {e}")
-            raise
-
-    async def test_connections(self):
-        """测试所有数据库连接"""
         connections = {
             "PostgreSQL": self.postgres_engine,
             "MySQL": self.mysql_engine,
@@ -158,24 +152,22 @@ class DatabaseManager:
 
         for name, conn in connections.items():
             if conn is None:
-                logger.warning(f"{name} 连接未初始化")
+                logger.warning("%s connection is not initialized", name)
                 continue
 
             try:
                 if name == "Redis":
                     await conn.ping()
                 else:
-                    async with conn.begin() as _:
-                        pass
-                logger.info(f"{name} 连接测试成功")
-            except Exception as e:
-                logger.error(f"{name} 连接测试失败: {e}")
+                    await self._test_engine(name, conn)
+                logger.info("%s connection test succeeded", name)
+            except Exception as exc:
+                logger.error("%s connection test failed: %s", name, exc)
 
     @asynccontextmanager
     async def get_postgres_session(self) -> AsyncGenerator[AsyncSession, None]:
-        """获取 PostgreSQL 会话"""
         if not self.postgres_sessionmaker:
-            raise RuntimeError("PostgreSQL 连接未初始化")
+            raise RuntimeError("PostgreSQL connection is not initialized")
 
         async with self.postgres_sessionmaker() as session:
             try:
@@ -189,9 +181,8 @@ class DatabaseManager:
 
     @asynccontextmanager
     async def get_mysql_session(self) -> AsyncGenerator[AsyncSession, None]:
-        """获取 MySQL 会话"""
         if not self.mysql_sessionmaker:
-            raise RuntimeError("MySQL 连接未初始化")
+            raise RuntimeError("MySQL connection is not initialized")
 
         async with self.mysql_sessionmaker() as session:
             try:
@@ -204,25 +195,22 @@ class DatabaseManager:
                 await session.close()
 
     async def get_redis(self) -> Redis:
-        """获取 Redis 客户端"""
         if not self.redis_client:
-            raise RuntimeError("Redis 连接未初始化")
+            raise RuntimeError("Redis connection is not initialized")
         return self.redis_client
 
-    async def close(self):
-        """关闭所有数据库连接"""
+    async def close(self) -> None:
         if self.postgres_engine:
             await self.postgres_engine.dispose()
-            logger.info("PostgreSQL 连接已关闭")
+            logger.info("PostgreSQL connection closed")
 
         if self.mysql_engine:
             await self.mysql_engine.dispose()
-            logger.info("MySQL 连接已关闭")
+            logger.info("MySQL connection closed")
 
         if self.redis_client:
             await self.redis_client.close()
-            logger.info("Redis 连接已关闭")
+            logger.info("Redis connection closed")
 
 
-# 全局数据库管理器实例
 db_manager = DatabaseManager()
