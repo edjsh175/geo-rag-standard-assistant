@@ -10,8 +10,10 @@ GeoAI 面向测绘/国土空间规划标准文档，提供：
 - 地图联动展示（OpenLayers 2D + Cesium 3D）
 
 ## 当前技术栈
-- 后端：FastAPI、SQLAlchemy Async、PostgreSQL(pgvector/PostGIS)、MySQL、Redis、MinIO
+- 后端：FastAPI、SQLAlchemy Async、PostgreSQL(pgvector/PostGIS)、MySQL、Redis
 - 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand
+
+MinIO 目前不是当前运行路径的必需依赖，仅作为后续“AI 引用文档点击下载”对象存储流程的预留能力。
 
 ## 后端入口（已统一）
 容器与联调统一使用：`Backend/main.py`
@@ -42,8 +44,11 @@ cd Backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+copy .env.example .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+启动后端前必须在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于 `policy_chunks` 向量/空间检索数据，MySQL 用于 `standard_norm_detail` 标准元数据；任一核心数据库不可用时后端会启动失败。
 
 ### 前端
 ```bash
@@ -52,7 +57,7 @@ npm install
 npm run dev
 ```
 
-前端默认请求：`http://localhost:8000/api`（可通过 `VITE_API_URL` 覆盖）。
+前端默认请求同源路径 `/api`。本地开发时 Vite 会把 `/api` 代理到 `http://localhost:8000`；只有跨域或特殊部署时才需要通过 `VITE_API_URL` 覆盖。
 
 ### Docker
 ```bash

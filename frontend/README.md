@@ -17,8 +17,9 @@ npm run dev
 
 ## API 配置
 前端 API 基础地址位于 `src/lib/api/config.ts`：
-- 默认：`http://localhost:8000/api`
-- 可通过 `VITE_API_URL` 覆盖
+- 默认：`/api`
+- 本地开发时，Vite 会把 `/api` 代理到 `http://localhost:8000`
+- 仅在跨域或特殊部署场景通过 `VITE_API_URL` 覆盖
 
 ## 目录
 ```text
