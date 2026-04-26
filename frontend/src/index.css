@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap');
+@import "tailwindcss";
 
 @theme {
   /* ── 映射动态 CSS 变量 ── */
@@ -196,13 +196,35 @@
 .toggle-thumb.off { transform: translateX(3px);  background: #4a4a55; }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Prose ━━━━━━━━━━━━━━━━━━━━ */
-.prose { color: var(--color-on-background); opacity: 0.85; font-size: 0.95rem; line-height: 1.8; }
+.prose {
+  max-width: 100%;
+  color: var(--color-on-background);
+  opacity: 0.85;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .prose strong { color: var(--color-on-background); font-weight: 600; }
-.prose code  { color: #f07040; font-family: var(--font-mono); font-size: 0.85rem; }
+.prose code  { color: #f07040; font-family: var(--font-mono); font-size: 0.85rem; white-space: pre-wrap; }
 .prose p { margin: 0.5em 0; }
 .prose ul, .prose ol { padding-left: 1.25em; margin: 0.4em 0; }
 .prose li { margin: 0.25em 0; }
 .prose h1, .prose h2, .prose h3 { color: var(--color-on-background); font-family: var(--font-headline); margin-top: 1em; margin-bottom: 0.5em; }
+.prose p,
+.prose li,
+.prose strong,
+.prose h1,
+.prose h2,
+.prose h3 {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.prose pre,
+.prose table {
+  max-width: 100%;
+  overflow-x: auto;
+}
 
 /* ━━━━━━━━━━━━━━━━━━━━ Nav underline ━━━━━━━━━━━━━━━━━━━━ */
 .nav-active {

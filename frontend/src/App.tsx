@@ -33,6 +33,68 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
 
+const PROVINCE_MAP: Record<string, string> = {
+  '110000': '北京市',
+  '120000': '天津市',
+  '130000': '河北省',
+  '140000': '山西省',
+  '150000': '内蒙古自治区',
+  '210000': '辽宁省',
+  '220000': '吉林省',
+  '230000': '黑龙江省',
+  '310000': '上海市',
+  '320000': '江苏省',
+  '330000': '浙江省',
+  '340000': '安徽省',
+  '350000': '福建省',
+  '360000': '江西省',
+  '370000': '山东省',
+  '410000': '河南省',
+  '420000': '湖北省',
+  '430000': '湖南省',
+  '440000': '广东省',
+  '450000': '广西壮族自治区',
+  '460000': '海南省',
+  '500000': '重庆市',
+  '510000': '四川省',
+  '520000': '贵州省',
+  '530000': '云南省',
+  '540000': '西藏自治区',
+  '610000': '陕西省',
+  '620000': '甘肃省',
+  '630000': '青海省',
+  '640000': '宁夏回族自治区',
+  '650000': '新疆维吾尔自治区',
+  '710000': '台湾省',
+  '810000': '香港特别行政区',
+  '820000': '澳门特别行政区',
+};
+
+const buildRegionAliases = (name: string): string[] => {
+  const compactName = name.replace(/\s+/g, '');
+  const aliasSet = new Set([
+    compactName,
+    compactName.replace(/省$/, ''),
+    compactName.replace(/市$/, ''),
+    compactName.replace(/特别行政区$/, ''),
+    compactName.replace(/壮族自治区$/, ''),
+    compactName.replace(/回族自治区$/, ''),
+    compactName.replace(/维吾尔自治区$/, ''),
+    compactName.replace(/自治区$/, ''),
+  ]);
+  return Array.from(aliasSet).filter(Boolean);
+};
+
+const extractRegionFromQuery = (content: string): { adcode: string; name: string } | null => {
+  const normalized = content.replace(/\s+/g, '');
+  for (const [adcode, name] of Object.entries(PROVINCE_MAP)) {
+    if (buildRegionAliases(name).some((alias) => normalized.includes(alias))) {
+      return { adcode, name };
+    }
+  }
+  return null;
+};
+
 export default function App() {
   // ==================== 全局空间状态 ====================
   const viewMode = useMapStore((s) => s.viewMode);
@@ -304,6 +366,11 @@ export default function App() {
   const handleChatSubmit = async (content: string) => {
     if (!content.trim()) return;
 
+    const regionFromQuery = extractRegionFromQuery(content);
+    if (regionFromQuery) {
+      setActiveRegion(regionFromQuery);
+    }
+
     // 构建历史记录：将当前消息列表转换为API格式
     const history = messages.map(msg => ({
       role: msg.role,
@@ -399,7 +466,7 @@ export default function App() {
             '540000': '西藏自治区', '610000': '陕西省', '620000': '甘肃省', '630000': '青海省', '640000': '宁夏回族自治区',
             '650000': '新疆维吾尔自治区', '710000': '台湾省', '810000': '香港特别行政区', '820000': '澳门特别行政区'
           };
-          finalName = provinceMap[adcode] || adcode;
+          finalName = PROVINCE_MAP[adcode] || adcode;
         }
 
         console.log(`提取到地理位置信息: ${finalName}(${adcode})，触发地图飞行`);

@@ -209,7 +209,7 @@ interface ChatMessageProps {
 const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) => {
   const isUser = message.role === 'user';
   return (
-    <div className={cn('flex', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
+    <div className={cn('flex min-w-0 max-w-full', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
       {/* AI avatar */}
       {!isUser && (
         <div
@@ -220,11 +220,11 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
         </div>
       )}
 
-      <div className="flex-1 space-y-3">
+      <div className="min-w-0 flex-1 space-y-3">
         {/* Bubble */}
         <div
           className={cn(
-            "rounded-xl text-[15px] leading-[1.75] p-3.5 border",
+            "max-w-full overflow-hidden rounded-xl text-[15px] leading-[1.75] p-3.5 border break-words",
             isUser ? "bg-primary-container/[0.07] border-primary-container/[0.18] text-on-background/90" : "bg-surface-container/60 border-outline text-on-background/90"
           )}
           style={
@@ -234,7 +234,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
           }
         >
           {!isUser ? (
-            <div className="prose">
+            <div className="prose max-w-full">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
             </div>
           ) : message.content}

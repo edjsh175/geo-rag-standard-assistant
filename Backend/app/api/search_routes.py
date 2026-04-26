@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+RELAXED_VECTOR_THRESHOLD = 0.35
+
 
 class HealthCheckResponse(BaseModel):
     """健康检查响应"""
@@ -128,6 +130,23 @@ async def search_documents(
             spatial_filter=request.spatial_filter,
             metadata_filter=request.metadata_filter
         )
+
+        if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
+            logger.info(
+                "默认阈值未命中结果，使用较低阈值重试: query='%s', threshold=%.2f -> %.2f",
+                request.query,
+                request.threshold,
+                RELAXED_VECTOR_THRESHOLD,
+            )
+            results = await search_service.search(
+                query=request.query,
+                top_k=request.top_k,
+                threshold=RELAXED_VECTOR_THRESHOLD,
+                spatial_filter=request.spatial_filter,
+                metadata_filter=request.metadata_filter
+            )
+
+        search_time = (datetime.now() - start_time).total_seconds()
         # 生成检索响应的基础数据
         base_response = SearchResponse(
             query=request.query,
@@ -140,7 +159,8 @@ async def search_documents(
         )
 
         # 2. 检查是否开启大模型生成
-        if not request.use_generation or not results:
+        # 即使没有命中文档，也继续生成一条诚实回答，避免前端退化为泛化报错文案。
+        if not request.use_generation:
             return base_response
 
         # 如果开启大模型生成，并且启用了 SSE 流式传输

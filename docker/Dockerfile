@@ -16,7 +16,6 @@ COPY Backend/ ./Backend/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY config/ ./config/
-COPY data/ ./data/
 
 RUN useradd -m -u 1000 geoai && chown -R geoai:geoai /app
 USER geoai

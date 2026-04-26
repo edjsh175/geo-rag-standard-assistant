@@ -3,6 +3,7 @@
 """
 
 import logging
+import re
 import string
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -15,6 +16,59 @@ from app.models.search_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+PROVINCE_STANDARD_PREFIXES = {
+    "北京市": "DB11",
+    "天津市": "DB12",
+    "河北省": "DB13",
+    "山西省": "DB14",
+    "内蒙古自治区": "DB15",
+    "辽宁省": "DB21",
+    "吉林省": "DB22",
+    "黑龙江省": "DB23",
+    "上海市": "DB31",
+    "江苏省": "DB32",
+    "浙江省": "DB33",
+    "安徽省": "DB34",
+    "福建省": "DB35",
+    "江西省": "DB36",
+    "山东省": "DB37",
+    "河南省": "DB41",
+    "湖北省": "DB42",
+    "湖南省": "DB43",
+    "广东省": "DB44",
+    "广西壮族自治区": "DB45",
+    "海南省": "DB46",
+    "重庆市": "DB50",
+    "四川省": "DB51",
+    "贵州省": "DB52",
+    "云南省": "DB53",
+    "西藏自治区": "DB54",
+    "陕西省": "DB61",
+    "甘肃省": "DB62",
+    "青海省": "DB63",
+    "宁夏回族自治区": "DB64",
+    "新疆维吾尔自治区": "DB65",
+}
+
+QUERY_STOP_WORDS = {
+    "查一下", "查询", "检索", "有哪些", "哪些", "相关", "标准", "规范",
+    "一下", "请", "的", "有", "吗", "？", "?", "和", "与",
+}
+
+
+def _region_aliases(name: str) -> List[str]:
+    aliases = {
+        name,
+        name.removesuffix("省"),
+        name.removesuffix("市"),
+        name.removesuffix("特别行政区"),
+        name.removesuffix("壮族自治区"),
+        name.removesuffix("回族自治区"),
+        name.removesuffix("维吾尔自治区"),
+        name.removesuffix("自治区"),
+    }
+    return [alias for alias in aliases if alias]
 
 
 class SearchService:
@@ -115,6 +169,17 @@ class SearchService:
                 threshold=threshold
             )
 
+            keyword_results = await self._keyword_search(
+                query=query,
+                top_k=top_k * 2,
+            )
+
+            vector_results = self._merge_and_dedupe_results(
+                keyword_results,
+                vector_results,
+                top_k=top_k * 2,
+            )
+
             # 3. 应用空间过滤器
             if spatial_filter:
                 vector_results = await self._apply_spatial_filter(
@@ -148,6 +213,114 @@ class SearchService:
         except Exception as e:
             logger.error(f"检索失败: {e}", exc_info=True)
             raise
+
+    def _extract_keyword_terms(self, query: str) -> List[str]:
+        """从自然语言查询中提取适合数据库 LIKE 检索的关键词。"""
+        compact_query = re.sub(r"\s+", "", query)
+        terms: List[str] = []
+
+        for region_name, standard_prefix in PROVINCE_STANDARD_PREFIXES.items():
+            matched_aliases = [alias for alias in _region_aliases(region_name) if alias in compact_query]
+            if matched_aliases:
+                terms.extend([*matched_aliases, standard_prefix])
+
+        cleaned = compact_query
+        for word in QUERY_STOP_WORDS:
+            cleaned = cleaned.replace(word, "")
+
+        for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{2,}", cleaned):
+            if token and token not in QUERY_STOP_WORDS:
+                terms.append(token)
+
+        deduped_terms: List[str] = []
+        for term in terms:
+            if term not in deduped_terms:
+                deduped_terms.append(term)
+        return deduped_terms[:6]
+
+    async def _keyword_search(self, query: str, top_k: int) -> List[DocumentResult]:
+        """关键词兜底检索，用于地区编号和明确主题词。"""
+        terms = self._extract_keyword_terms(query)
+        if not terms or not db_manager.postgres_sessionmaker:
+            return []
+
+        try:
+            conditions = []
+            params: Dict[str, Any] = {"limit": top_k}
+            score_parts = []
+
+            for i, term in enumerate(terms):
+                param_name = f"kw_{i}"
+                params[param_name] = f"%{term}%"
+                conditions.append(
+                    f"(standard_code ILIKE :{param_name} OR document_name ILIKE :{param_name} OR content ILIKE :{param_name})"
+                )
+                score_parts.append(
+                    f"(CASE WHEN standard_code ILIKE :{param_name} THEN 0.20 ELSE 0 END)"
+                    f" + (CASE WHEN document_name ILIKE :{param_name} THEN 0.12 ELSE 0 END)"
+                    f" + (CASE WHEN content ILIKE :{param_name} THEN 0.04 ELSE 0 END)"
+                )
+
+            sql = f"""
+                WITH matched AS (
+                    SELECT DISTINCT ON (document_name)
+                        id, standard_code, document_name, content,
+                        LEAST(0.95, 0.55 + ({' + '.join(score_parts)})) AS similarity
+                    FROM policy_chunks
+                    WHERE {' OR '.join(conditions)}
+                    ORDER BY document_name, similarity DESC, id
+                )
+                SELECT id, standard_code, document_name, content, similarity
+                FROM matched
+                ORDER BY similarity DESC, document_name
+                LIMIT :limit
+            """
+
+            async with db_manager.get_postgres_session() as session:
+                result = await session.execute(text(sql), params)
+                rows = result.fetchall()
+
+            keyword_results = []
+            for row in rows:
+                keyword_results.append(DocumentResult(
+                    id=row.id,
+                    title=row.document_name,
+                    content=row.content[:500] if row.content else "",
+                    similarity=float(row.similarity),
+                    metadata={
+                        "standard_code": row.standard_code,
+                        "document_name": row.document_name,
+                        "match_type": "keyword",
+                    },
+                    spatial_info=None,
+                    file_type="unknown",
+                    file_size=0,
+                    upload_time=datetime.now(),
+                    source_url=None,
+                ))
+
+            logger.info("关键词检索命中 %s 条: query='%s', terms=%s", len(keyword_results), query, terms)
+            return keyword_results
+        except Exception as e:
+            logger.warning("关键词检索失败，回退到向量检索结果: %s", e, exc_info=True)
+            return []
+
+    def _merge_and_dedupe_results(
+        self,
+        primary_results: List[DocumentResult],
+        secondary_results: List[DocumentResult],
+        top_k: int,
+    ) -> List[DocumentResult]:
+        """合并多路检索结果，并按文档名去重。"""
+        merged: Dict[str, DocumentResult] = {}
+
+        for result in [*primary_results, *secondary_results]:
+            key = result.metadata.get("document_name") or result.title or result.id
+            existing = merged.get(key)
+            if not existing or result.similarity > existing.similarity:
+                merged[key] = result
+
+        return sorted(merged.values(), key=lambda item: item.similarity, reverse=True)[:top_k]
 
     async def hybrid_search(
         self,
