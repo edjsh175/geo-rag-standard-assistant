@@ -194,6 +194,7 @@ config/local.yaml
 *.tmp
 *.temp
 temp/
+.codex_tmp/
 
 # OS generated files
 .DS_Store
