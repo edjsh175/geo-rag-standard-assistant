@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     ]
 
     DATABASE_URL: str = "postgresql+asyncpg://geoai:geoai_dev_password@localhost:5432/geoai_db"
-    MYSQL_URL: str = "mysql+aiomysql://geoai_mysql:geoai_dev_password@localhost:3306/geoai_metadata"
+    MYSQL_URL: str = "mysql+aiomysql://geoai_mysql:geoai_dev_password@localhost:3306/disaster_knowledge"
     REDIS_URL: str = "redis://localhost:6379/0"
 
     VECTOR_DB_TYPE: str = "pgvector"

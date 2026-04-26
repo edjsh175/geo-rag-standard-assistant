@@ -137,13 +137,13 @@ class BatchCrawler:
                 self.logger.error(f"   ❌ [{self.current_code}] {key}: 提取失败（{e.__class__.__name__}）")
         return results
 
-    def save_db(self, m, path, table_name="standard_norm_detail"):
+    def save_db(self, m, path, table_name="geoai_metadata"):
         """保存数据到数据库
         
         Args:
             m: 元数据字典
             path: PDF文件路径
-            table_name: 数据库表名，默认为standard_norm_detail
+            table_name: 数据库表名，默认为geoai_metadata
         """
         draft_unit_val = m.get('draft_unit') or "无"
         drafter_val = m.get('drafter') or "无"

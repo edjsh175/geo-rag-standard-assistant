@@ -48,7 +48,7 @@ copy .env.example .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-启动后端前必须在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于 `policy_chunks` 向量/空间检索数据，MySQL 用于 `standard_norm_detail` 标准元数据；任一核心数据库不可用时后端会启动失败。
+启动后端前必须在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于 `policy_chunks` 向量/空间检索数据，MySQL 使用 `disaster_knowledge.geoai_metadata` 存储标准元数据；任一核心数据库不可用时后端会启动失败。
 
 ### 前端
 ```bash

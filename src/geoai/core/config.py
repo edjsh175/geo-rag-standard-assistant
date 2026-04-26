@@ -71,7 +71,7 @@ MYSQL_URL = os.getenv(
     f"mysql://{MYSQL_CONFIG['user']}:{MYSQL_CONFIG['password']}@{MYSQL_CONFIG['host']}:{MYSQL_CONFIG['port']}/{MYSQL_CONFIG['database']}",
 )
 
-MYSQL_TABLE = "standard_norm_detail"
+MYSQL_TABLE = os.getenv("MYSQL_TABLE", "geoai_metadata")
 MYSQL_STANDARD_CODE_FIELD = "standard_code"
 MYSQL_RELEASE_DATE_FIELD = "release_date"
 MYSQL_IMPLEMENT_DATE_FIELD = "implement_date"

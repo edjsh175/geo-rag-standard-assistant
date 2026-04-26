@@ -20,7 +20,7 @@ copy .env.example .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-`Backend/.env` 必须指向可用的 PostgreSQL 和 MySQL。PostgreSQL 存储 `policy_chunks` 向量/空间检索数据，MySQL 存储 `standard_norm_detail` 标准元数据；任一核心数据库不可用时后端会启动失败。Redis 仅作为缓存依赖，不可用时后端仍可启动。
+`Backend/.env` 必须指向可用的 PostgreSQL 和 MySQL。PostgreSQL 存储 `policy_chunks` 向量/空间检索数据，MySQL 使用 `disaster_knowledge.geoai_metadata` 存储标准元数据；任一核心数据库不可用时后端会启动失败。Redis 仅作为缓存依赖，不可用时后端仍可启动。
 
 API 文档：
 - Swagger: `http://localhost:8000/api/docs`
