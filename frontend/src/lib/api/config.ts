@@ -1,6 +1,18 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? '/api';
+const envApiBaseUrl = import.meta.env.VITE_API_URL?.trim();
+
+const isLoopbackOrigin = (value: string): boolean =>
+  /^https?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i.test(value);
+
+const isLoopbackPage =
+  typeof window !== 'undefined' &&
+  /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/i.test(window.location.hostname);
+
+const API_BASE_URL =
+  envApiBaseUrl && (!isLoopbackOrigin(envApiBaseUrl) || isLoopbackPage)
+    ? envApiBaseUrl
+    : '/api';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

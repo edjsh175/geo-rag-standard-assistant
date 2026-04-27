@@ -4,6 +4,7 @@ import { Bot, Sparkles, Send, Mic, History, X, Download, FileText } from 'lucide
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
+import { glassLightStyle } from '../lib/glass';
 import { ChatMessage as ChatMessageType, Citation, Document } from '../types';
 import LoadingIndicator from './LoadingIndicator';
 import { useAutoScroll } from '../hooks/useAutoScroll';
@@ -22,11 +23,6 @@ export interface ChatProps {
   quickTags?: string[];
   className?: string;
 }
-
-const glassLightStyle: React.CSSProperties = {
-  backdropFilter: 'blur(16px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-};
 
 const Chat: React.FC<ChatProps> = ({
   messages,

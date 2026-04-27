@@ -168,6 +168,7 @@ data/external/
 # Keep reproducible frontend build config under version control
 !frontend/package.json
 !frontend/package-lock.json
+!frontend/public/data/china-provinces.json
 !frontend/tsconfig.json
 !frontend/src/lib/
 !frontend/src/lib/**

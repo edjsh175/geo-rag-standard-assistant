@@ -25,6 +25,7 @@ import CesiumGlobe from './components/CesiumGlobe';
 import OpenLayersMap from './components/OpenLayersMap';
 import Chat from './components/Chat';
 import { cn } from './lib/utils';
+import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
 import { searchService } from './services/searchService';
 import { chatService } from './services/chatService';
 import { documentService } from './services/documentService';
@@ -93,21 +94,6 @@ const extractRegionFromQuery = (content: string): { adcode: string; name: string
     }
   }
   return null;
-};
-
-const glassStyle: React.CSSProperties = {
-  backdropFilter: 'blur(20px) saturate(180%)',
-  WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-};
-
-const glassLightStyle: React.CSSProperties = {
-  backdropFilter: 'blur(16px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-};
-
-const drawerGlassStyle: React.CSSProperties = {
-  backdropFilter: 'blur(32px)',
-  WebkitBackdropFilter: 'blur(32px)',
 };
 
 export default function App() {
