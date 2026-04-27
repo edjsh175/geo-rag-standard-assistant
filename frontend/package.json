@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "predev": "powershell -ExecutionPolicy Bypass -File ./scripts/sync-cesium-assets.ps1",
+    "predev": "node ./scripts/sync-cesium-assets.mjs",
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "prebuild": "powershell -ExecutionPolicy Bypass -File ./scripts/sync-cesium-assets.ps1",
+    "prebuild": "node ./scripts/sync-cesium-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
