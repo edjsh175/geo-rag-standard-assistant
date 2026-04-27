@@ -25,6 +25,7 @@ import CesiumGlobe from './components/CesiumGlobe';
 import OpenLayersMap from './components/OpenLayersMap';
 import Chat from './components/Chat';
 import { cn } from './lib/utils';
+import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
 import { searchService } from './services/searchService';
 import { chatService } from './services/chatService';
 import { documentService } from './services/documentService';
@@ -616,7 +617,7 @@ export default function App() {
       </section>
 
       {/* Floating Header */}
-      <header className="fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6" style={{border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+      <header className="fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
         <div className="flex items-center gap-6">
           {/* Logo */}
           <div className="flex items-center gap-2.5 font-headline">
@@ -679,7 +680,7 @@ export default function App() {
       <main className="absolute inset-0 pointer-events-none z-10">
         {/* Layer Controls - Bottom Left */}
         <div className="absolute bottom-16 left-6 z-10 pointer-events-auto">
-          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{...glassLightStyle,minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             <div className="flex items-center gap-1.5 mb-0.5">
               <Layers className="w-3 h-3" style={{color:'rgba(240,112,64,0.7)'}} />
               <span className="text-[11.5px] font-semibold uppercase tracking-[0.15em]" style={{color:'rgba(240,112,64,0.65)'}}>图层控制</span>
@@ -715,7 +716,7 @@ export default function App() {
               exit={{ opacity: 0, x: 6, scale: 0.97 }}
               transition={{ duration: 0.2 }}
               className="glass-light flex flex-col items-start px-4 py-3 rounded-xl"
-              style={{border:'0.5px solid var(--color-outline-glow)',boxShadow:'0 0 24px rgba(0,0,0,0.1)'}}
+              style={{...glassLightStyle,border:'0.5px solid var(--color-outline-glow)',boxShadow:'0 0 24px rgba(0,0,0,0.1)'}}
             >
               {activeRegion ? (
                 <>
@@ -734,7 +735,7 @@ export default function App() {
 
         {/* Mode Switcher - Bottom Center */}
         <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
-          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             {(['3D 地球','2D 地图'] as const).map((label,i) => {
               const mode = i===0 ? '3D' : '2D';
               const active = viewMode === mode;
@@ -752,7 +753,7 @@ export default function App() {
 
         {/* AI Chat Panel - Floating Right */}
         <div className="absolute top-[80px] bottom-6 right-6 w-[420px] pointer-events-auto z-20">
-          <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl">
+          <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl" style={glassStyle}>
             <Chat
               messages={messages}
               onSendMessage={handleChatSubmit}
@@ -786,7 +787,7 @@ export default function App() {
             whileTap={{ scale: 0.97 }}
             onClick={resetView}
             className="glass-light flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer"
-            style={{border:'0.5px solid var(--color-outline-glow)', color:'var(--color-primary-container)', boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
+            style={{...glassLightStyle,border:'0.5px solid var(--color-outline-glow)', color:'var(--color-primary-container)', boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
             onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(240,112,64,0.12)'}}
             onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background=''}}
           >
@@ -805,7 +806,7 @@ export default function App() {
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 220 }}
             className="fixed right-6 top-[80px] bottom-6 w-[420px] z-[60] flex flex-col"
-            style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(32px)', border: '0.5px solid var(--color-outline)', borderRadius: '1.5rem', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}
+            style={{ background: 'var(--glass-bg)', ...drawerGlassStyle, border: '0.5px solid var(--color-outline)', borderRadius: '1.5rem', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}
           >
             {/* Details Drawer Header */}
             <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: '0.5px solid var(--color-outline)' }}>

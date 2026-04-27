@@ -4,6 +4,7 @@ import { Bot, Sparkles, Send, Mic, History, X, Download, FileText } from 'lucide
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
+import { glassLightStyle } from '../lib/glass';
 import { ChatMessage as ChatMessageType, Citation, Document } from '../types';
 import LoadingIndicator from './LoadingIndicator';
 import { useAutoScroll } from '../hooks/useAutoScroll';
@@ -82,7 +83,7 @@ const Chat: React.FC<ChatProps> = ({
       {/* ── Header ── */}
       <div
         className="px-5 py-3.5 flex items-center justify-between shrink-0 glass-light"
-        style={{ borderBottom: '0.5px solid var(--color-outline)' }}
+        style={{ ...glassLightStyle, borderBottom: '0.5px solid var(--color-outline)' }}
       >
         <div className="flex items-center gap-3">
           {/* AI Avatar */}
@@ -149,7 +150,7 @@ const Chat: React.FC<ChatProps> = ({
       {/* ── Input Area ── */}
       <div
         className="shrink-0 px-4 pb-4 pt-3 glass-light"
-        style={{ borderTop: '0.5px solid var(--color-outline)' }}
+        style={{ ...glassLightStyle, borderTop: '0.5px solid var(--color-outline)' }}
       >
         {/* Input */}
         <div className="relative">

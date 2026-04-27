@@ -87,7 +87,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
   const loadProvincesData = useCallback(async () => {
     if (geoJsonCache.current) return geoJsonCache.current;
     try {
-      const response = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json');
+      const response = await fetch('/data/china-provinces.json');
       if (!response.ok) {
         const empty = { type: 'FeatureCollection', features: [] };
         geoJsonCache.current = empty;
@@ -565,7 +565,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     // 获取 Cesium 默认自带的卫星影像地图（作为第一层）
     const defaultSatelliteLayer = viewer.imageryLayers.get(0);
 
-    const TDT_TK = import.meta.env.VITE_TIANDITU_TK;
+    const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
     
     // CartoDB 极简底图（使用 Fastly 全球加速节点，实测不会被代理或墙阻断）
     const cartoLightProvider = new Cesium.UrlTemplateImageryProvider({
@@ -580,8 +580,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
 
     // 天地图中文注记（透明叠加层）
     const tdtCvaProvider = new Cesium.UrlTemplateImageryProvider({
-      url: `https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
-      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+      url: `/tianditu/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
     });
 
     // 添加图层

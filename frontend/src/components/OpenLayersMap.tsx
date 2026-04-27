@@ -79,7 +79,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   const loadProvincesData = useCallback(async () => {
     if (geoJsonCache.current) return geoJsonCache.current;
     try {
-      const response = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json');
+      const response = await fetch('/data/china-provinces.json');
       if (!response.ok) {
         const empty = { type: 'FeatureCollection', features: [] };
         geoJsonCache.current = empty;
@@ -262,6 +262,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     provincesLayerRef.current = provincesLayer;
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
+    const getTiandituUrl = (layer: 'cva_w' | 'img_w') =>
+      `/tianditu/DataServer?T=${layer}&x={x}&y={y}&l={z}&tk=${TDT_TK}`;
 
     // CartoDB 极简底图（日间，使用 Fastly 节点抗代理拦截）
     const cartoLightLayer = new TileLayer({
@@ -294,7 +296,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     // 天地图中文注记
     const tdtCvaLayer = new TileLayer({
       source: new XYZ({
-        url: `https://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+        url: getTiandituUrl('cva_w'),
       }),
       preload: 4,
       visible: true, // 注记始终保持在上面（如果你希望在卫星下也显示的话。如果没有字就不显示，可以改为 !layers.wms）
@@ -305,7 +307,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     // 天地图卫星影像
     const satelliteLayer = new TileLayer({
       source: new XYZ({
-        url: `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+        url: getTiandituUrl('img_w'),
       }),
       preload: 4,
       visible: layers.wms,
