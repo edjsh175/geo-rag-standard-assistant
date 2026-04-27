@@ -124,14 +124,14 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   }, []);
 
   // ==================== 高亮同步：根据 adcode 遍历要素 ====================
-  const syncHighlight = useCallback((adcode: string | null) => {
+  const syncHighlight = useCallback((adcode: string | null, shouldFly = true) => {
     const source = provincesSourceRef.current;
     if (!source) return;
 
     let styleChanged = false;
+    let targetFeature: Feature | null = null;
 
-    // 清除旧选中
-    if (selectedFeatureRef.current) {
+    if (selectedFeatureRef.current && String(selectedFeatureRef.current.get('adcode')) !== adcode) {
       selectedFeatureRef.current.setStyle(DEFAULT_STYLE);
       selectedFeatureRef.current = null;
       styleChanged = true;
@@ -144,25 +144,31 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       return;
     }
 
-    // 遍历查找匹配要素（DataV adcode 为 number，Store 中为 string，统一用 String 比较）
     for (const feature of source.getFeatures()) {
       if (String(feature.get('adcode')) === adcode) {
-        feature.setStyle(SELECTED_STYLE);
-        selectedFeatureRef.current = feature;
-        styleChanged = true;
-        
-        if (styleChanged) {
-          // 在触发飞行前强制同步重绘，确保高亮立马渲染到 VectorImageLayer 的图片缓存中
-          // 避免因为即将进入动画期而导致样式延迟更新
-          mapRef.current?.renderSync();
-        }
-        
-        // 增加微小延迟，确保浏览器完成画布的底层更新
-        setTimeout(() => {
-          flyToFeature(feature);
-        }, 10);
+        targetFeature = feature;
         break;
       }
+    }
+
+    if (!targetFeature) return;
+
+    if (selectedFeatureRef.current !== targetFeature) {
+      targetFeature.setStyle(SELECTED_STYLE);
+      selectedFeatureRef.current = targetFeature;
+      styleChanged = true;
+    }
+
+    if (styleChanged) {
+      mapRef.current?.renderSync();
+    }
+
+    if (shouldFly) {
+      setTimeout(() => {
+        if (targetFeature) {
+          flyToFeature(targetFeature);
+        }
+      }, 10);
     }
   }, [flyToFeature]);
 
@@ -238,9 +244,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     setTimeout(() => {
       map.updateSize();
       const region = useMapStore.getState().activeRegion;
-      if (region) {
-        syncHighlight(region.adcode);
-      }
+      syncHighlight(region?.adcode ?? null, false);
     }, 100);
   }, [visible, syncHighlight]);
 

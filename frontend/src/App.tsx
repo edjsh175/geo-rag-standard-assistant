@@ -96,21 +96,6 @@ const extractRegionFromQuery = (content: string): { adcode: string; name: string
   return null;
 };
 
-const glassStyle: React.CSSProperties = {
-  backdropFilter: 'blur(20px) saturate(180%)',
-  WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-};
-
-const glassLightStyle: React.CSSProperties = {
-  backdropFilter: 'blur(16px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-};
-
-const drawerGlassStyle: React.CSSProperties = {
-  backdropFilter: 'blur(32px)',
-  WebkitBackdropFilter: 'blur(32px)',
-};
-
 export default function App() {
   // ==================== 全局空间状态 ====================
   const viewMode = useMapStore((s) => s.viewMode);
@@ -159,18 +144,14 @@ export default function App() {
     if (targetMode === viewMode) return;
 
     if (viewMode === '3D' && targetMode === '2D') {
-      // 3D → 2D：如果是自由视角（无选中省份），读取 Cesium 相机参数换算 zoom 写入 Store
-      const { activeRegion } = useMapStore.getState();
-      if (!activeRegion) {
-        const cesiumEl = document.getElementById('cesiumContainer');
-        if (cesiumEl && (cesiumEl as any).__snapshotView) {
-          (cesiumEl as any).__snapshotView();
-        }
-        // 此时 store.viewState.height 已更新，补算 zoom
-        const { height, center } = useMapStore.getState().viewState;
-        const zoom = heightToZoom(height, center[1]);
-        setViewState({ zoom, center });
+      // 3D -> 2D: always snapshot the current Cesium view so post-focus pan/zoom survives mode switching.
+      const cesiumEl = document.getElementById('cesiumContainer');
+      if (cesiumEl && (cesiumEl as any).__snapshotView) {
+        (cesiumEl as any).__snapshotView();
       }
+      const { height, center } = useMapStore.getState().viewState;
+      const zoom = heightToZoom(height, center[1]);
+      setViewState({ zoom, center });
     } else {
       // 2D → 3D：读取 OL 视角，换算 height，写入 Store
       const olEl = olContainerRef.current?.querySelector('div[class]') ?? olContainerRef.current;

@@ -24,11 +24,6 @@ export interface ChatProps {
   className?: string;
 }
 
-const glassLightStyle: React.CSSProperties = {
-  backdropFilter: 'blur(16px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-};
-
 const Chat: React.FC<ChatProps> = ({
   messages,
   onSendMessage,

@@ -387,14 +387,10 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
 
   // ==================== 从外部 Store 同步高亮 ====================
 
-  const syncHighlight = useCallback((adcode: string | null) => {
+  const syncHighlight = useCallback((adcode: string | null, shouldFly = true) => {
     const prevAdcode = clickedEntityRef.current?.adcode;
 
-    // 已经是目标状态
-    if (prevAdcode === adcode) return;
-
-    // 清除旧
-    if (prevAdcode) {
+    if (prevAdcode && prevAdcode !== adcode) {
       applyStyleByAdcode(prevAdcode, 'default');
     }
 
@@ -404,22 +400,24 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
       return;
     }
 
-    // 选中新的
     const regions = entityByAdcodeRef.current.get(adcode);
     if (!regions || regions.length === 0) return;
 
     clickedEntityRef.current = regions[0];
     applyStyleByAdcode(adcode, 'clicked');
 
-    const viewer = viewerRef.current;
-    const rect = regionRectanglesRef.current.get(adcode);
-    if (viewer && rect) {
-      viewer.camera.flyTo({
-        destination: rect,
-        duration: 0.8,
-        orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 }
-      });
+    if (shouldFly) {
+      const viewer = viewerRef.current;
+      const rect = regionRectanglesRef.current.get(adcode);
+      if (viewer && rect) {
+        viewer.camera.flyTo({
+          destination: rect,
+          duration: 0.8,
+          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 }
+        });
+      }
     }
+
     requestRender();
   }, [applyStyleByAdcode, requestRender]);
 
@@ -510,9 +508,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     });
 
     const region = useMapStore.getState().activeRegion;
-    if (region) {
-      requestAnimationFrame(() => syncHighlight(region.adcode));
-    }
+    requestAnimationFrame(() => syncHighlight(region?.adcode ?? null, false));
   }, [visible, syncHighlight]);
 
 
