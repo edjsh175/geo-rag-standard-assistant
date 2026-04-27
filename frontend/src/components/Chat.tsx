@@ -23,6 +23,11 @@ export interface ChatProps {
   className?: string;
 }
 
+const glassLightStyle: React.CSSProperties = {
+  backdropFilter: 'blur(16px) saturate(160%)',
+  WebkitBackdropFilter: 'blur(16px) saturate(160%)',
+};
+
 const Chat: React.FC<ChatProps> = ({
   messages,
   onSendMessage,
@@ -82,7 +87,7 @@ const Chat: React.FC<ChatProps> = ({
       {/* ── Header ── */}
       <div
         className="px-5 py-3.5 flex items-center justify-between shrink-0 glass-light"
-        style={{ borderBottom: '0.5px solid var(--color-outline)' }}
+        style={{ ...glassLightStyle, borderBottom: '0.5px solid var(--color-outline)' }}
       >
         <div className="flex items-center gap-3">
           {/* AI Avatar */}
@@ -149,7 +154,7 @@ const Chat: React.FC<ChatProps> = ({
       {/* ── Input Area ── */}
       <div
         className="shrink-0 px-4 pb-4 pt-3 glass-light"
-        style={{ borderTop: '0.5px solid var(--color-outline)' }}
+        style={{ ...glassLightStyle, borderTop: '0.5px solid var(--color-outline)' }}
       >
         {/* Input */}
         <div className="relative">
