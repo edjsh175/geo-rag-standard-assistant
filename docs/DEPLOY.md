@@ -211,13 +211,26 @@ systemctl status geoai-backend
 ## 前端构建
 
 ```bash
-cd /srv/geoai/app/frontend
-npm ci
-npm run build
+cd /srv/geoai/app
+node scripts/deploy_frontend_build.mjs \
+  --expected-commit YOUR_GIT_COMMIT_SHA \
+  --npm-install ci
 ```
 
 前端默认请求 `/api`。只要 Nginx 在同一域名下代理 `/api` 到后端，生产环境不需要额外配置 `VITE_API_URL`。
 
+Build guard:
+- `scripts/deploy_frontend_build.mjs` checks that `git rev-parse HEAD` matches `--expected-commit` before it runs the build.
+- The script writes `frontend/dist/build-meta.json` after a successful build so the live static assets can be traced back to one exact commit.
+- If dependencies are already up to date, you can replace `--npm-install ci` with `--npm-install skip`.
+
+Verify the deployed frontend revision:
+```bash
+cat /srv/geoai/app/frontend/dist/build-meta.json
+curl -s http://SERVER_PUBLIC_IP/build-meta.json
+```
+
+If `build-meta.json` shows the wrong `git_commit`, treat it as a source-version mismatch on the server rather than a browser cache issue.
 ## Nginx
 
 创建 `/etc/nginx/sites-available/geoai`：
