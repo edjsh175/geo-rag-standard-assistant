@@ -147,6 +147,14 @@
 /* Use thinner, more elegant province borders in Cesium/OL */
 .ol-viewport { will-change: transform; }
 
+.geoai-dark-basemap {
+  filter: invert(92%) hue-rotate(180deg) saturate(60%) brightness(58%) contrast(118%);
+}
+
+:root:not([data-theme='light']) .geoai-tdt-labels {
+  filter: invert(100%) brightness(135%) contrast(125%);
+}
+
 /* Hide Cesium credits */
 .cesium-viewer-bottom { display: none !important; }
 

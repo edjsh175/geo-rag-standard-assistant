@@ -52,6 +52,60 @@ const STYLE_CLICKED = {
 
 // 中国全境矩形范围
 const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
+const DARK_TILE_FILTER = 'invert(92%) hue-rotate(180deg) saturate(60%) brightness(58%) contrast(118%)';
+const DARK_LABEL_FILTER = 'invert(100%) brightness(135%) contrast(125%)';
+
+const createTiandituProvider = (layer: 'vec_w' | 'cva_w' | 'img_w', token: string) =>
+  new Cesium.UrlTemplateImageryProvider({
+    url: `/tianditu/DataServer?T=${layer}&x={x}&y={y}&l={z}&tk=${token}`,
+  });
+
+const createFilteredTiandituProvider = (
+  layer: 'vec_w' | 'cva_w',
+  token: string,
+  filter: string
+) => {
+  const provider = createTiandituProvider(layer, token);
+  const requestImage = provider.requestImage.bind(provider);
+
+  provider.requestImage = (x, y, level, request) => {
+    const imageResult = requestImage(x, y, level, request);
+    if (!imageResult) {
+      return imageResult;
+    }
+
+    return Promise.resolve(imageResult).then((image) => {
+      const source = image as CanvasImageSource;
+      const dimensions = image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+      const width = dimensions.naturalWidth || dimensions.width;
+      const height = dimensions.naturalHeight || dimensions.height;
+      if (!width || !height) {
+        return image;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Number(width);
+      canvas.height = Number(height);
+      const context = canvas.getContext('2d');
+      if (!context) {
+        return image;
+      }
+
+      context.filter = filter;
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      context.filter = 'none';
+      if (layer === 'vec_w') {
+        context.globalCompositeOperation = 'multiply';
+        context.fillStyle = 'rgba(2, 6, 12, 0.18)';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.globalCompositeOperation = 'source-over';
+      }
+      return canvas;
+    });
+  };
+
+  return provider;
+};
 
 const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', layers, onReady }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -69,7 +123,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
   const entityByAdcodeRef = useRef<Map<string, Cesium.Entity[]>>(new Map());
   // 缓存每个省份扩大后的 Bounding Rectangle，用于精准同频放缩
   const regionRectanglesRef = useRef<Map<string, Cesium.Rectangle>>(new Map());
-  const baseLayersRef = useRef<{ cartoLight?: Cesium.ImageryLayer, cartoDark?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
+  const baseLayersRef = useRef<{ cartoLight?: Cesium.ImageryLayer, cartoDark?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, tdtCvaDark?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
   const suppressStoreSync = useRef(false);
   const readyNotifiedRef = useRef(false);
   const onReadyRef = useRef(onReady);
@@ -572,25 +626,26 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     const defaultSatelliteLayer = viewer.imageryLayers.get(0);
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
+    if (defaultSatelliteLayer) {
+      viewer.imageryLayers.remove(defaultSatelliteLayer, true);
+    }
     
     // Same-origin Tianditu vector base map for mainland network reliability.
-    const cartoLightProvider = new Cesium.UrlTemplateImageryProvider({
-      url: `/tianditu/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
-    });
+    const cartoLightProvider = createTiandituProvider('vec_w', TDT_TK);
     // Dark mode reuses Tianditu through the same proxy for mainland reliability.
-    const cartoDarkProvider = new Cesium.UrlTemplateImageryProvider({
-      url: `/tianditu/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
-    });
+    const cartoDarkProvider = createFilteredTiandituProvider('vec_w', TDT_TK, DARK_TILE_FILTER);
 
     // 天地图中文注记（透明叠加层）
-    const tdtCvaProvider = new Cesium.UrlTemplateImageryProvider({
-      url: `/tianditu/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
-    });
+    const tdtCvaProvider = createTiandituProvider('cva_w', TDT_TK);
+    const tdtCvaDarkProvider = createFilteredTiandituProvider('cva_w', TDT_TK, DARK_LABEL_FILTER);
+    const tdtSatelliteProvider = createTiandituProvider('img_w', TDT_TK);
 
     // 添加图层
     const cartoLightLayer = viewer.imageryLayers.addImageryProvider(cartoLightProvider);
     const cartoDarkLayer = viewer.imageryLayers.addImageryProvider(cartoDarkProvider);
     const tdtCvaLayer = viewer.imageryLayers.addImageryProvider(tdtCvaProvider);
+    const tdtCvaDarkLayer = viewer.imageryLayers.addImageryProvider(tdtCvaDarkProvider);
+    const satelliteLayer = viewer.imageryLayers.addImageryProvider(tdtSatelliteProvider);
 
     // 初始状态 (wms === false 时同时渲染日夜底图，通过透明度控制显示，实现无缝秒切)
     cartoLightLayer.show = !layers.wms;
@@ -599,10 +654,11 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     cartoDarkLayer.show = !layers.wms;
     cartoDarkLayer.alpha = theme === 'dark' ? 1.0 : 0.01;
     
-    tdtCvaLayer.show = !layers.wms; // 注记层仅在非卫星图下显示，或者都显示，按照原逻辑是!layers.wms
-    if (defaultSatelliteLayer) defaultSatelliteLayer.show = layers.wms;
+    tdtCvaLayer.show = !layers.wms && theme === 'light';
+    tdtCvaDarkLayer.show = !layers.wms && theme === 'dark';
+    satelliteLayer.show = layers.wms;
 
-    baseLayersRef.current = { cartoLight: cartoLightLayer, cartoDark: cartoDarkLayer, tdtCva: tdtCvaLayer, satellite: defaultSatelliteLayer };
+    baseLayersRef.current = { cartoLight: cartoLightLayer, cartoDark: cartoDarkLayer, tdtCva: tdtCvaLayer, tdtCvaDark: tdtCvaDarkLayer, satellite: satelliteLayer };
     // ===================================
 
     return () => {
@@ -642,7 +698,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     }
 
     // 切换卫星底图与 Carto 极简底图（使用双加载+透明度切换，避免重新请求闪白）
-    const { cartoLight, cartoDark, tdtCva, satellite } = baseLayersRef.current;
+    const { cartoLight, cartoDark, tdtCva, tdtCvaDark, satellite } = baseLayersRef.current;
     if (cartoLight) {
       cartoLight.show = !layers.wms;
       // 当非激活状态时，设置0.01极小透明度，强制Cesium在后台同步加载此图层，实现切题秒开
@@ -653,9 +709,8 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
       cartoDark.alpha = theme === 'dark' ? 1.0 : 0.01;
     }
     
-    if (tdtCva) tdtCva.show = true; // 注记始终保持在上面 (或者 !layers.wms，其实天地图字更清楚，咱们保持它存在，无论模式)
-    // 如果用户希望保留原有逻辑(wms下没字)：
-    if (tdtCva) tdtCva.show = !layers.wms;
+    if (tdtCva) tdtCva.show = !layers.wms && theme === 'light';
+    if (tdtCvaDark) tdtCvaDark.show = !layers.wms && theme === 'dark';
 
     if (satellite) satellite.show = layers.wms;
 

@@ -288,6 +288,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
 
     // Dark mode reuses Tianditu through the same proxy for mainland reliability.
     const cartoDarkLayer = new TileLayer({
+      className: 'ol-layer geoai-dark-basemap',
       source: new XYZ({
         url: getTiandituUrl('vec_w'),
       }),
@@ -297,6 +298,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
 
     // 天地图中文注记
     const tdtCvaLayer = new TileLayer({
+      className: 'ol-layer geoai-tdt-labels',
       source: new XYZ({
         url: getTiandituUrl('cva_w'),
       }),
