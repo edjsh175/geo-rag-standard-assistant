@@ -91,9 +91,12 @@ const createFilteredTiandituProvider = (
         return image;
       }
 
+      context.save();
       context.filter = filter;
+      context.translate(0, canvas.height);
+      context.scale(1, -1);
       context.drawImage(source, 0, 0, canvas.width, canvas.height);
-      context.filter = 'none';
+      context.restore();
       if (layer === 'vec_w') {
         context.globalCompositeOperation = 'multiply';
         context.fillStyle = 'rgba(2, 6, 12, 0.18)';
