@@ -5,7 +5,6 @@ import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import VectorImageLayer from 'ol/layer/VectorImage';
 import VectorSource from 'ol/source/Vector';
-import OSM from 'ol/source/OSM';
 import XYZ from 'ol/source/XYZ';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import GeoJSON from 'ol/format/GeoJSON';
@@ -275,32 +274,22 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     provincesLayerRef.current = provincesLayer;
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
-    const getTiandituUrl = (layer: 'cva_w' | 'img_w') =>
+    const getTiandituUrl = (layer: 'vec_w' | 'cva_w' | 'img_w') =>
       `/tianditu/DataServer?T=${layer}&x={x}&y={y}&l={z}&tk=${TDT_TK}`;
 
-    // CartoDB 极简底图（日间，使用 Fastly 节点抗代理拦截）
+    // Same-origin Tianditu vector base map for mainland network reliability.
     const cartoLightLayer = new TileLayer({
       source: new XYZ({
-        urls: [
-          'https://cartodb-basemaps-a.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-b.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-c.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-d.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png'
-        ]
+        url: getTiandituUrl('vec_w'),
       }),
       preload: 4,
       visible: !layers.wms && theme === 'light',
     });
 
-    // CartoDB 极简底图（夜间，使用 Fastly 节点抗代理拦截）
+    // Dark mode reuses Tianditu through the same proxy for mainland reliability.
     const cartoDarkLayer = new TileLayer({
       source: new XYZ({
-        urls: [
-          'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-b.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-c.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-d.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png'
-        ]
+        url: getTiandituUrl('vec_w'),
       }),
       preload: 4,
       visible: !layers.wms && theme === 'dark',

@@ -573,15 +573,13 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
     
-    // CartoDB 极简底图（使用 Fastly 全球加速节点，实测不会被代理或墙阻断）
+    // Same-origin Tianditu vector base map for mainland network reliability.
     const cartoLightProvider = new Cesium.UrlTemplateImageryProvider({
-      url: 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-      subdomains: ['a', 'b', 'c', 'd']
+      url: `/tianditu/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
     });
-    // CartoDB 深色/蓝黑-夜间
+    // Dark mode reuses Tianditu through the same proxy for mainland reliability.
     const cartoDarkProvider = new Cesium.UrlTemplateImageryProvider({
-      url: 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-      subdomains: ['a', 'b', 'c', 'd']
+      url: `/tianditu/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
     });
 
     // 天地图中文注记（透明叠加层）
