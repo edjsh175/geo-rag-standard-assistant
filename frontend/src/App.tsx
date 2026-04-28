@@ -100,6 +100,33 @@ const extractRegionFromQuery = (content: string): { adcode: string; name: string
   return null;
 };
 
+const CURRENT_REGION_QUERY_PATTERN =
+  /((当前|现在|刚才|我).*(选中|选择|点选|高亮).*(什么|哪里|哪个|区域|地区|省份|省))|((选中|选择|点选|高亮).*(什么|哪里|哪个|区域|地区|省份|省))|((当前|现在).*(什么|哪里|哪个).*(区域|地区|省份|省))|((当前|现在).*(区域|地区|省份|省).*(什么|哪里|哪个))/;
+
+const REGION_REFERENCE_PATTERN =
+  /(该地区|该区域|该省份|该省|该地|当地|本地区|这里|此处|当前区域|当前地区|当前省份|当前省|选中区域|选中地区|所选区域|所选地区|这个地区|这个区域|这个省份|这个省)/g;
+
+const isCurrentRegionQuestion = (content: string): boolean =>
+  CURRENT_REGION_QUERY_PATTERN.test(content.replace(/\s+/g, ''));
+
+const buildRegionAwareQuery = (
+  content: string,
+  region: { adcode: string; name: string } | null
+): string => {
+  if (!region || extractRegionFromQuery(content)) {
+    return content;
+  }
+
+  REGION_REFERENCE_PATTERN.lastIndex = 0;
+  if (!REGION_REFERENCE_PATTERN.test(content)) {
+    return content;
+  }
+
+  REGION_REFERENCE_PATTERN.lastIndex = 0;
+  const expanded = content.replace(REGION_REFERENCE_PATTERN, region.name);
+  return `${region.name} ${expanded}`;
+};
+
 const getBootErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
     return error.message;
@@ -454,6 +481,7 @@ export default function App() {
     if (!content.trim()) return;
 
     const regionFromQuery = extractRegionFromQuery(content);
+    const regionContext = regionFromQuery ?? activeRegion;
     if (regionFromQuery) {
       setActiveRegion(regionFromQuery);
     }
@@ -474,6 +502,23 @@ export default function App() {
 
     setMessages(prev => [...prev, userMessage]);
 
+    if (isCurrentRegionQuestion(content)) {
+      const assistantMessage: ChatMessageType = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: regionContext
+          ? `当前地图选中的区域是${regionContext.name}（ADCODE：${regionContext.adcode}）。`
+          : '当前地图还没有选中具体区域。请先在地图上点击一个省级区域，或直接在问题中说明区域名称。',
+        timestamp: new Date().toISOString(),
+        metadata: {
+          search_query: content,
+          selected_region: regionContext ?? undefined
+        }
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+      return;
+    }
+
     // 创建新的AbortController
     abortControllerRef.current?.abort(); // 中止之前的请求
     const abortController = new AbortController();
@@ -483,7 +528,17 @@ export default function App() {
 
     try {
       // 发送到聊天API，传递signal
-      const response = await chatService.sendMessage(content, undefined, history, abortController.signal);
+      const queryForBackend = buildRegionAwareQuery(content, regionContext);
+      const contextualHistory = regionContext
+        ? [
+            {
+              role: 'system',
+              content: `当前地图选中区域：${regionContext.name}，ADCODE：${regionContext.adcode}。当用户提到“该地区”“当前区域”“这里”“当地”等指代时，均指这个区域。`
+            },
+            ...history
+          ]
+        : history;
+      const response = await chatService.sendMessage(queryForBackend, undefined, contextualHistory, abortController.signal);
 
       // 检查是否被中止
       if (abortController.signal.aborted) {
@@ -568,7 +623,9 @@ export default function App() {
         metadata: {
           document_ids: documents.map(d => d.id),
           citations: citations,
-          search_query: content
+          search_query: queryForBackend,
+          original_query: content,
+          selected_region: regionContext ?? undefined
         }
       };
 

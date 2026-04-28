@@ -126,6 +126,11 @@ export interface ChatMessage {
     document_ids?: string[];
     citations?: Citation[];
     search_query?: string;
+    original_query?: string;
+    selected_region?: {
+      adcode: string;
+      name: string;
+    };
   };
 }
 
