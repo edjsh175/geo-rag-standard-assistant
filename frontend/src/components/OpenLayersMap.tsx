@@ -13,6 +13,7 @@ import { Style, Stroke, Fill } from 'ol/style';
 import Feature from 'ol/Feature';
 import { easeOut } from 'ol/easing';
 import type MapBrowserEvent from 'ol/MapBrowserEvent';
+import { loadProvinceCollection } from '../lib/bootstrap';
 import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapStore';
 
 // ============================================================
@@ -28,6 +29,7 @@ interface OpenLayersMapProps {
     admin: boolean;
     wms: boolean;
   };
+  onReady?: () => void;
 }
 
 // ==================== 三态样式 ====================
@@ -57,13 +59,14 @@ const SELECTED_STYLE = [
   })
 ];
 
-const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', layers }) => {
+const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', layers, onReady }) => {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const provincesLayerRef = useRef<VectorImageLayer | null>(null);
   const provincesSourceRef = useRef<VectorSource | null>(null);
   const baseLayersRef = useRef<{ cartoLight?: TileLayer, cartoDark?: TileLayer, tdtCva?: TileLayer, satellite?: TileLayer }>({});
   const geoJsonCache = useRef<any>(null);
+  const readyNotifiedRef = useRef(false);
 
   // 交互状态
   const hoveredFeatureRef = useRef<Feature | null>(null);
@@ -75,17 +78,18 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   const setActiveRegion = useMapStore((s) => s.setActiveRegion);
   const setViewState = useMapStore((s) => s.setViewState);
 
+  const notifyReady = useCallback(() => {
+    if (!readyNotifiedRef.current) {
+      readyNotifiedRef.current = true;
+      onReady?.();
+    }
+  }, [onReady]);
+
   // ==================== 数据加载 ====================
   const loadProvincesData = useCallback(async () => {
     if (geoJsonCache.current) return geoJsonCache.current;
     try {
-      const response = await fetch('/data/china-provinces.json');
-      if (!response.ok) {
-        const empty = { type: 'FeatureCollection', features: [] };
-        geoJsonCache.current = empty;
-        return empty;
-      }
-      const geoJson = await response.json();
+      const geoJson = await loadProvinceCollection();
       geoJsonCache.current = geoJson;
       return geoJson;
     } catch (error) {
@@ -453,13 +457,14 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       });
       provincesSourceRef.current.clear();
       provincesSourceRef.current.addFeatures(features);
+      notifyReady();
     })();
 
     return () => {
       viewport.removeEventListener('pointerleave', handlePointerLeave);
       map.setTarget(undefined);
     };
-  }, [loadProvincesData, flyToFeature, setActiveRegion]);
+  }, [loadProvincesData, flyToFeature, notifyReady, setActiveRegion]);
 
   // ==================== 图层可见性 ====================
   useEffect(() => {

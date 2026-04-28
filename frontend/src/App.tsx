@@ -18,12 +18,16 @@ import {
   Bell,
   Radio,
   Sun,
-  Moon
+  Moon,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import CesiumGlobe from './components/CesiumGlobe';
 import OpenLayersMap from './components/OpenLayersMap';
+import BootScreen from './components/BootScreen';
 import Chat from './components/Chat';
+import { useAuth } from './auth/AuthProvider';
+import { ensureBackendHealth, loadProvinceCollection, resetBootstrapCache } from './lib/bootstrap';
 import { cn } from './lib/utils';
 import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
 import { searchService } from './services/searchService';
@@ -96,7 +100,15 @@ const extractRegionFromQuery = (content: string): { adcode: string; name: string
   return null;
 };
 
+const getBootErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return '系统初始化失败，请稍后重试。';
+};
+
 export default function App() {
+  const { logout, user } = useAuth();
   // ==================== 全局空间状态 ====================
   const viewMode = useMapStore((s) => s.viewMode);
   const setViewMode = useMapStore((s) => s.setViewMode);
@@ -105,6 +117,16 @@ export default function App() {
   const setViewState = useMapStore((s) => s.setViewState);
   const resetView = useMapStore((s) => s.resetView);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [bootStatus, setBootStatus] = useState('正在检查服务健康状态');
+  const [bootDetail, setBootDetail] = useState('请稍候，系统正在恢复安全会话与地图核心资源。');
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootBaseReady, setBootBaseReady] = useState(false);
+  const [bootRetryKey, setBootRetryKey] = useState(0);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [mapReady, setMapReady] = useState<{ '2D': boolean; '3D': boolean }>({
+    '2D': false,
+    '3D': false,
+  });
 
   // ==================== 主题管理 ====================
   useEffect(() => {
@@ -133,6 +155,66 @@ export default function App() {
       setLayers(prev => ({ ...prev, wms: false }));
     }
   };
+
+  const markMapReady = useCallback((mode: '2D' | '3D') => {
+    setMapReady((prev) => (prev[mode] ? prev : { ...prev, [mode]: true }));
+  }, []);
+
+  const retryBoot = useCallback(() => {
+    resetBootstrapCache();
+    setBootError(null);
+    setBootBaseReady(false);
+    setBootRetryKey((prev) => prev + 1);
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }, [isLoggingOut, logout]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const runBootSequence = async () => {
+      try {
+        setBootError(null);
+        setBootBaseReady(false);
+        setBootStatus('正在检查服务健康状态');
+        setBootDetail('正在确认核心接口与数据服务可用性。');
+        await ensureBackendHealth();
+        if (cancelled) return;
+
+        setBootStatus('正在预加载行政区划数据');
+        setBootDetail('正在准备首屏地图所需的核心行政区划资源。');
+        await loadProvinceCollection();
+        if (cancelled) return;
+
+        setBootBaseReady(true);
+        setBootStatus(viewMode === '3D' ? '正在准备三维地图引擎' : '正在准备二维地图引擎');
+        setBootDetail('地图引擎初始化完成后将自动进入主界面。');
+      } catch (error) {
+        if (cancelled) return;
+        setBootError(getBootErrorMessage(error));
+      }
+    };
+
+    runBootSequence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bootRetryKey]);
+
+  useEffect(() => {
+    if (!bootBaseReady || bootError) return;
+    setBootStatus(viewMode === '3D' ? '正在准备三维地图视图' : '正在准备二维地图视图');
+    setBootDetail('正在完成首屏地图初始化，请稍候。');
+  }, [bootBaseReady, bootError, viewMode]);
 
   // 2D/3D 地图容器 ref，用于视角交接
   const olContainerRef = useRef<HTMLDivElement>(null);
@@ -604,13 +686,36 @@ export default function App() {
     };
   }, []);
 
+  const isCurrentMapReady = mapReady[viewMode];
+  const showBootOverlay = !!bootError || !bootBaseReady || !isCurrentMapReady;
+
   return (
     <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
       {/* Background Map Layer */}
       <section className="absolute inset-0 z-0 overflow-hidden" style={{background:'#08080b'}}>
-        <CesiumGlobe theme={theme} visible={viewMode === '3D'} layers={layers} />
-        <OpenLayersMap theme={theme} visible={viewMode === '2D'} layers={layers} />
+        <CesiumGlobe
+          theme={theme}
+          visible={viewMode === '3D'}
+          layers={layers}
+          onReady={() => markMapReady('3D')}
+        />
+        <OpenLayersMap
+          theme={theme}
+          visible={viewMode === '2D'}
+          layers={layers}
+          onReady={() => markMapReady('2D')}
+        />
       </section>
+
+      {showBootOverlay ? (
+        <BootScreen
+          compact
+          status={bootStatus}
+          detail={bootDetail}
+          error={bootError}
+          onAction={bootError ? retryBoot : undefined}
+        />
+      ) : null}
 
       {/* Floating Header */}
       <header className="fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
@@ -663,9 +768,17 @@ export default function App() {
             <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all relative bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Bell className="w-3.5 h-3.5 text-on-background/40" /><span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-orange-glow" /></button>
             <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Settings className="w-3.5 h-3.5 text-on-background/40" /></button>
           </div>
-          <div className="w-7 h-7 rounded-full overflow-hidden ml-1 border border-on-background/10">
-            <img className="w-full h-full object-cover" src="https://picsum.photos/seed/user/100/100" alt="Avatar" referrerPolicy="no-referrer" />
-          </div>
+          <button
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="ml-1 inline-flex items-center gap-2 rounded-full border border-on-background/10 bg-on-background/5 px-2 py-1 text-[12px] font-semibold text-on-background/70 transition hover:bg-on-background/10 disabled:opacity-60"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-container/15 text-primary-container">
+              {(user?.username?.slice(0, 1) || 'A').toUpperCase()}
+            </span>
+            <span className="hidden sm:inline">{isLoggingOut ? '退出中' : '退出登录'}</span>
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
         </div>
       </header>
 

@@ -13,11 +13,11 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from app.core.config import settings
-from app.core.security import require_system_api_key
+from app.core.security import require_authenticated_admin, require_system_api_key
 from app.models.document_models import DocumentMetadata
 from app.services.document_service import DocumentService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_authenticated_admin)])
 
 
 class DocumentInfo(BaseModel):
@@ -152,7 +152,6 @@ async def upload_document(
 
 @router.get(
     "/download/{object_name}",
-    dependencies=[Depends(require_system_api_key)],
 )
 async def download_document_object(
     object_name: str,

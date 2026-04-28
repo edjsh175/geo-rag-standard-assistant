@@ -1,5 +1,7 @@
 import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
+export const API_UNAUTHORIZED_EVENT = 'geoai:unauthorized';
+
 const envApiBaseUrl = import.meta.env.VITE_API_URL?.trim();
 
 const isLoopbackOrigin = (value: string): boolean =>
@@ -17,6 +19,7 @@ const API_BASE_URL =
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -31,6 +34,14 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     console.error('API request error:', error);
+
+    if (
+      typeof window !== 'undefined' &&
+      error.response?.status === 401 &&
+      !String(error.config?.url || '').includes('/auth/')
+    ) {
+      window.dispatchEvent(new CustomEvent(API_UNAUTHORIZED_EVENT));
+    }
 
     if (error.response) {
       const { status, data } = error.response;

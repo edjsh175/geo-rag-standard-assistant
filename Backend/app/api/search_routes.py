@@ -10,12 +10,14 @@ import json
 from pydantic import BaseModel
 from datetime import datetime
 
+from app.core.security import require_authenticated_admin
 from app.services.search_service import SearchService
 from app.models.search_models import SearchRequest, SearchResponse, DocumentResult
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+public_router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_authenticated_admin)])
 
 RELAXED_VECTOR_THRESHOLD = 0.35
 
@@ -26,7 +28,7 @@ class HealthCheckResponse(BaseModel):
     service: str
 
 
-@router.get("/health", response_model=HealthCheckResponse)
+@public_router.get("/health", response_model=HealthCheckResponse)
 async def health_check():
     """检索服务健康检查"""
     return HealthCheckResponse(

@@ -16,6 +16,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from app.api import router as api_router
+from app.core.auth import validate_admin_auth_configuration
 from app.core.config import settings
 from app.core.database import db_manager
 from app.core.llm_config import llm_config  # noqa: F401
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_admin_auth_configuration()
+    logger.info("Admin authentication configuration loaded.")
+
     logger.info("Initializing database connections...")
     await db_manager.initialize()
 

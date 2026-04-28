@@ -61,6 +61,12 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = "dev-only-secret-key-set-SECRET_KEY-in-env"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ADMIN_USERNAME: Optional[str] = None
+    ADMIN_PASSWORD: Optional[str] = None
+    ADMIN_PASSWORD_HASH: Optional[str] = None
+    AUTH_COOKIE_NAME: str = "geoai_session"
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_COOKIE_SAMESITE: str = "lax"
     SYSTEM_API_KEY: Optional[str] = None
     SYSTEM_CLEAR_CACHE_CONFIRM_VALUE: str = "clear-cache"
 

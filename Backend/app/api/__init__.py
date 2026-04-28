@@ -1,16 +1,15 @@
 """
-GeoAI API 路由模块
+GeoAI API route registration.
 """
 
 from fastapi import APIRouter
 
-# 创建主路由
+from . import auth_routes, document_routes, search_routes, spatial_routes, system_routes
+
 router = APIRouter()
 
-# 导入子路由
-from . import search_routes, spatial_routes, document_routes, system_routes
-
-# 注册子路由
+router.include_router(auth_routes.router, prefix="/auth", tags=["认证"])
+router.include_router(search_routes.public_router, prefix="/search", tags=["智能检索"])
 router.include_router(search_routes.router, prefix="/search", tags=["智能检索"])
 router.include_router(spatial_routes.router, prefix="/spatial", tags=["空间分析"])
 router.include_router(document_routes.router, prefix="/documents", tags=["文档管理"])

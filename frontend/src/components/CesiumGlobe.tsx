@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { loadProvinceCollection } from '../lib/bootstrap';
 import { useMapStore, INITIAL_VIEW } from '../store/useMapStore';
 
 // ============================================================
@@ -28,6 +29,7 @@ interface CesiumGlobeProps {
     admin: boolean;
     wms: boolean;
   };
+  onReady?: () => void;
 }
 
 // ==================== 样式常量 ====================
@@ -51,7 +53,7 @@ const STYLE_CLICKED = {
 // 中国全境矩形范围
 const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
 
-const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', layers }) => {
+const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', layers, onReady }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
 
@@ -69,6 +71,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
   const regionRectanglesRef = useRef<Map<string, Cesium.Rectangle>>(new Map());
   const baseLayersRef = useRef<{ cartoLight?: Cesium.ImageryLayer, cartoDark?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
   const suppressStoreSync = useRef(false);
+  const readyNotifiedRef = useRef(false);
 
   // 鼠标节流标记
   const pickPending = useRef(false);
@@ -82,18 +85,19 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     viewerRef.current?.scene.requestRender();
   }, []);
 
+  const notifyReady = useCallback(() => {
+    if (!readyNotifiedRef.current) {
+      readyNotifiedRef.current = true;
+      onReady?.();
+    }
+  }, [onReady]);
+
   // ==================== 数据加载 ====================
 
   const loadProvincesData = useCallback(async () => {
     if (geoJsonCache.current) return geoJsonCache.current;
     try {
-      const response = await fetch('/data/china-provinces.json');
-      if (!response.ok) {
-        const empty = { type: 'FeatureCollection', features: [] };
-        geoJsonCache.current = empty;
-        return empty;
-      }
-      const geoJson = await response.json();
+      const geoJson = await loadProvinceCollection();
       geoJsonCache.current = geoJson;
       return geoJson;
     } catch (error) {
@@ -438,10 +442,11 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
 
       createRegionEntitiesFromGeoJson(geoJson);
       setupScreenSpaceEventHandler();
+      notifyReady();
     } catch (error) {
       console.error('Cesium: 初始化实体时出错:', error);
     }
-  }, [loadProvincesData, createRegionEntitiesFromGeoJson, setupScreenSpaceEventHandler]);
+  }, [loadProvincesData, createRegionEntitiesFromGeoJson, notifyReady, setupScreenSpaceEventHandler]);
 
   // ==================== 暴露视角快照 ====================
 

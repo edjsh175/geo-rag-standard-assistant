@@ -1,8 +1,9 @@
 from secrets import compare_digest
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 
+from app.core.auth import AdminIdentity, get_authenticated_admin
 from app.core.config import settings
 
 
@@ -42,3 +43,7 @@ def require_clear_cache_confirmation(
         )
 
     return x_confirm_action
+
+
+def require_authenticated_admin(request: Request) -> AdminIdentity:
+    return get_authenticated_admin(request)
