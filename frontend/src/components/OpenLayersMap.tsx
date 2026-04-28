@@ -67,6 +67,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   const baseLayersRef = useRef<{ cartoLight?: TileLayer, cartoDark?: TileLayer, tdtCva?: TileLayer, satellite?: TileLayer }>({});
   const geoJsonCache = useRef<any>(null);
   const readyNotifiedRef = useRef(false);
+  const onReadyRef = useRef(onReady);
 
   // 交互状态
   const hoveredFeatureRef = useRef<Feature | null>(null);
@@ -78,12 +79,16 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   const setActiveRegion = useMapStore((s) => s.setActiveRegion);
   const setViewState = useMapStore((s) => s.setViewState);
 
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
   const notifyReady = useCallback(() => {
     if (!readyNotifiedRef.current) {
       readyNotifiedRef.current = true;
-      onReady?.();
+      onReadyRef.current?.();
     }
-  }, [onReady]);
+  }, []);
 
   // ==================== 数据加载 ====================
   const loadProvincesData = useCallback(async () => {

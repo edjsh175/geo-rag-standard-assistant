@@ -160,6 +160,14 @@ export default function App() {
     setMapReady((prev) => (prev[mode] ? prev : { ...prev, [mode]: true }));
   }, []);
 
+  const handleMapReady2D = useCallback(() => {
+    markMapReady('2D');
+  }, [markMapReady]);
+
+  const handleMapReady3D = useCallback(() => {
+    markMapReady('3D');
+  }, [markMapReady]);
+
   const retryBoot = useCallback(() => {
     resetBootstrapCache();
     setBootError(null);
@@ -697,13 +705,13 @@ export default function App() {
           theme={theme}
           visible={viewMode === '3D'}
           layers={layers}
-          onReady={() => markMapReady('3D')}
+          onReady={handleMapReady3D}
         />
         <OpenLayersMap
           theme={theme}
           visible={viewMode === '2D'}
           layers={layers}
-          onReady={() => markMapReady('2D')}
+          onReady={handleMapReady2D}
         />
       </section>
 

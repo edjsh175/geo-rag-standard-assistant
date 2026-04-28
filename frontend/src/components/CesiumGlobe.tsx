@@ -72,6 +72,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
   const baseLayersRef = useRef<{ cartoLight?: Cesium.ImageryLayer, cartoDark?: Cesium.ImageryLayer, tdtCva?: Cesium.ImageryLayer, satellite?: Cesium.ImageryLayer }>({});
   const suppressStoreSync = useRef(false);
   const readyNotifiedRef = useRef(false);
+  const onReadyRef = useRef(onReady);
 
   // 鼠标节流标记
   const pickPending = useRef(false);
@@ -85,12 +86,16 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     viewerRef.current?.scene.requestRender();
   }, []);
 
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
   const notifyReady = useCallback(() => {
     if (!readyNotifiedRef.current) {
       readyNotifiedRef.current = true;
-      onReady?.();
+      onReadyRef.current?.();
     }
-  }, [onReady]);
+  }, []);
 
   // ==================== 数据加载 ====================
 
