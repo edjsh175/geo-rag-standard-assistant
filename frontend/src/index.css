@@ -72,8 +72,8 @@
   --surface-variant: #e9ecef;
   --border: rgba(18, 24, 32, 0.13);
   --border-variant: rgba(18, 24, 32, 0.08);
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-bg-light: rgba(255, 255, 255, 0.5);
+  --glass-bg: rgba(255, 255, 255, 0.78);
+  --glass-bg-light: rgba(255, 255, 255, 0.62);
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Base ━━━━━━━━━━━━━━━━━━━━ */
