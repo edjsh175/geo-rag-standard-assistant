@@ -4,6 +4,7 @@ import { ArrowRight, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../auth/AuthProvider';
+import { glassLightStyle, glassStyle } from '../lib/glass';
 import { useResolvedTheme } from '../lib/theme';
 import { cn } from '../lib/utils';
 
@@ -91,6 +92,7 @@ export default function LoginPage() {
               <div
                 key={item}
                 className="glass-light rounded-2xl border border-outline/60 px-5 py-4 text-sm text-on-background/75"
+                style={glassLightStyle}
               >
                 {item}
               </div>
@@ -102,6 +104,7 @@ export default function LoginPage() {
           <div
             className="glass rounded-[28px] border border-outline/60 px-7 py-8"
             style={{
+              ...glassStyle,
               boxShadow: isLight
                 ? '0 24px 80px rgba(17, 24, 39, 0.12)'
                 : '0 24px 80px rgba(0,0,0,0.35)',

@@ -1,6 +1,7 @@
 import { ArrowRight, CheckCircle2, LoaderCircle, MapPinned, RefreshCcw } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 
+import { glassStyle, glassLightStyle } from '../lib/glass';
 import { useResolvedTheme } from '../lib/theme';
 import { cn } from '../lib/utils';
 
@@ -99,6 +100,7 @@ export default function BootScreen({
           }}
           transition={cardTransition}
           style={{
+            ...glassStyle,
             boxShadow: isLight
               ? '0 24px 80px rgba(17, 24, 39, 0.12)'
               : '0 24px 80px rgba(0,0,0,0.35)',
@@ -124,7 +126,10 @@ export default function BootScreen({
 
           <div
             className="rounded-2xl border border-outline/50 px-5 py-4"
-            style={{ background: isLight ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.03)' }}
+            style={{
+              ...glassLightStyle,
+              background: isLight ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.03)',
+            }}
           >
             <div className="flex items-center gap-3">
               {isReady ? (
@@ -181,6 +186,7 @@ export default function BootScreen({
               }}
               transition={cardTransition}
               style={{
+                ...glassLightStyle,
                 background: isLight
                   ? 'linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.48))'
                   : 'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))',
