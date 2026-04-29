@@ -808,6 +808,7 @@ export default function App() {
     reduceMotion
       ? { duration: 0.2, delay: Math.min(delay, 0.08), ease: 'easeOut' as const }
       : { type: 'spring' as const, damping: 24, stiffness: 210, mass: 0.92, delay };
+  const isLightTheme = theme === 'light';
 
   return (
     <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
@@ -881,13 +882,13 @@ export default function App() {
               <div className="absolute inset-[3px] rotate-45 rounded-[1px]" style={{background:'var(--color-background)'}} />
             </div>
             <span className="text-sm font-semibold tracking-wide text-on-background/90">标准规范</span>
-            <span className="text-sm font-light text-on-background/20">·</span>
-            <span className="text-sm font-light text-on-background/45">智能空间查询系统</span>
+            <span className={cn("text-sm font-light", isLightTheme ? "text-on-background/36" : "text-on-background/20")}>·</span>
+            <span className={cn("text-sm font-light", isLightTheme ? "text-on-background/62" : "text-on-background/45")}>智能空间查询系统</span>
           </div>
           <nav className="flex items-center h-[48px] ml-2 gap-1">
             <a className="nav-active text-xs font-medium h-full flex items-center px-4 transition-all" href="#">检索</a>
-            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">知识库</a>
-            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">系统管理</a>
+            <a className={cn("text-xs font-medium h-full flex items-center px-4 transition-colors", isLightTheme ? "text-on-background/55 hover:text-on-background/78" : "text-on-background/35 hover:text-on-background/70")} href="#">知识库</a>
+            <a className={cn("text-xs font-medium h-full flex items-center px-4 transition-colors", isLightTheme ? "text-on-background/55 hover:text-on-background/78" : "text-on-background/35 hover:text-on-background/70")} href="#">系统管理</a>
           </nav>
         </div>
         <div className="flex items-center gap-3">
@@ -902,7 +903,7 @@ export default function App() {
                 onClick={() => handleThemeChange('light')}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-1 rounded-md text-[12.5px] font-semibold transition-all",
-                  theme === 'light' ? "bg-white text-black shadow-sm" : "text-on-background/40 hover:text-on-background/70"
+                  theme === 'light' ? "bg-white text-black shadow-sm" : "text-on-background/46 hover:text-on-background/72"
                 )}
               >
                 <Sun className="w-3 h-3" /> 日间
@@ -911,16 +912,16 @@ export default function App() {
                 onClick={() => handleThemeChange('dark')}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-1 rounded-md text-[12.5px] font-semibold transition-all",
-                  theme === 'dark' ? "bg-white/10 text-white shadow-sm" : "text-on-background/40 hover:text-on-background/70"
+                  theme === 'dark' ? "bg-white/10 text-white shadow-sm" : "text-on-background/56 hover:text-on-background/78"
                 )}
               >
                 <Moon className="w-3 h-3" /> 夜间
               </button>
             </div>
 
-            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Radio className="w-3.5 h-3.5 text-on-background/40" /></button>
-            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all relative bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Bell className="w-3.5 h-3.5 text-on-background/40" /><span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-orange-glow" /></button>
-            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Settings className="w-3.5 h-3.5 text-on-background/40" /></button>
+            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Radio className={cn("w-3.5 h-3.5", isLightTheme ? "text-on-background/56" : "text-on-background/40")} /></button>
+            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all relative bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Bell className={cn("w-3.5 h-3.5", isLightTheme ? "text-on-background/56" : "text-on-background/40")} /><span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-orange-glow" /></button>
+            <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Settings className={cn("w-3.5 h-3.5", isLightTheme ? "text-on-background/56" : "text-on-background/40")} /></button>
           </div>
           <button
             onClick={handleLogout}
@@ -968,7 +969,7 @@ export default function App() {
               const isOn = layers[layer.id as keyof typeof layers];
               return (
                 <div key={layer.id} className="flex items-center justify-between gap-4">
-                  <span className={cn("text-[13.5px] font-medium transition-colors", isOn ? "text-on-background/80" : "text-on-background/35")}>{layer.label}</span>
+                  <span className={cn("text-[13.5px] font-medium transition-colors", isOn ? "text-on-background/84" : isLightTheme ? "text-on-background/56" : "text-on-background/35")}>{layer.label}</span>
                   <div className={`toggle-track ${isOn ? 'on' : 'off'}`} onClick={() => toggleLayer(layer.id as keyof typeof layers)}>
                     <motion.div
                       className={`toggle-thumb ${isOn ? 'on' : 'off'}`}
@@ -1014,8 +1015,8 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <span className="font-headline font-bold text-xl tracking-tight text-on-background/70">中国全貌</span>
-                  <span className="font-mono text-[11.5px] tracking-[0.18em] mt-0.5 text-on-background/20">OVERVIEW</span>
+                  <span className={cn("font-headline font-bold text-xl tracking-tight", isLightTheme ? "text-on-background/82" : "text-on-background/70")}>中国全貌</span>
+                  <span className={cn("font-mono text-[11.5px] tracking-[0.18em] mt-0.5", isLightTheme ? "text-on-background/42" : "text-on-background/20")}>OVERVIEW</span>
                 </>
               )}
             </motion.div>
@@ -1044,7 +1045,7 @@ export default function App() {
                 <button
                   key={mode}
                   onClick={() => handleViewModeSwitch(mode)}
-                  className={cn("px-5 py-1.5 rounded-full text-xs font-semibold transition-all", !active && "text-on-background/35 hover:text-on-background/60")}
+                  className={cn("px-5 py-1.5 rounded-full text-xs font-semibold transition-all", !active && (isLightTheme ? "text-on-background/58 hover:text-on-background/78" : "text-on-background/35 hover:text-on-background/60"))}
                   style={active ? {background:'var(--color-primary-container)',color:'var(--color-on-primary-fixed)',boxShadow:'0 0 12px var(--color-primary-glow)'} : {}}
                 >{label}</button>
               );
@@ -1087,7 +1088,7 @@ export default function App() {
 
         {/* Coordinate Display */}
         <motion.div
-          className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px] text-on-background/30"
+          className={cn("absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px]", isLightTheme ? "text-on-background/48" : "text-on-background/30")}
           initial={false}
           animate={{
             opacity: uiVisible ? 1 : 0,
@@ -1101,7 +1102,7 @@ export default function App() {
           <span>LAT 30.5723</span>
           <span className="opacity-40">|</span>
           <span>ELE 500m</span>
-          <span className="text-primary-container/40">WGS84</span>
+          <span className={cn(isLightTheme ? "text-primary-container/58" : "text-primary-container/40")}>WGS84</span>
         </motion.div>
 
         {/* Reset View - Optimized Position to Bottom-Left Cluster */}

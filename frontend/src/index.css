@@ -61,7 +61,7 @@
 :root[data-theme='light'] {
   /* Light Mode */
   --bg: #f8f9fb;
-  --on-bg: #1c1c21;
+  --on-bg: #15161a;
   --surface: #ffffff;
   --surface-dim: #f1f3f5;
   --surface-lowest: #ffffff;
@@ -70,10 +70,10 @@
   --surface-high: #e2e6eb;
   --surface-highest: #d9dee6;
   --surface-variant: #e9ecef;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-variant: rgba(0, 0, 0, 0.04);
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-bg-light: rgba(255, 255, 255, 0.5);
+  --border: rgba(18, 24, 32, 0.13);
+  --border-variant: rgba(18, 24, 32, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.78);
+  --glass-bg-light: rgba(255, 255, 255, 0.62);
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Base ━━━━━━━━━━━━━━━━━━━━ */
@@ -153,6 +153,40 @@
 
 :root:not([data-theme='light']) .geoai-tdt-labels {
   filter: invert(100%) brightness(135%) contrast(125%);
+}
+
+.geoai-muted-icon {
+  color: color-mix(in srgb, var(--color-on-background) 42%, transparent);
+}
+
+:root[data-theme='light'] .geoai-muted-icon {
+  color: color-mix(in srgb, var(--color-on-background) 54%, transparent);
+}
+
+.geoai-chat-timestamp {
+  color: var(--color-on-background);
+  opacity: 0.4;
+}
+
+:root[data-theme='light'] .geoai-chat-timestamp {
+  opacity: 0.58;
+}
+
+.geoai-citation-title {
+  color: color-mix(in srgb, var(--color-on-background) 80%, transparent);
+}
+
+:root[data-theme='light'] .geoai-citation-title {
+  color: color-mix(in srgb, var(--color-on-background) 88%, transparent);
+}
+
+.geoai-citation-excerpt {
+  color: var(--color-on-background);
+  opacity: 0.5;
+}
+
+:root[data-theme='light'] .geoai-citation-excerpt {
+  opacity: 0.64;
 }
 
 /* Hide Cesium credits */
