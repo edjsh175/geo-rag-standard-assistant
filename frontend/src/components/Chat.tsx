@@ -170,7 +170,7 @@ const Chat: React.FC<ChatProps> = ({
             disabled={disabled || isLoading}
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-            <button className="geoai-muted-icon w-6 h-6 flex items-center justify-center rounded-lg transition-all" onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,112,64,0.7)'; }} onMouseLeave={e => { e.currentTarget.style.color = ''; }}>
+            <button className="w-6 h-6 flex items-center justify-center rounded-lg transition-all" style={{ color: 'rgba(255,255,255,0.25)' }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,112,64,0.7)'; }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; }}>
               <Mic className="w-3.5 h-3.5" />
             </button>
             <motion.button
@@ -242,7 +242,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
         </div>
 
         {/* Timestamp */}
-        <p className="geoai-chat-timestamp text-[12.5px] font-mono mt-1" style={{ textAlign: isUser ? 'right' : 'left', letterSpacing: '0.05em' }}>
+        <p className="text-[12.5px] font-mono mt-1 opacity-40" style={{ color: 'var(--color-on-background)', textAlign: isUser ? 'right' : 'left', letterSpacing: '0.05em' }}>
           {new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
         </p>
 
@@ -266,8 +266,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
                     {(citation.confidence * 100).toFixed(1)}%
                   </span>
                 </div>
-                <h4 className="geoai-citation-title text-[13.5px] font-semibold mb-1">{citation.title}</h4>
-                <p className="geoai-citation-excerpt text-[12.5px] line-clamp-2">{citation.excerpt}</p>
+                <h4 className="text-[13.5px] font-semibold mb-1 text-on-background/80">{citation.title}</h4>
+                <p className="text-[12.5px] line-clamp-2 opacity-50 text-on-background">{citation.excerpt}</p>
               </motion.div>
             ))}
           </div>
