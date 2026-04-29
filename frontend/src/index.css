@@ -93,26 +93,17 @@
 
 /* ━━━━━━━━━━━━━━━━━━━━ Glass ━━━━━━━━━━━━━━━━━━━━ */
 .glass {
-  --geoai-glass-filter: blur(20px) saturate(180%);
   background: var(--glass-bg);
-  backdrop-filter: var(--geoai-glass-filter) !important;
-  -webkit-backdrop-filter: var(--geoai-glass-filter) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   transition: background 0.4s ease;
 }
 
 .glass-light {
-  --geoai-glass-filter: blur(16px) saturate(160%);
   background: var(--glass-bg-light);
-  backdrop-filter: var(--geoai-glass-filter) !important;
-  -webkit-backdrop-filter: var(--geoai-glass-filter) !important;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   transition: background 0.4s ease;
-}
-
-@supports (backdrop-filter: blur(1px)) {
-  .glass,
-  .glass-light {
-    backdrop-filter: var(--geoai-glass-filter) !important;
-  }
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Hairline borders ━━━━━━━━━━━━━━━━━━━━ */
