@@ -52,8 +52,16 @@ const STYLE_CLICKED = {
 
 // 中国全境矩形范围
 const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
+const DARK_GLOBE_BASE_COLOR = Cesium.Color.fromCssColorString('#060a10');
+const LIGHT_GLOBE_BASE_COLOR = Cesium.Color.fromCssColorString('#eef2f6');
 const DARK_TILE_FILTER = 'invert(92%) hue-rotate(180deg) saturate(60%) brightness(58%) contrast(118%)';
 const DARK_LABEL_FILTER = 'invert(100%) brightness(135%) contrast(125%)';
+
+const applyGlobeBaseColor = (viewer: Cesium.Viewer, theme: 'light' | 'dark') => {
+  viewer.scene.globe.baseColor = theme === 'dark'
+    ? DARK_GLOBE_BASE_COLOR
+    : LIGHT_GLOBE_BASE_COLOR;
+};
 
 const createTiandituProvider = (layer: 'vec_w' | 'cva_w' | 'img_w', token: string) =>
   new Cesium.UrlTemplateImageryProvider({
@@ -611,6 +619,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     // ★ 性能优化：降低后处理开销
     viewer.scene.fog.enabled = false;
     viewer.scene.globe.showGroundAtmosphere = false;
+    applyGlobeBaseColor(viewer, theme);
     viewer.scene.skyAtmosphere.show = false;
 
     viewer.camera.setView({
@@ -693,6 +702,8 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     if (!viewerRef.current) return;
     
     // 切换行政区划可见性
+    applyGlobeBaseColor(viewerRef.current, theme);
+
     if (entitiesRef.current.length > 0) {
       const isVisible = layers.admin;
       entitiesRef.current.forEach(entity => {
