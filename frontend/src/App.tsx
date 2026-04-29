@@ -940,7 +940,7 @@ export default function App() {
 
 
       {/* Floating Overlay Controls / Content */}
-      <main className="absolute inset-0 pointer-events-none">
+      <main className="absolute inset-0 pointer-events-none z-10">
         {/* Layer Controls - Bottom Left */}
         <motion.div
           className={cn(
@@ -952,7 +952,6 @@ export default function App() {
             opacity: uiVisible ? 1 : 0,
             x: uiVisible ? 0 : reduceMotion ? -6 : -34,
             y: uiVisible ? 0 : reduceMotion ? 6 : 22,
-            filter: uiVisible ? 'blur(0px)' : 'blur(10px)',
           }}
           transition={getLayerTransition(reduceMotion ? 0.05 : 0.42)}
         >
@@ -993,7 +992,6 @@ export default function App() {
             opacity: uiVisible ? 1 : 0,
             x: uiVisible ? 0 : reduceMotion ? -6 : -28,
             y: uiVisible ? 0 : reduceMotion ? 4 : 10,
-            filter: uiVisible ? 'blur(0px)' : 'blur(8px)',
           }}
           transition={getLayerTransition(reduceMotion ? 0.06 : 0.36)}
         >
@@ -1032,7 +1030,6 @@ export default function App() {
           animate={{
             opacity: uiVisible ? 1 : 0,
             y: uiVisible ? 0 : reduceMotion ? 6 : 26,
-            filter: uiVisible ? 'blur(0px)' : 'blur(10px)',
           }}
           transition={getLayerTransition(reduceMotion ? 0.07 : 0.54)}
         >
@@ -1064,7 +1061,6 @@ export default function App() {
             x: uiVisible ? 0 : reduceMotion ? 10 : 42,
             y: uiVisible ? 0 : reduceMotion ? 6 : 18,
             scale: uiVisible ? 1 : reduceMotion ? 0.995 : 0.975,
-            filter: uiVisible ? 'blur(0px)' : 'blur(12px)',
           }}
           transition={getLayerTransition(reduceMotion ? 0.08 : 0.66)}
         >
@@ -1092,7 +1088,6 @@ export default function App() {
           animate={{
             opacity: uiVisible ? 1 : 0,
             y: uiVisible ? 0 : reduceMotion ? 4 : 18,
-            filter: uiVisible ? 'blur(0px)' : 'blur(6px)',
           }}
           transition={getLayerTransition(reduceMotion ? 0.07 : 0.6)}
         >
@@ -1115,7 +1110,6 @@ export default function App() {
             opacity: uiVisible ? 1 : 0,
             x: uiVisible ? 0 : reduceMotion ? -6 : -24,
             y: uiVisible ? 0 : reduceMotion ? 4 : 10,
-            filter: uiVisible ? 'blur(0px)' : 'blur(8px)',
           }}
           transition={getLayerTransition(reduceMotion ? 0.06 : 0.5)}
         >
