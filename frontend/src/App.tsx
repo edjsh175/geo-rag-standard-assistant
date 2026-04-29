@@ -21,7 +21,7 @@ import {
   Moon,
   LogOut
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import CesiumGlobe from './components/CesiumGlobe';
 import OpenLayersMap from './components/OpenLayersMap';
 import BootScreen from './components/BootScreen';
@@ -134,8 +134,11 @@ const getBootErrorMessage = (error: unknown): string => {
   return '系统初始化失败，请稍后重试。';
 };
 
+type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
+
 export default function App() {
   const { logout, user } = useAuth();
+  const reduceMotion = useReducedMotion();
   // ==================== 全局空间状态 ====================
   const viewMode = useMapStore((s) => s.viewMode);
   const setViewMode = useMapStore((s) => s.setViewMode);
@@ -149,11 +152,13 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootBaseReady, setBootBaseReady] = useState(false);
   const [bootRetryKey, setBootRetryKey] = useState(0);
+  const [bootStage, setBootStage] = useState<BootCeremonyStage>('loading');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [mapReady, setMapReady] = useState<{ '2D': boolean; '3D': boolean }>({
     '2D': false,
     '3D': false,
   });
+  const enterCeremonyTimerRef = useRef<number | null>(null);
 
   // ==================== 主题管理 ====================
   useEffect(() => {
@@ -196,11 +201,33 @@ export default function App() {
   }, [markMapReady]);
 
   const retryBoot = useCallback(() => {
+    if (enterCeremonyTimerRef.current) {
+      window.clearTimeout(enterCeremonyTimerRef.current);
+      enterCeremonyTimerRef.current = null;
+    }
     resetBootstrapCache();
     setBootError(null);
     setBootBaseReady(false);
+    setBootStage('loading');
     setBootRetryKey((prev) => prev + 1);
   }, []);
+
+  const handleEnterSystem = useCallback(() => {
+    if (bootStage !== 'ready') return;
+
+    setBootStage('entering');
+    setBootStatus('正在展开主控界面');
+    setBootDetail('地图已就绪，正在唤醒控制台与检索工作台。');
+
+    if (enterCeremonyTimerRef.current) {
+      window.clearTimeout(enterCeremonyTimerRef.current);
+    }
+
+    enterCeremonyTimerRef.current = window.setTimeout(() => {
+      setBootStage('done');
+      enterCeremonyTimerRef.current = null;
+    }, reduceMotion ? 260 : 1280);
+  }, [bootStage, reduceMotion]);
 
   const handleLogout = useCallback(async () => {
     if (isLoggingOut) return;
@@ -246,10 +273,26 @@ export default function App() {
   }, [bootRetryKey]);
 
   useEffect(() => {
-    if (!bootBaseReady || bootError) return;
+    if (bootError || !bootBaseReady || !mapReady[viewMode] || bootStage !== 'loading') return;
+
+    setBootStage('ready');
+    setBootStatus('系统准备就绪');
+    setBootDetail('地图与核心资源已完成加载，点击一次进入系统。');
+  }, [bootBaseReady, bootError, bootStage, mapReady, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      if (enterCeremonyTimerRef.current) {
+        window.clearTimeout(enterCeremonyTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!bootBaseReady || bootError || bootStage !== 'loading') return;
     setBootStatus(viewMode === '3D' ? '正在准备三维地图视图' : '正在准备二维地图视图');
     setBootDetail('正在完成首屏地图初始化，请稍候。');
-  }, [bootBaseReady, bootError, viewMode]);
+  }, [bootBaseReady, bootError, bootStage, viewMode]);
 
   // 2D/3D 地图容器 ref，用于视角交接
   const olContainerRef = useRef<HTMLDivElement>(null);
@@ -751,13 +794,43 @@ export default function App() {
     };
   }, []);
 
-  const isCurrentMapReady = mapReady[viewMode];
-  const showBootOverlay = !!bootError || !bootBaseReady || !isCurrentMapReady;
+  const showBootOverlay = !!bootError || bootStage !== 'done';
+  const uiVisible = bootStage === 'entering' || bootStage === 'done';
+  const uiInteractive = bootStage === 'done';
+  const bootPhase = bootError
+    ? 'loading'
+    : bootStage === 'ready'
+      ? 'ready'
+      : bootStage === 'entering'
+        ? 'entering'
+        : 'loading';
+  const getLayerTransition = (delay: number) =>
+    reduceMotion
+      ? { duration: 0.2, delay: Math.min(delay, 0.08), ease: 'easeOut' as const }
+      : { type: 'spring' as const, damping: 24, stiffness: 210, mass: 0.92, delay };
 
   return (
     <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
       {/* Background Map Layer */}
-      <section className="absolute inset-0 z-0 overflow-hidden" style={{background:'#08080b'}}>
+      <motion.section
+        className="absolute inset-0 z-0 overflow-hidden"
+        initial={false}
+        animate={{
+          opacity: bootStage === 'loading' ? 0.7 : bootStage === 'ready' ? 0.86 : 1,
+          scale: uiVisible ? 1 : reduceMotion ? 1.01 : 1.045,
+          filter: uiVisible
+            ? 'blur(0px) saturate(1) brightness(1)'
+            : reduceMotion
+              ? 'blur(2px) saturate(0.92) brightness(0.88)'
+              : 'blur(12px) saturate(0.82) brightness(0.72)',
+        }}
+        transition={
+          reduceMotion
+            ? { duration: 0.28, ease: 'easeOut' }
+            : { duration: 1.05, ease: [0.22, 1, 0.36, 1] }
+        }
+        style={{ background: '#08080b', pointerEvents: uiInteractive ? 'auto' : 'none' }}
+      >
         <CesiumGlobe
           theme={theme}
           visible={viewMode === '3D'}
@@ -770,20 +843,36 @@ export default function App() {
           layers={layers}
           onReady={handleMapReady2D}
         />
-      </section>
+      </motion.section>
 
       {showBootOverlay ? (
         <BootScreen
           compact
+          phase={bootPhase}
           status={bootStatus}
           detail={bootDetail}
           error={bootError}
           onAction={bootError ? retryBoot : undefined}
+          onPrimaryAction={bootError ? undefined : handleEnterSystem}
+          primaryActionLabel="进入系统"
         />
       ) : null}
 
       {/* Floating Header */}
-      <header className="fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+      <motion.header
+        className={cn(
+          "fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6",
+          uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+        )}
+        initial={false}
+        animate={{
+          opacity: uiVisible ? 1 : 0,
+          y: uiVisible ? 0 : reduceMotion ? -6 : -30,
+          filter: uiVisible ? 'blur(0px)' : 'blur(12px)',
+        }}
+        transition={getLayerTransition(reduceMotion ? 0.03 : 0.28)}
+        style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
+      >
         <div className="flex items-center gap-6">
           {/* Logo */}
           <div className="flex items-center gap-2.5 font-headline">
@@ -845,7 +934,7 @@ export default function App() {
             <LogOut className="h-3.5 w-3.5" />
           </button>
         </div>
-      </header>
+      </motion.header>
 
       {/* Side Nav - Removed as requested */}
 
@@ -853,7 +942,20 @@ export default function App() {
       {/* Floating Overlay Controls / Content */}
       <main className="absolute inset-0 pointer-events-none z-10">
         {/* Layer Controls - Bottom Left */}
-        <div className="absolute bottom-16 left-6 z-10 pointer-events-auto">
+        <motion.div
+          className={cn(
+            "absolute bottom-16 left-6 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? -6 : -34,
+            y: uiVisible ? 0 : reduceMotion ? 6 : 22,
+            filter: uiVisible ? 'blur(0px)' : 'blur(10px)',
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.05 : 0.42)}
+        >
           <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{...glassLightStyle,minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             <div className="flex items-center gap-1.5 mb-0.5">
               <Layers className="w-3 h-3" style={{color:'rgba(240,112,64,0.7)'}} />
@@ -878,10 +980,23 @@ export default function App() {
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
         {/* Info Badge - Top Left (below header) */}
-        <div className="absolute top-[80px] left-5 z-10 pointer-events-auto">
+        <motion.div
+          className={cn(
+            "absolute top-[80px] left-5 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? -6 : -28,
+            y: uiVisible ? 0 : reduceMotion ? 4 : 10,
+            filter: uiVisible ? 'blur(0px)' : 'blur(8px)',
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.06 : 0.36)}
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={activeRegion?.adcode ?? 'overview'}
@@ -905,10 +1020,22 @@ export default function App() {
               )}
             </motion.div>
           </AnimatePresence>
-        </div>
+        </motion.div>
 
         {/* Mode Switcher - Bottom Center */}
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
+        <motion.div
+          className={cn(
+            "absolute bottom-5 left-1/2 -translate-x-1/2 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            y: uiVisible ? 0 : reduceMotion ? 6 : 26,
+            filter: uiVisible ? 'blur(0px)' : 'blur(10px)',
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.07 : 0.54)}
+        >
           <div className="glass p-[3px] rounded-full flex shadow-xl" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             {(['3D 地球','2D 地图'] as const).map((label,i) => {
               const mode = i===0 ? '3D' : '2D';
@@ -923,10 +1050,24 @@ export default function App() {
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
         {/* AI Chat Panel - Floating Right */}
-        <div className="absolute top-[80px] bottom-6 right-6 w-[420px] pointer-events-auto z-20">
+        <motion.div
+          className={cn(
+            "absolute top-[80px] bottom-6 right-6 w-[420px] z-20",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? 10 : 42,
+            y: uiVisible ? 0 : reduceMotion ? 6 : 18,
+            scale: uiVisible ? 1 : reduceMotion ? 0.995 : 0.975,
+            filter: uiVisible ? 'blur(0px)' : 'blur(12px)',
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.08 : 0.66)}
+        >
           <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl" style={glassStyle}>
             <Chat
               messages={messages}
@@ -942,20 +1083,42 @@ export default function App() {
               quickTags={['#城镇开发边界', '#永久基本农田', '#生态保护红线', '#四川技术规范']}
             />
           </div>
-        </div>
+        </motion.div>
 
         {/* Coordinate Display */}
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px] text-on-background/30">
+        <motion.div
+          className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px] text-on-background/30"
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            y: uiVisible ? 0 : reduceMotion ? 4 : 18,
+            filter: uiVisible ? 'blur(0px)' : 'blur(6px)',
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.07 : 0.6)}
+        >
           <span>LNG 104.0665</span>
           <span className="opacity-40">|</span>
           <span>LAT 30.5723</span>
           <span className="opacity-40">|</span>
           <span>ELE 500m</span>
           <span className="text-primary-container/40">WGS84</span>
-        </div>
+        </motion.div>
 
         {/* Reset View - Optimized Position to Bottom-Left Cluster */}
-        <div className="absolute bottom-[200px] left-6 z-10 pointer-events-auto">
+        <motion.div
+          className={cn(
+            "absolute bottom-[200px] left-6 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? -6 : -24,
+            y: uiVisible ? 0 : reduceMotion ? 4 : 10,
+            filter: uiVisible ? 'blur(0px)' : 'blur(8px)',
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.06 : 0.5)}
+        >
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
@@ -968,7 +1131,7 @@ export default function App() {
             <RotateCcw className="w-3.5 h-3.5" />
             复位视角
           </motion.button>
-        </div>
+        </motion.div>
       </main>
 
       {/* Details Drawer */}
