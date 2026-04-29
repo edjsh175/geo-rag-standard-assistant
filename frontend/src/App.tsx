@@ -940,7 +940,7 @@ export default function App() {
 
 
       {/* Floating Overlay Controls / Content */}
-      <main className="absolute inset-0 pointer-events-none z-10">
+      <main className="absolute inset-0 pointer-events-none">
         {/* Layer Controls - Bottom Left */}
         <motion.div
           className={cn(
