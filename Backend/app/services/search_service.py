@@ -985,6 +985,53 @@ class SearchService:
         ]
         return "\n".join(context_lines).strip()
 
+    def _extract_content_evidence(self, content: str, limit: int = 3) -> List[str]:
+        normalized = re.sub(r"\s+", " ", content or "").strip()
+        if not normalized:
+            return []
+
+        parts = re.split(r"(?<=[。；！？!?])\s+|(?<=\.)\s+", normalized)
+        evidences: List[str] = []
+        for part in parts:
+            cleaned = part.strip(" \t\r\n-")
+            if len(cleaned) < 12:
+                continue
+            evidences.append(cleaned[:120])
+            if len(evidences) >= limit:
+                break
+
+        if evidences:
+            return evidences
+
+        return [normalized[:120]]
+
+    def build_document_follow_up_fallback_answer(
+        self,
+        query: str,
+        document_detail: Dict[str, Any],
+    ) -> str:
+        title = str(document_detail.get("title") or document_detail.get("id") or "该文档")
+        metadata = document_detail.get("metadata") or {}
+        standard_info = document_detail.get("standard_info") or {}
+        content = str(document_detail.get("content") or "").strip()
+        evidence_lines = self._extract_content_evidence(content)
+        summary_source = metadata.get("description") or (content[:160] if content else "")
+        summary_source = re.sub(r"\s+", " ", str(summary_source)).strip()
+        summary_source = summary_source[:180] if summary_source else "该文档内容中可提取的信息有限。"
+
+        header = f"《{title}》的主要内容可概括为：{summary_source}"
+        if standard_info.get("code"):
+            header += f"\n标准编号：{standard_info['code']}"
+
+        if not evidence_lines:
+            return header
+
+        evidence_text = "\n".join(
+            f"依据{i}：{evidence}"
+            for i, evidence in enumerate(evidence_lines, start=1)
+        )
+        return f"{header}\n{evidence_text}"
+
     async def generate_document_follow_up_answer(
         self,
         query: str,
@@ -1018,13 +1065,22 @@ class SearchService:
             messages.extend(truncated_history)
         messages.append({"role": "user", "content": query})
 
-        answer = await llm_config.chat_completion(
-            messages=messages,
-            temperature=0.2,
-            max_tokens=900,
-        )
-        generation_time = (datetime.now() - start_time).total_seconds()
-        return answer, generation_time
+        try:
+            answer = await llm_config.chat_completion(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=900,
+            )
+            generation_time = (datetime.now() - start_time).total_seconds()
+            return answer, generation_time
+        except Exception as exc:
+            logger.warning(
+                "Document follow-up answer generation failed, using deterministic fallback: %s",
+                exc,
+            )
+            answer = self.build_document_follow_up_fallback_answer(query, document_detail)
+            generation_time = (datetime.now() - start_time).total_seconds()
+            return answer, generation_time
 
     async def generate_answer(
         self,

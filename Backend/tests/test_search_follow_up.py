@@ -216,3 +216,20 @@ async def test_search_documents_extracts_explicit_document_id_without_follow_up_
 
     assert response.generated_answer == "这是 7873 的文档摘要。"
     assert response.results[0].id == "7873"
+
+
+def test_build_document_follow_up_fallback_answer_uses_document_content() -> None:
+    service = SearchService.__new__(SearchService)
+    detail = make_document_detail(
+        "7873",
+        content="本标准规定了项目总则。明确了报告编制要求。提出了建设边界约束条件。",
+    )
+
+    answer = service.build_document_follow_up_fallback_answer(
+        "7873的主要内容是什么",
+        detail,
+    )
+
+    assert "DB37_T 4798-2024" in answer
+    assert "依据1" in answer
+    assert "报告编制要求" in answer or "建设边界约束条件" in answer
