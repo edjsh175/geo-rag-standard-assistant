@@ -54,8 +54,9 @@ const Chat: React.FC<ChatProps> = ({
 
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isLoading || disabled) return;
-    await onSendMessage(inputValue);
     onInputChange('');
+    const messageToSend = inputValue;
+    await onSendMessage(messageToSend);
     inputRef.current?.focus();
   }, [inputValue, isLoading, disabled, onSendMessage, onInputChange]);
 
