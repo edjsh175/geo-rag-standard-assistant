@@ -52,6 +52,15 @@ const Chat: React.FC<ChatProps> = ({
     if (isLoading && !isAutoScrollLocked) scrollToBottom({ behavior: 'smooth' });
   }, [isLoading, isAutoScrollLocked, scrollToBottom]);
 
+  const displayQuickTags = [
+    '#滑坡隐患',
+    '#泥石流治理',
+    '#崩塌风险区',
+    '#地裂缝监测',
+    '#地面沉降预警',
+    '#应急避险',
+  ];
+
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isLoading || disabled) return;
     onInputChange('');
@@ -189,7 +198,7 @@ const Chat: React.FC<ChatProps> = ({
 
         {/* Quick Tags */}
         <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
-          {quickTags.map(tag => (
+          {displayQuickTags.map(tag => (
             <button
               key={tag}
               onClick={() => onInputChange(tag.replace(/^#/, ''))}
