@@ -10,9 +10,10 @@ from datetime import datetime
 
 from app.core.llm_config import llm_config
 from app.core.database import db_manager
+from app.services.document_asset_service import DocumentAssetService
 from sqlalchemy import text
 from app.models.search_models import (
-    DocumentResult, SpatialFilter, MetadataFilter
+    DocumentResult, FollowUpContext, MetadataFilter, SpatialFilter
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,32 @@ QUERY_STOP_WORDS = {
     "查一下", "查询", "检索", "有哪些", "哪些", "相关", "标准", "规范",
     "一下", "请", "的", "有", "吗", "？", "?", "和", "与",
 }
+
+STANDARD_CODE_QUERY_PATTERN = re.compile(
+    r"""
+    (?P<code>
+        [A-Z]{1,6}\d{0,4}
+        (?:\s*[/_]\s*[A-Z])?
+        (?:\s*[-_/]?\s*\d+(?:\.\d+)*)+
+        \s*[-—]\s*\d{4}
+    )
+    """,
+    re.VERBOSE,
+)
+COMPACT_STANDARD_CODE_PATTERN = re.compile(r"^[A-Z]{2,10}\d{6,}$")
+DOCUMENT_FOLLOW_UP_SUMMARY_HINTS = (
+    "主要内容",
+    "讲了什么",
+    "主要讲",
+    "核心要求",
+    "主要要求",
+    "适用范围",
+    "总结",
+    "概述",
+    "摘要",
+    "重点",
+    "说了什么",
+)
 
 
 def _region_aliases(name: str) -> List[str]:
@@ -161,6 +188,10 @@ class SearchService:
 
             # 1. 获取查询的向量嵌入
             query_embedding = await self._get_query_embedding(query)
+            exact_standard_code_results = await self._exact_standard_code_search(
+                query=query,
+                top_k=top_k * 2,
+            )
 
             # 2. 向量相似度搜索
             vector_results = await self._vector_search(
@@ -172,6 +203,12 @@ class SearchService:
             keyword_results = await self._keyword_search(
                 query=query,
                 top_k=top_k * 2,
+            )
+
+            keyword_results = self._merge_and_dedupe_results(
+                exact_standard_code_results,
+                keyword_results,
+                top_k=top_k * 3,
             )
 
             vector_results = self._merge_and_dedupe_results(
@@ -321,6 +358,147 @@ class SearchService:
                 merged[key] = result
 
         return sorted(merged.values(), key=lambda item: item.similarity, reverse=True)[:top_k]
+
+    def _extract_standard_code_query(self, query: str) -> Optional[str]:
+        """Extract and normalize a standard-code-like query when present."""
+        upper_query = (query or "").upper().strip()
+        if not upper_query:
+            return None
+
+        match = STANDARD_CODE_QUERY_PATTERN.search(upper_query)
+        if match:
+            normalized = DocumentAssetService.normalize_standard_code(match.group("code"))
+            if normalized:
+                return normalized
+
+        compact_query = re.sub(r"[^0-9A-Z]+", "", upper_query)
+        if (
+            COMPACT_STANDARD_CODE_PATTERN.fullmatch(compact_query)
+            and compact_query[-4:].isdigit()
+        ):
+            normalized = DocumentAssetService.normalize_standard_code(compact_query)
+            if normalized:
+                return normalized
+
+        return None
+
+    def _get_standard_code_match_type(
+        self,
+        query_standard_code: Optional[str],
+        result_standard_code: Optional[str],
+    ) -> str:
+        if not query_standard_code or not result_standard_code:
+            return "none"
+
+        normalized_result_code = DocumentAssetService.normalize_standard_code(result_standard_code)
+        if not normalized_result_code:
+            return "none"
+
+        if normalized_result_code == query_standard_code:
+            return "exact"
+
+        if (
+            query_standard_code in normalized_result_code
+            or normalized_result_code in query_standard_code
+        ):
+            return "partial"
+
+        return "none"
+
+    def _prioritize_exact_standard_code_matches(
+        self,
+        query: str,
+        results: List[DocumentResult],
+    ) -> List[DocumentResult]:
+        query_standard_code = self._extract_standard_code_query(query)
+        if not query_standard_code:
+            return results
+
+        exact_matches: List[DocumentResult] = []
+        other_results: List[DocumentResult] = []
+
+        for result in results:
+            standard_code = result.metadata.get("standard_code")
+            match_type = self._get_standard_code_match_type(
+                query_standard_code,
+                str(standard_code).strip() if standard_code else None,
+            )
+            result.metadata["standard_code_match_type"] = match_type
+
+            if match_type == "exact":
+                exact_matches.append(result)
+            else:
+                other_results.append(result)
+
+        if not exact_matches:
+            return results
+
+        logger.info(
+            "Prioritized %s exact standard-code matches for query=%r",
+            len(exact_matches),
+            query,
+        )
+        return [*exact_matches, *other_results]
+
+    async def _exact_standard_code_search(
+        self,
+        query: str,
+        top_k: int,
+    ) -> List[DocumentResult]:
+        query_standard_code = self._extract_standard_code_query(query)
+        if not query_standard_code or not db_manager.postgres_sessionmaker:
+            return []
+
+        sql = text(
+            """
+            SELECT
+                id,
+                standard_code,
+                document_name,
+                content
+            FROM policy_chunks
+            WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
+            ORDER BY document_name, id
+            LIMIT :limit
+            """
+        )
+
+        async with db_manager.get_postgres_session() as session:
+            result = await session.execute(
+                sql,
+                {"standard_code": query_standard_code, "limit": top_k},
+            )
+            rows = result.fetchall()
+
+        exact_results = [
+            DocumentResult(
+                id=row.id,
+                title=row.document_name,
+                content=row.content[:500] if row.content else "",
+                similarity=1.0,
+                metadata={
+                    "standard_code": row.standard_code,
+                    "document_name": row.document_name,
+                    "match_type": "standard_code_exact",
+                    "standard_code_match_type": "exact",
+                },
+                spatial_info=None,
+                file_type="unknown",
+                file_size=0,
+                upload_time=datetime.now(),
+                source_url=None,
+            )
+            for row in rows
+        ]
+
+        if exact_results:
+            logger.info(
+                "Exact standard-code search matched %s rows for query=%r",
+                len(exact_results),
+                query,
+            )
+
+        return exact_results
 
     async def hybrid_search(
         self,
@@ -608,12 +786,16 @@ class SearchService:
     ) -> List[DocumentResult]:
         """使用大模型对结果进行重排序"""
         try:
-            if not results or len(results) <= 1:
+            if not results:
                 return results
 
             # TODO: 实现大模型重排序逻辑
             # 可以使用交叉编码器或大模型进行相关性评估
-            return results[:top_k]
+            prioritized_results = self._prioritize_exact_standard_code_matches(
+                query,
+                results,
+            )
+            return prioritized_results[:top_k]
 
         except Exception as e:
             logger.error(f"重排序失败: {e}")
@@ -718,6 +900,131 @@ class SearchService:
             logger.error(f"意图检测失败: {e}")
             # 默认返回search以保证向后兼容
             return "search"
+
+    async def load_follow_up_document_result(
+        self,
+        follow_up_context: Optional[FollowUpContext],
+        asset_service: DocumentAssetService,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[DocumentResult]]:
+        """Load the resolved follow-up document and convert it to a single-document result."""
+        if not follow_up_context or not follow_up_context.target_document_id:
+            return None, None
+
+        detail = await asset_service.get_document_detail_payload(follow_up_context.target_document_id)
+        if not detail:
+            logger.info(
+                "Follow-up target document was not found: %s",
+                follow_up_context.target_document_id,
+            )
+            return None, None
+
+        content = str(detail.get("content") or "").strip()
+        if not content:
+            logger.info(
+                "Follow-up target document has no usable content: %s",
+                follow_up_context.target_document_id,
+            )
+            return None, None
+
+        file_info = detail.get("file_info") or {}
+        metadata = dict(detail.get("metadata") or {})
+        standard_info = detail.get("standard_info") or {}
+        custom_fields = dict(metadata.get("custom_fields") or {})
+        if standard_info.get("code"):
+            metadata["standard_code"] = standard_info["code"]
+            custom_fields.setdefault("standard_code", standard_info["code"])
+        metadata["custom_fields"] = custom_fields
+        metadata["follow_up_resolution_source"] = follow_up_context.resolution_source
+
+        result = DocumentResult(
+            id=str(detail["id"]),
+            title=str(detail.get("title") or detail["id"]),
+            content=content[:2000],
+            similarity=1.0,
+            metadata=metadata,
+            spatial_info=detail.get("spatial_info"),
+            file_type=str(file_info.get("type") or "pdf"),
+            file_size=int(file_info.get("size") or 0),
+            upload_time=file_info.get("upload_time") or datetime.now(),
+            source_url=detail.get("download_url"),
+            download_available=bool(detail.get("download_available")),
+            download_url=detail.get("download_url"),
+        )
+        return detail, result
+
+    def _is_document_summary_query(self, query: str) -> bool:
+        compact_query = re.sub(r"\s+", "", query or "")
+        return any(hint in compact_query for hint in DOCUMENT_FOLLOW_UP_SUMMARY_HINTS)
+
+    def extract_explicit_document_id(self, query: str) -> Optional[str]:
+        compact_query = re.sub(r"\s+", "", query or "")
+        match = re.search(r"(\d{4,})(?=的|讲|说|内容|标准|文档)|\b(\d{4,})\b", compact_query)
+        if not match:
+            return None
+        return match.group(1) or match.group(2)
+
+    def _build_follow_up_document_context(self, document_detail: Dict[str, Any]) -> str:
+        metadata = document_detail.get("metadata") or {}
+        standard_info = document_detail.get("standard_info") or {}
+        file_info = document_detail.get("file_info") or {}
+        custom_fields = metadata.get("custom_fields") or {}
+
+        content = str(document_detail.get("content") or "").strip()
+        content_excerpt = content[:6000]
+
+        context_lines = [
+            f"文档标题: {document_detail.get('title') or ''}",
+            f"文档ID: {document_detail.get('id') or ''}",
+            f"标准编号: {standard_info.get('code') or custom_fields.get('standard_code') or ''}",
+            f"关键词: {', '.join(metadata.get('keywords') or [])}",
+            f"适用范围: {metadata.get('description') or ''}",
+            f"文件类型: {file_info.get('type') or ''}",
+            "",
+            "文档内容:",
+            content_excerpt,
+        ]
+        return "\n".join(context_lines).strip()
+
+    async def generate_document_follow_up_answer(
+        self,
+        query: str,
+        document_detail: Dict[str, Any],
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> tuple[str, float]:
+        """Generate a direct answer grounded in a single resolved document."""
+        start_time = datetime.now()
+        truncated_history = self._truncate_history(history)
+        is_summary_query = self._is_document_summary_query(query)
+        document_context = self._build_follow_up_document_context(document_detail)
+
+        system_prompt = f"""
+你是一个专业的空间规划与标准文档助手。现在用户正在追问一份已经锁定的单篇文档。
+
+回答要求:
+1. 只能依据下面提供的这份文档内容回答，不能扩展到其他文档，也不能重新检索。
+2. 如果文档内容不足以支持回答，明确说明“该文档内容中未找到足够依据回答这个问题”。
+3. 如果用户在问“主要内容/讲了什么/适用范围/核心要求/总结”等概要类问题，先给出直接摘要，再补充 1 到 3 条依据。
+4. 回答保持简洁、直接，不要输出“已检索到相关标准，请查看下方参考文档”。
+5. 若引用依据，使用“依据1 / 依据2 / 依据3”形式，每条只概括文档中的关键信息。
+
+当前问题是否为概要类问题: {"是" if is_summary_query else "否"}
+
+目标文档:
+{document_context}
+"""
+
+        messages = [{"role": "system", "content": system_prompt}]
+        if truncated_history:
+            messages.extend(truncated_history)
+        messages.append({"role": "user", "content": query})
+
+        answer = await llm_config.chat_completion(
+            messages=messages,
+            temperature=0.2,
+            max_tokens=900,
+        )
+        generation_time = (datetime.now() - start_time).total_seconds()
+        return answer, generation_time
 
     async def generate_answer(
         self,

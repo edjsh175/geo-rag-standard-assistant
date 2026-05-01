@@ -33,7 +33,14 @@ import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
 import { searchService } from './services/searchService';
 import { chatService } from './services/chatService';
 import { documentService } from './services/documentService';
-import type { SearchResult, Document, ChatMessage as ChatMessageType, DocumentPreview } from './types';
+import type {
+  SearchResult,
+  Document,
+  ChatMessage as ChatMessageType,
+  DocumentPreview,
+  FollowUpContext,
+  FollowUpCandidateDocument,
+} from './types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
@@ -106,6 +113,19 @@ const CURRENT_REGION_QUERY_PATTERN =
 const REGION_REFERENCE_PATTERN =
   /(该地区|该区域|该省份|该省|该地|当地|本地区|这里|此处|当前区域|当前地区|当前省份|当前省|选中区域|选中地区|所选区域|所选地区|这个地区|这个区域|这个省份|这个省)/g;
 
+const DOCUMENT_FOLLOW_UP_CUE_PATTERN =
+  /(主要内容|讲了什么|主要讲|说了什么|核心要求|主要要求|适用范围|总结|概述|摘要|重点|介绍|解读|内容是什么)/;
+
+const DOCUMENT_REFERENCE_PATTERN =
+  /(这个标准|这个文档|这份文档|上面那个|上述标准|上述文档|该标准|该文档)/;
+
+const ORDINAL_PATTERNS: Array<{ pattern: RegExp; rank: number | 'last' }> = [
+  { pattern: /第(?:1|一)个/, rank: 1 },
+  { pattern: /第(?:2|二)个/, rank: 2 },
+  { pattern: /第(?:3|三)个/, rank: 3 },
+  { pattern: /最后一个/, rank: 'last' },
+];
+
 const isCurrentRegionQuestion = (content: string): boolean =>
   CURRENT_REGION_QUERY_PATTERN.test(content.replace(/\s+/g, ''));
 
@@ -125,6 +145,103 @@ const buildRegionAwareQuery = (
   REGION_REFERENCE_PATTERN.lastIndex = 0;
   const expanded = content.replace(REGION_REFERENCE_PATTERN, region.name);
   return `${region.name} ${expanded}`;
+};
+
+const getLastAssistantCitations = (messages: ChatMessageType[]): FollowUpCandidateDocument[] => {
+  const latestAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && (message.metadata?.citations?.length ?? 0) > 0);
+
+  if (!latestAssistantMessage?.metadata?.citations) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const candidates: FollowUpCandidateDocument[] = [];
+  latestAssistantMessage.metadata.citations.forEach((citation, index) => {
+    if (!citation.document_id || seen.has(citation.document_id)) {
+      return;
+    }
+    seen.add(citation.document_id);
+    candidates.push({
+      id: citation.document_id,
+      title: citation.title,
+      rank: index + 1,
+    });
+  });
+  return candidates;
+};
+
+const resolveFollowUpContext = (
+  content: string,
+  messages: ChatMessageType[],
+  selectedDocument: Document | null
+): FollowUpContext | undefined => {
+  const compactContent = content.replace(/\s+/g, '');
+  const candidates = getLastAssistantCitations(messages);
+  const explicitIdMatch = compactContent.match(/\b(\d{4,})\b|(\d{4,})(?=的|讲|说|内容|标准|文档)/);
+  const allKnownDocuments = [
+    ...candidates,
+    ...(selectedDocument
+      ? [
+          {
+            id: selectedDocument.id,
+            title: selectedDocument.metadata.title,
+            rank: 0,
+          },
+        ]
+      : []),
+  ];
+
+  const hasFollowUpCue =
+    DOCUMENT_FOLLOW_UP_CUE_PATTERN.test(compactContent) || DOCUMENT_REFERENCE_PATTERN.test(compactContent);
+
+  const explicitDocumentId = explicitIdMatch?.[1] || explicitIdMatch?.[2];
+  if (explicitDocumentId && hasFollowUpCue) {
+    return {
+      target_document_id: explicitDocumentId,
+      candidate_documents: candidates,
+      resolution_source: 'explicit_text',
+    };
+  }
+
+  const explicitDocument = allKnownDocuments.find((candidate) => compactContent.includes(candidate.id));
+  if (explicitDocument && hasFollowUpCue) {
+    return {
+      target_document_id: explicitDocument.id,
+      candidate_documents: candidates,
+      resolution_source: 'explicit_text',
+    };
+  }
+
+  for (const ordinalPattern of ORDINAL_PATTERNS) {
+    if (!ordinalPattern.pattern.test(compactContent) || !hasFollowUpCue || candidates.length === 0) {
+      continue;
+    }
+
+    const target =
+      ordinalPattern.rank === 'last'
+        ? candidates[candidates.length - 1]
+        : candidates.find((candidate) => candidate.rank === ordinalPattern.rank);
+
+    if (target) {
+      return {
+        target_document_id: target.id,
+        candidate_documents: candidates,
+        resolution_source: 'ordinal',
+      };
+    }
+  }
+
+  if (selectedDocument && DOCUMENT_REFERENCE_PATTERN.test(compactContent)) {
+    return {
+      target_document_id: selectedDocument.id,
+      candidate_documents: candidates,
+      resolution_source: 'selected_document',
+    };
+  }
+
+  return undefined;
 };
 
 const getBootErrorMessage = (error: unknown): string => {
@@ -370,6 +487,7 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
+  const [isDownloadingDocument, setIsDownloadingDocument] = useState(false);
 
   const handleReferenceClick = (doc: Document) => {
     setSelectedDocument(doc);
@@ -423,6 +541,8 @@ export default function App() {
           indexing_status: 'completed',
           storage_path: '',
           access_url: doc.source_url,
+          download_available: doc.download_available,
+          download_url: doc.download_url,
           version: 1
         },
         highlights: {},
@@ -525,6 +645,7 @@ export default function App() {
 
     const regionFromQuery = extractRegionFromQuery(content);
     const regionContext = regionFromQuery ?? activeRegion;
+    const followUpContext = resolveFollowUpContext(content, messages, selectedDocument);
     if (regionFromQuery) {
       setActiveRegion(regionFromQuery);
     }
@@ -581,7 +702,13 @@ export default function App() {
             ...history
           ]
         : history;
-      const response = await chatService.sendMessage(queryForBackend, undefined, contextualHistory, abortController.signal);
+      const response = await chatService.sendMessage(
+        queryForBackend,
+        undefined,
+        contextualHistory,
+        abortController.signal,
+        followUpContext
+      );
 
       // 检查是否被中止
       if (abortController.signal.aborted) {
@@ -631,6 +758,8 @@ export default function App() {
         indexing_status: 'completed',
         storage_path: '',
         access_url: ref.source_url,
+        download_available: ref.download_available,
+        download_url: ref.download_url,
         version: 1
       }));
 
@@ -668,6 +797,7 @@ export default function App() {
           citations: citations,
           search_query: queryForBackend,
           original_query: content,
+          follow_up_context: followUpContext,
           selected_region: regionContext ?? undefined
         }
       };
@@ -754,7 +884,9 @@ export default function App() {
         is_indexed: true,
         indexing_status: 'completed',
         storage_path: '',
-        access_url: documentDetail.metadata.source_url,
+        access_url: documentDetail.download_url,
+        download_available: documentDetail.download_available,
+        download_url: documentDetail.download_url,
         version: 1
       };
 
@@ -768,6 +900,32 @@ export default function App() {
   };
 
   // 处理引用点击
+  const handleDocumentDownload = async () => {
+    if (!selectedDocument?.id || !selectedDocument.download_available || isDownloadingDocument) {
+      return;
+    }
+
+    setIsDownloadingDocument(true);
+    try {
+      const { blob, filename } = await documentService.downloadDocument(selectedDocument.id);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = window.document.createElement('a');
+      link.href = objectUrl;
+      link.download =
+        filename ||
+        selectedDocument.filename ||
+        `${selectedDocument.id}.${selectedDocument.file_type || 'pdf'}`;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error('鏂囨。涓嬭浇澶辫触:', error);
+    } finally {
+      setIsDownloadingDocument(false);
+    }
+  };
+
   const handleCitationClick = async (documentId: string) => {
     const doc = await fetchDocumentDetails(documentId);
     if (doc) {

@@ -1,26 +1,43 @@
 import { apiClient } from '../lib/api/config';
 import type { DocumentDetail } from '../types/api';
 
-/**
- * 文档服务
- */
+export interface DownloadedDocument {
+  blob: Blob;
+  filename: string;
+  contentType: string | null;
+}
+
+const extractFilename = (contentDisposition?: string): string => {
+  if (!contentDisposition) return 'document';
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const simpleMatch = contentDisposition.match(/filename="([^"]+)"/i);
+  if (simpleMatch?.[1]) {
+    return simpleMatch[1];
+  }
+
+  return 'document';
+};
+
 export const documentService = {
-  /**
-   * 获取文档详情
-   */
   async getDocumentById(id: string): Promise<DocumentDetail | null> {
     try {
       const response = await apiClient.get<DocumentDetail>(`/documents/${id}`);
       return response.data;
     } catch (error) {
-      console.error(`获取文档详情失败 (ID: ${id}):`, error);
+      console.error(`Failed to fetch document detail (ID: ${id}):`, error);
       return null;
     }
   },
 
-  /**
-   * 获取文档列表
-   */
   async getDocumentList(
     page: number = 1,
     pageSize: number = 20,
@@ -34,14 +51,11 @@ export const documentService = {
       );
       return response.data;
     } catch (error) {
-      console.error('获取文档列表失败:', error);
+      console.error('Failed to fetch document list:', error);
       return { documents: [], total: 0 };
     }
   },
 
-  /**
-   * 上传文档
-   */
   async uploadDocument(file: File, metadata?: Record<string, any>): Promise<string> {
     try {
       const formData = new FormData();
@@ -61,53 +75,46 @@ export const documentService = {
       );
       return response.data.document_id;
     } catch (error) {
-      console.error('上传文档失败:', error);
+      console.error('Failed to upload document:', error);
       throw error;
     }
   },
 
-  /**
-   * 删除文档
-   */
   async deleteDocument(id: string): Promise<void> {
     try {
       await apiClient.delete(`/documents/${id}`);
     } catch (error) {
-      console.error(`删除文档失败 (ID: ${id}):`, error);
+      console.error(`Failed to delete document (ID: ${id}):`, error);
       throw error;
     }
   },
 
-  /**
-   * 更新文档元数据
-   */
   async updateDocumentMetadata(id: string, metadata: Record<string, any>): Promise<void> {
     try {
       await apiClient.patch(`/documents/${id}`, { metadata });
     } catch (error) {
-      console.error(`更新文档元数据失败 (ID: ${id}):`, error);
+      console.error(`Failed to update document metadata (ID: ${id}):`, error);
       throw error;
     }
   },
 
-  /**
-   * 下载文档
-   */
-  async downloadDocument(id: string): Promise<Blob> {
+  async downloadDocument(id: string): Promise<DownloadedDocument> {
     try {
       const response = await apiClient.get<Blob>(`/documents/${id}/download`, {
         responseType: 'blob',
       });
-      return response.data;
+      const filename = extractFilename(response.headers['content-disposition']);
+      return {
+        blob: response.data,
+        filename,
+        contentType: response.headers['content-type'] || null,
+      };
     } catch (error) {
-      console.error(`下载文档失败 (ID: ${id}):`, error);
+      console.error(`Failed to download document (ID: ${id}):`, error);
       throw error;
     }
   },
 
-  /**
-   * 批量操作
-   */
   async batchOperation(operation: string, documentIds: string[]): Promise<void> {
     try {
       await apiClient.post('/documents/batch', {
@@ -115,8 +122,9 @@ export const documentService = {
         document_ids: documentIds,
       });
     } catch (error) {
-      console.error(`批量操作失败 (${operation}):`, error);
+      console.error(`Failed to run batch operation (${operation}):`, error);
       throw error;
     }
   },
 };
+

@@ -1,11 +1,13 @@
 """
-Document management API routes.
+Document management and authenticated download routes.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -15,18 +17,10 @@ from starlette.background import BackgroundTask
 from app.core.config import settings
 from app.core.security import require_authenticated_admin, require_system_api_key
 from app.models.document_models import DocumentMetadata
+from app.services.document_asset_service import DocumentAssetService
 from app.services.document_service import DocumentService
 
 router = APIRouter(dependencies=[Depends(require_authenticated_admin)])
-
-
-class DocumentInfo(BaseModel):
-    id: str
-    title: str
-    file_type: str
-    size: int
-    upload_time: str
-    metadata: Optional[dict] = None
 
 
 class UploadResponse(BaseModel):
@@ -50,6 +44,35 @@ class PresignedResponse(BaseModel):
     access_url: str
 
 
+class DocumentFileInfo(BaseModel):
+    type: str
+    size: int
+    upload_time: datetime
+    filename: Optional[str] = None
+    mime_type: Optional[str] = None
+
+
+class StandardInfo(BaseModel):
+    code: str
+    release_date: Optional[datetime] = None
+    implement_date: Optional[datetime] = None
+    draft_unit: Optional[str] = None
+    keyword: Optional[str] = None
+    status: Optional[str] = None
+
+
+class DocumentDetailResponse(BaseModel):
+    id: str
+    title: str
+    content: str
+    metadata: Dict[str, Any]
+    spatial_info: Optional[Dict[str, Any]] = None
+    file_info: DocumentFileInfo
+    standard_info: Optional[StandardInfo] = None
+    download_available: bool = False
+    download_url: Optional[str] = None
+
+
 def _raise_validation_error(exc: ValueError) -> None:
     message = str(exc)
     if "max upload size" in message.lower():
@@ -57,6 +80,12 @@ def _raise_validation_error(exc: ValueError) -> None:
     if "extension" in message.lower() or "content-type" in message.lower():
         raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=message) from exc
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message) from exc
+
+
+def _build_content_disposition(filename: str) -> str:
+    quoted = quote(filename)
+    safe_ascii = filename.encode("ascii", errors="ignore").decode("ascii") or "document"
+    return f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{quoted}'
 
 
 async def _read_upload_with_limit(file: UploadFile) -> bytes:
@@ -68,7 +97,6 @@ async def _read_upload_with_limit(file: UploadFile) -> bytes:
         chunk = await file.read(1024 * 1024)
         if not chunk:
             break
-
         total_size += len(chunk)
         if total_size > max_size:
             raise HTTPException(
@@ -150,9 +178,7 @@ async def upload_document(
         ) from exc
 
 
-@router.get(
-    "/download/{object_name}",
-)
+@router.get("/download/{object_name:path}")
 async def download_document_object(
     object_name: str,
     document_service: DocumentService = Depends(DocumentService),
@@ -164,7 +190,7 @@ async def download_document_object(
             media_type=download_data["content_type"],
             background=BackgroundTask(download_data["stream"].close),
             headers={
-                "Content-Disposition": f"attachment; filename=\"{download_data['object_name']}\"",
+                "Content-Disposition": _build_content_disposition(download_data["object_name"]),
                 "Cache-Control": "private, max-age=60",
             },
         )
@@ -177,12 +203,44 @@ async def download_document_object(
         ) from exc
 
 
+@router.get("/{doc_id}/download")
+async def download_document_by_id(
+    doc_id: str,
+    document_service: DocumentService = Depends(DocumentService),
+    asset_service: DocumentAssetService = Depends(DocumentAssetService),
+):
+    download_target = await asset_service.get_download_target(doc_id)
+    if not download_target:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No downloadable original file is available for this document.",
+        )
+
+    try:
+        download_data = document_service.get_download_stream(download_target["object_name"])
+        return StreamingResponse(
+            download_data["stream"].stream(32 * 1024),
+            media_type=download_target["content_type"],
+            background=BackgroundTask(download_data["stream"].close),
+            headers={
+                "Content-Disposition": _build_content_disposition(download_target["filename"]),
+                "Cache-Control": "private, max-age=60",
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Failed to download original file: {exc}",
+        ) from exc
+
+
 @router.get("/list")
 async def list_documents(
     page: int = Query(1, description="Page number."),
     page_size: int = Query(20, description="Page size."),
     file_type: Optional[str] = Query(None, description="File type filter."),
 ):
+    _ = file_type
     return {
         "page": page,
         "page_size": page_size,
@@ -251,16 +309,15 @@ async def get_document_statistics():
     }
 
 
-@router.get("/{doc_id}")
-async def get_document_info(doc_id: str):
-    return {
-        "id": doc_id,
-        "title": "example-document",
-        "file_type": "pdf",
-        "size": 102400,
-        "upload_time": "2024-01-01T10:00:00",
-        "metadata": {},
-    }
+@router.get("/{doc_id}", response_model=DocumentDetailResponse)
+async def get_document_info(
+    doc_id: str,
+    asset_service: DocumentAssetService = Depends(DocumentAssetService),
+):
+    detail = await asset_service.get_document_detail_payload(doc_id)
+    if not detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    return DocumentDetailResponse(**detail)
 
 
 @router.delete("/{doc_id}", dependencies=[Depends(require_system_api_key)])

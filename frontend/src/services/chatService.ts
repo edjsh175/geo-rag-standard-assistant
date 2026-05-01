@@ -1,5 +1,12 @@
 import { apiClient } from '../lib/api/config';
-import type { ChatMessage, ChatRequest, ChatResponse, DocumentResult, SearchResponse } from '../types/api';
+import type {
+  ChatMessage,
+  ChatRequest,
+  ChatResponse,
+  DocumentResult,
+  FollowUpContext,
+  SearchResponse,
+} from '../types/api';
 
 /**
  * 聊天服务
@@ -13,7 +20,8 @@ export const chatService = {
     message: string,
     conversationId?: string,
     history: Array<{ role: string; content: string }> = [],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
       // 方法1: 如果后端有专门的聊天端点
@@ -28,6 +36,7 @@ export const chatService = {
         use_generation: true,
         search_mode: 'semantic' as const,
         history: history,
+        follow_up_context: followUpContext,
       };
 
       const response = await apiClient.post<SearchResponse>('/search/query', searchRequest, {
@@ -100,12 +109,13 @@ export const chatService = {
     message: string,
     conversationId?: string,
     onChunk?: (chunk: string) => void,
-    history: Array<{ role: string; content: string }> = []
+    history: Array<{ role: string; content: string }> = [],
+    followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
       // TODO: 实现WebSocket或SSE流式响应
       // 目前使用普通请求
-      return await this.sendMessage(message, conversationId, history, undefined);
+      return await this.sendMessage(message, conversationId, history, undefined, followUpContext);
     } catch (error) {
       console.error('流式聊天失败:', error);
       return {
@@ -121,7 +131,7 @@ export const chatService = {
    * 简单聊天（快捷方法）
    */
   async quickChat(message: string): Promise<{ answer: string; references: DocumentResult[] }> {
-    const response = await this.sendMessage(message, undefined, [], undefined);
+    const response = await this.sendMessage(message, undefined, [], undefined, undefined);
     return {
       answer: response.message,
       references: response.references || [],

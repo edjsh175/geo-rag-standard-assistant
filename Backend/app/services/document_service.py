@@ -45,6 +45,7 @@ ALLOWED_EXTENSION_MIME_MAP = {
 
 GENERIC_ALLOWED_MIME_TYPES = {"application/octet-stream"}
 INVALID_FILENAME_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
+INVALID_OBJECT_NAME_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class DocumentService:
@@ -97,6 +98,21 @@ class DocumentService:
             raise ValueError("Filename must not contain path separators.")
         if len(normalized) > 255:
             raise ValueError("Filename is too long.")
+        return normalized
+
+    def _normalize_object_name(self, object_name: str) -> str:
+        normalized = (object_name or "").strip().replace("\\", "/")
+        normalized = re.sub(r"/+", "/", normalized).lstrip("/")
+        if not normalized:
+            raise ValueError("Object name is required.")
+        if INVALID_OBJECT_NAME_PATTERN.search(normalized):
+            raise ValueError("Object name contains control characters.")
+
+        segments = normalized.split("/")
+        if any(segment in {"", ".", ".."} for segment in segments):
+            raise ValueError("Object name contains invalid path segments.")
+        if len(normalized) > 1024:
+            raise ValueError("Object name is too long.")
         return normalized
 
     def _validate_upload_request(self, filename: str, content_type: str, file_size: int) -> str:
@@ -201,7 +217,7 @@ class DocumentService:
 
     def get_download_stream(self, object_name: str):
         self._require_private_bucket()
-        normalized_object_name = self._normalize_filename(object_name)
+        normalized_object_name = self._normalize_object_name(object_name)
         response = self.minio_client.get_object(self.bucket_name, normalized_object_name)
         guessed_content_type = mimetypes.guess_type(normalized_object_name)[0] or "application/octet-stream"
         return {
