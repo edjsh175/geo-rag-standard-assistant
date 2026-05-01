@@ -84,6 +84,61 @@ DOCUMENT_FOLLOW_UP_SUMMARY_HINTS = (
 )
 
 
+COMMON_GREETING_QUERIES = {
+    "你好", "您好", "hello", "hi", "hey", "嗨",
+    "早上好", "下午好", "晚上好", "晚安",
+    "在吗", "有人吗", "你好呀", "您好呀",
+    "hello there", "hi there", "哈喽", "哈啰", "嘿",
+}
+
+DIALOG_MANAGEMENT_HINTS = (
+    "上一个问题",
+    "上一条",
+    "上一轮",
+    "刚才的问题",
+    "刚才的回答",
+    "重复一下",
+    "总结一下我们刚才",
+    "我们刚才在讨论什么",
+    "我刚刚问了什么",
+)
+
+CASUAL_CHAT_HINTS = (
+    "闲聊",
+    "聊天",
+    "聊聊",
+    "随便聊",
+    "你是谁",
+    "介绍一下你自己",
+    "你能做什么",
+    "你会什么",
+    "讲个笑话",
+    "今天天气",
+    "天气怎么样",
+    "现在几点",
+)
+
+PLACEHOLDER_SUMMARY_VALUES = {
+    "",
+    "无",
+    "暂无",
+    "未提供",
+    "none",
+    "null",
+    "n/a",
+    "-",
+    "/",
+}
+
+
+def _normalize_query_text(query: str) -> str:
+    cleaned_query = query.strip().lower()
+    punct_set = set("。，！？；：、“”‘’、（）【】《》,.!?;:\"'`~!@#$%^&*()-_=+[]{}|\\/<>")
+    for punct in punct_set:
+        cleaned_query = cleaned_query.replace(punct, "")
+    return cleaned_query
+
+
 def _region_aliases(name: str) -> List[str]:
     aliases = {
         name,
@@ -1015,7 +1070,12 @@ class SearchService:
         standard_info = document_detail.get("standard_info") or {}
         content = str(document_detail.get("content") or "").strip()
         evidence_lines = self._extract_content_evidence(content)
-        summary_source = metadata.get("description") or (content[:160] if content else "")
+        raw_summary_source = metadata.get("description")
+        summary_source = re.sub(r"\s+", " ", str(raw_summary_source or "")).strip()
+        if summary_source.lower() in PLACEHOLDER_SUMMARY_VALUES:
+            summary_source = ""
+        if not summary_source and content:
+            summary_source = content[:160]
         summary_source = re.sub(r"\s+", " ", str(summary_source)).strip()
         summary_source = summary_source[:180] if summary_source else "该文档内容中可提取的信息有限。"
 
@@ -1408,3 +1468,64 @@ class SearchService:
             # 返回友好的备用回复
             backup_response = "您好！我是 GeoAI 空间规划智能助手，专门为您提供国土空间规划、测绘标准、地理信息相关的政策法规查询服务。请问有什么可以帮助您的吗？"
             return backup_response, 0.0
+
+    def _detect_rule_based_intent(self, query: str) -> Optional[str]:
+        cleaned_query = _normalize_query_text(query)
+        compact_query = re.sub(r"\s+", "", cleaned_query)
+
+        if not compact_query:
+            return "other"
+
+        if cleaned_query in COMMON_GREETING_QUERIES or compact_query in COMMON_GREETING_QUERIES:
+            return "greeting"
+
+        if any(hint in compact_query for hint in DIALOG_MANAGEMENT_HINTS):
+            return "dialog_management"
+
+        if any(hint in compact_query for hint in CASUAL_CHAT_HINTS):
+            return "other"
+
+        return None
+
+    async def detect_intent(self, query: str) -> str:
+        """Detect user intent for search, follow-up, chitchat, and dialog-management turns."""
+        rule_based_intent = self._detect_rule_based_intent(query)
+        if rule_based_intent:
+            logger.info("Rule-based intent detected for query=%r: %s", query, rule_based_intent)
+            return rule_based_intent
+
+        try:
+            system_prompt = """
+            你是一个意图分类器，负责判断用户输入的意图。
+            请将用户输入分类为以下五种意图之一：
+            1. "search" - 用户想要搜索或查询地理信息、测绘、国土空间规划相关的标准、规范、文档、政策等
+            2. "greeting" - 用户只是在打招呼、问候、寒暄
+            3. "clarification" - 用户在对之前的对话进行追问、澄清、细化
+            4. "dialog_management" - 用户在询问对话本身，例如上一条问题、刚才讨论内容、重复回答等
+            5. "other" - 其他非检索闲聊或无关问题
+
+            只返回意图类别字符串，不要有任何解释或额外文本。
+            """
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query},
+            ]
+
+            intent = await llm_config.chat_completion(
+                messages=messages,
+                temperature=0.1,
+                max_tokens=20,
+            )
+            intent = intent.strip().lower()
+
+            valid_intents = {"search", "greeting", "clarification", "dialog_management", "other"}
+            if intent in valid_intents:
+                logger.info("LLM intent detected for query=%r: %s", query, intent)
+                return intent
+
+            logger.warning("Invalid intent returned by model for query=%r: %r", query, intent)
+            return "search"
+        except Exception as exc:
+            logger.error("Intent detection failed for query=%r: %s", query, exc)
+            return "search"
