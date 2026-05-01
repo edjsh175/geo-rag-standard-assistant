@@ -53,7 +53,6 @@ const Chat: React.FC<ChatProps> = ({
   }, [isLoading, isAutoScrollLocked, scrollToBottom]);
 
   const displayQuickTags = [
-    '#人工智能识别预警',
     '#土地整治与利用',
     '#地裂缝监测预警',
     '#应急避险与处置',
