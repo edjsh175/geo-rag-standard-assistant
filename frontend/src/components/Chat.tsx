@@ -53,11 +53,9 @@ const Chat: React.FC<ChatProps> = ({
   }, [isLoading, isAutoScrollLocked, scrollToBottom]);
 
   const displayQuickTags = [
+    '#人工智能',
+    '#土地整治',
     '#滑坡隐患',
-    '#泥石流治理',
-    '#崩塌风险区',
-    '#地裂缝监测',
-    '#地面沉降预警',
     '#应急避险',
   ];
 
