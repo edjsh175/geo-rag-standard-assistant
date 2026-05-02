@@ -227,9 +227,23 @@
 .prose p { margin: 0.5em 0; }
 .prose ul, .prose ol { padding-left: 1.25em; margin: 0.4em 0; }
 .prose li { margin: 0.25em 0; }
+.prose blockquote {
+  margin: 0.7em 0;
+  padding: 0.55em 0.85em;
+  border-left: 2px solid rgba(240, 112, 64, 0.35);
+  border-radius: 0 10px 10px 0;
+  background: rgba(148, 163, 184, 0.08);
+  color: rgba(214, 223, 232, 0.78);
+  font-size: 0.83rem;
+  line-height: 1.6;
+}
+.prose blockquote p {
+  margin: 0;
+}
 .prose h1, .prose h2, .prose h3 { color: var(--color-on-background); font-family: var(--font-headline); margin-top: 1em; margin-bottom: 0.5em; }
 .prose p,
 .prose li,
+.prose blockquote,
 .prose strong,
 .prose h1,
 .prose h2,

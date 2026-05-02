@@ -231,5 +231,6 @@ def test_build_document_follow_up_fallback_answer_uses_document_content() -> Non
     )
 
     assert "DB37_T 4798-2024" in answer
+    assert "> " in answer
     assert "依据1" in answer
     assert "报告编制要求" in answer or "建设边界约束条件" in answer

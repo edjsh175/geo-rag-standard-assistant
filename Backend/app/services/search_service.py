@@ -1060,6 +1060,27 @@ class SearchService:
 
         return [normalized[:120]]
 
+    def _normalize_evidence_blockquotes(self, answer: str) -> str:
+        """Render evidence lines as Markdown blockquotes for softer citation styling."""
+        if not answer:
+            return answer
+
+        normalized_lines: List[str] = []
+        for raw_line in answer.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                normalized_lines.append(raw_line)
+                continue
+
+            if re.match(r"^>?\s*依据\d+[：:]", stripped):
+                quote_body = re.sub(r"^>?\s*", "", stripped, count=1)
+                normalized_lines.append(f"> {quote_body}")
+                continue
+
+            normalized_lines.append(raw_line)
+
+        return "\n".join(normalized_lines)
+
     def build_document_follow_up_fallback_answer(
         self,
         query: str,
@@ -1090,7 +1111,7 @@ class SearchService:
             f"依据{i}：{evidence}"
             for i, evidence in enumerate(evidence_lines, start=1)
         )
-        return f"{header}\n{evidence_text}"
+        return self._normalize_evidence_blockquotes(f"{header}\n{evidence_text}")
 
     async def generate_document_follow_up_answer(
         self,
@@ -1119,6 +1140,11 @@ class SearchService:
 目标文档:
 {document_context}
 """
+        system_prompt += (
+            "\nAdditional formatting rule:\n"
+            "- Format every evidence line as a Markdown blockquote, for example `> 依据1：……`.\n"
+            "- Do not write evidence lines as normal body paragraphs.\n"
+        )
 
         messages = [{"role": "system", "content": system_prompt}]
         if truncated_history:
@@ -1132,7 +1158,7 @@ class SearchService:
                 max_tokens=900,
             )
             generation_time = (datetime.now() - start_time).total_seconds()
-            return answer, generation_time
+            return self._normalize_evidence_blockquotes(answer), generation_time
         except Exception as exc:
             logger.warning(
                 "Document follow-up answer generation failed, using deterministic fallback: %s",
@@ -1140,7 +1166,7 @@ class SearchService:
             )
             answer = self.build_document_follow_up_fallback_answer(query, document_detail)
             generation_time = (datetime.now() - start_time).total_seconds()
-            return answer, generation_time
+            return self._normalize_evidence_blockquotes(answer), generation_time
 
     async def generate_answer(
         self,
