@@ -56,6 +56,9 @@
   --border-variant: rgba(255, 255, 255, 0.04);
   --glass-bg: rgba(16, 16, 20, 0.55);
   --glass-bg-light: rgba(22, 22, 28, 0.45);
+  --quote-bg: rgba(148, 163, 184, 0.08);
+  --quote-text: rgba(226, 232, 240, 0.84);
+  --quote-border: rgba(240, 112, 64, 0.35);
 }
 
 :root[data-theme='light'] {
@@ -74,6 +77,9 @@
   --border-variant: rgba(0, 0, 0, 0.04);
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-bg-light: rgba(255, 255, 255, 0.5);
+  --quote-bg: rgba(240, 112, 64, 0.10);
+  --quote-text: rgba(92, 64, 52, 0.96);
+  --quote-border: rgba(240, 112, 64, 0.48);
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━ Base ━━━━━━━━━━━━━━━━━━━━ */
@@ -230,10 +236,10 @@
 .prose blockquote {
   margin: 0.7em 0;
   padding: 0.55em 0.85em;
-  border-left: 2px solid rgba(240, 112, 64, 0.35);
+  border-left: 2px solid var(--quote-border);
   border-radius: 0 10px 10px 0;
-  background: rgba(148, 163, 184, 0.08);
-  color: rgba(214, 223, 232, 0.78);
+  background: var(--quote-bg);
+  color: var(--quote-text);
   font-size: 0.83rem;
   line-height: 1.6;
 }
