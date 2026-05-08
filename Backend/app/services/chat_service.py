@@ -11,6 +11,7 @@ import logging
 import re
 from typing import Any, Dict, List, Literal, Optional
 
+from app.core.config import settings
 from app.core.llm_config import llm_config
 from app.models.chat_models import ChatRequest, ChatResponse, ChatToolTrace
 from app.models.search_models import FollowUpContext
@@ -52,6 +53,44 @@ SEARCH_INTENT_HINTS = (
     "红线",
     "基本农田",
     "文档",
+)
+IDENTITY_HINTS = (
+    "你是谁",
+    "介绍下你自己",
+    "介绍一下你自己",
+    "介绍你自己",
+    "你是做什么的",
+    "你是什么",
+    "deepseek是你吗",
+    "你是deepseek吗",
+    "你是不是deepseek",
+)
+CAPABILITY_HINTS = (
+    "你能做什么",
+    "你会什么",
+    "可以做什么",
+    "产品能力",
+    "支持什么",
+    "能帮我做什么",
+)
+MODEL_HINTS = (
+    "现在用什么模型",
+    "你现在用什么模型",
+    "当前用什么模型",
+    "当前是什么模型",
+    "你背后是什么模型",
+    "你是哪个模型",
+    "用的什么模型",
+    "deepseek是你吗",
+    "你是deepseek吗",
+)
+PROMPT_HINTS = (
+    "预置提示词",
+    "系统提示词",
+    "提示词",
+    "prompt",
+    "预设",
+    "人设",
 )
 
 
@@ -135,16 +174,15 @@ class ChatService:
         candidate_text = json.dumps([doc.model_dump() for doc in candidate_documents], ensure_ascii=False)
 
         system_prompt = """
-你是 GeoAI 聊天编排器。你的任务是决定这轮消息是否需要调用 `search_documents` 工具。
+你是 GeoAI 聊天路由器。你的任务是判断当前消息是否需要调用 `search_documents` 工具。
 
 规则：
-1. 只有当用户明确在查询标准、规范、政策、条文、定义、适用范围、强制性要求，或需要文档依据时，才使用 search_documents。
-2. 如果用户是在闲聊、寒暄、询问产品能力、要求总结当前对话、重复上一条回答、解释刚才的表达方式，不要使用 search_documents。
+1. 只有当用户明确在查询标准、规范、政策、条文、定义、适用范围、强制性要求，或明确需要文档依据时，才使用 search_documents。
+2. 如果用户是在闲聊、寒暄、询问产品能力、问当前模型、问你是谁、要求总结当前对话、重复上一条回答、解释刚才的表达方式，不要使用 search_documents。
 3. 如果用户在追问上一轮文档，且已经有 follow_up_context，可将 use_follow_up_document 设为 true。
 4. 如果不需要检索，也不要假装已经查库。
 
-只返回 JSON，不要返回 Markdown 代码块，不要解释。
-JSON 结构：
+只返回 JSON，不要返回 Markdown 代码块，不要解释。JSON 结构：
 {
   "intent": "search|dialog_management|greeting|other|product_qa",
   "use_search_tool": true,
@@ -155,8 +193,7 @@ JSON 结构：
 """
 
         user_prompt = f"""
-当前用户消息：
-{query}
+当前用户消息：{query}
 
 最近对话（截断）：
 {history_text}
@@ -189,22 +226,32 @@ JSON 结构：
         intent: str,
         history: Optional[List[Dict[str, str]]] = None,
     ) -> str:
+        direct_product_answer = self._build_direct_product_answer(query)
+        if direct_product_answer is not None:
+            return direct_product_answer
+
         truncated_history = self.search_service._truncate_history(history)
-        system_prompt = """
-你是 GeoAI 空间规划智能助手。
-当前这轮对话不允许检索文档库，也不要声称你已经查库。
+        system_prompt = f"""
+你是 GeoAI 空间规划智能助手。当前这轮对话不允许检索文档库，也不要假装已经查库。
 
-你可以处理：
-- 闲聊和寒暄
+当前运行配置：
+- 对话模型：{self._get_chat_model_name()}
+- 向量检索模型：{settings.EMBEDDING_MODEL}
+
+你可以直接处理：
+- 打招呼和简短闲聊
+- 自我介绍
 - 产品能力说明
-- 对当前对话的简短解释
-- 不要求文档依据的简短说明
+- 当前使用模型说明
+- 预置提示词或回答策略的概括说明
+- 对当前对话内容的简短解释
 
-回复要求：
-1. 用中文回答，1 到 4 句。
-2. 语气自然、专业、克制。
-3. 如果用户后续需要标准依据，可以提醒他继续提供标准主题、编号或文档名称。
-4. 不要输出“已检索到相关标准”或“未在库中检索到相关标准规定”。
+回答要求：
+1. 用中文回答，1 到 4 句，优先直接回答用户问题，不要回避。
+2. 如果用户在问“你是谁、你能做什么、现在用什么模型、deepseek是你吗、提示词是什么样的”，要明确作答，不要只把用户引回检索。
+3. 可以说明当前对话回答由 {self._get_chat_model_name()} 生成，检索阶段使用 {settings.EMBEDDING_MODEL}。
+4. 如果后续确实需要文档依据，再提醒用户提供标准主题、编号或文档名称。
+5. 不要输出“已检索到相关标准”或“未在库中检索到相关标准规定”这类与当前轮次不符的话。
 """
 
         try:
@@ -379,6 +426,13 @@ JSON 结构：
                 reason="Fallback routing preserved explicit follow-up document context.",
             )
 
+        if self._build_direct_product_answer(query) is not None:
+            return ChatToolDecision(
+                intent="product_qa",
+                use_search_tool=False,
+                reason="Fallback routing detected product or model question.",
+            )
+
         rule_based_intent = getattr(self.search_service, "_detect_rule_based_intent", None)
         if callable(rule_based_intent):
             intent = rule_based_intent(query)
@@ -395,7 +449,7 @@ JSON 结构：
                     reason="Fallback routing detected non-search wording.",
                 )
 
-        compact_query = re.sub(r"\s+", "", query or "")
+        compact_query = self._normalize_compact_query(query)
         if any(hint in compact_query for hint in SEARCH_INTENT_HINTS):
             return ChatToolDecision(
                 intent="search",
@@ -411,14 +465,57 @@ JSON 结构：
         )
 
     def _fallback_non_search_response(self, query: str, intent: str) -> str:
-        compact_query = re.sub(r"\s+", "", query or "")
+        direct_product_answer = self._build_direct_product_answer(query)
+        if direct_product_answer is not None:
+            return direct_product_answer
+
+        compact_query = self._normalize_compact_query(query)
         if intent == "dialog_management":
             return "可以继续追问上一轮内容，或者让我重复、总结刚才的对话。"
-        if "你能做什么" in compact_query or "可以做什么" in compact_query or "你是谁" in compact_query:
-            return "我可以陪你简短交流，也可以在需要时检索标准规范、定位到具体文档，并继续追问某份文档的内容。"
         if intent == "greeting" or "闲聊" in compact_query or "聊天" in compact_query:
             return "可以。你可以直接和我聊，也可以随时切回标准检索、文档追问或空间规划相关问题。"
         return "可以继续问我产品能力、当前对话内容，或者在需要文档依据时直接给我标准主题、编号或文档名称。"
+
+    def _get_chat_model_name(self) -> str:
+        if settings.LLM_PROVIDER == "deepseek":
+            return settings.DEEPSEEK_MODEL
+        if settings.LLM_PROVIDER == "zhipu":
+            return settings.ZHIPU_MODEL
+        return settings.OPENAI_MODEL
+
+    def _normalize_compact_query(self, query: str) -> str:
+        return re.sub(r"\s+", "", query or "").lower()
+
+    def _build_direct_product_answer(self, query: str) -> Optional[str]:
+        compact_query = self._normalize_compact_query(query)
+        chat_model = self._get_chat_model_name()
+        embedding_model = settings.EMBEDDING_MODEL
+
+        if any(hint in compact_query for hint in PROMPT_HINTS):
+            return (
+                f"当前这条聊天链路的预置策略大致是两步：先判断这轮是否需要文档检索；如果只是闲聊、产品能力、"
+                f"自我介绍或对话管理，就直接回答，不假装查库。当前对话生成模型是 {chat_model}，检索向量模型是 {embedding_model}。"
+            )
+
+        if any(hint in compact_query for hint in IDENTITY_HINTS):
+            return (
+                f"我是 GeoAI 空间规划智能助手，不是单独的 DeepSeek 产品页面；不过当前这条对话回答链路确实使用 "
+                f"{chat_model} 生成。我的职责是帮你做空间规划相关的闲聊问答、文档检索、文档追问和区域协同分析。"
+            )
+
+        if any(hint in compact_query for hint in MODEL_HINTS):
+            return (
+                f"当前聊天回答由 {chat_model} 生成；如果问题需要检索文档，会先用 {embedding_model} 做向量召回，"
+                f"再基于检索结果组织答案。"
+            )
+
+        if any(hint in compact_query for hint in CAPABILITY_HINTS):
+            return (
+                f"我可以做四类事：一是回答产品和对话相关问题；二是检索空间规划标准、政策和文档；三是围绕某份文档继续追问；"
+                f"四是结合区域上下文组织回答。当前回答模型是 {chat_model}，检索向量模型是 {embedding_model}。"
+            )
+
+        return None
 
     def _build_search_results_fallback_answer(self, results: List[Any]) -> str:
         top_results = results[:3]
