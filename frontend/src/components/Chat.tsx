@@ -62,8 +62,10 @@ const Chat: React.FC<ChatProps> = ({
     if (!inputValue.trim() || isLoading || disabled) return;
     onInputChange('');
     const messageToSend = inputValue;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
     await onSendMessage(messageToSend);
-    inputRef.current?.focus();
   }, [inputValue, isLoading, disabled, onSendMessage, onInputChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -174,7 +176,7 @@ const Chat: React.FC<ChatProps> = ({
             onBlur={e => { e.currentTarget.style.border = 'var(--color-outline)'; e.currentTarget.style.boxShadow = 'none'; }}
             placeholder="输入规划指令或搜索关键词..."
             type="text"
-            disabled={disabled || isLoading}
+            disabled={disabled}
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
             <button className="w-6 h-6 flex items-center justify-center rounded-lg transition-all" style={{ color: 'rgba(255,255,255,0.25)' }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,112,64,0.7)'; }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; }}>
