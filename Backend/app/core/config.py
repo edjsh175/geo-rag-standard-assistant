@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     VECTOR_DB_TYPE: str = "pgvector"
     PG_VECTOR_DIMENSION: int = 2048
 
-    LLM_PROVIDER: str = "openai"
+    LLM_PROVIDER: str = "deepseek"
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4-turbo-preview"
