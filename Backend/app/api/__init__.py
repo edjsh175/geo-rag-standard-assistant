@@ -4,13 +4,11 @@ GeoAI API route registration.
 
 from fastapi import APIRouter
 
-from . import auth_routes, chat_routes, document_routes, search_routes, spatial_routes, system_routes
+from . import auth_routes, document_routes, search_routes, spatial_routes, system_routes
 
 router = APIRouter()
 
 router.include_router(auth_routes.router, prefix="/auth", tags=["认证"])
-router.include_router(chat_routes.public_router, prefix="/chat", tags=["聊天"])
-router.include_router(chat_routes.router, prefix="/chat", tags=["聊天"])
 router.include_router(search_routes.public_router, prefix="/search", tags=["智能检索"])
 router.include_router(search_routes.router, prefix="/search", tags=["智能检索"])
 router.include_router(spatial_routes.router, prefix="/spatial", tags=["空间分析"])

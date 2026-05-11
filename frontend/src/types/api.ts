@@ -95,20 +95,11 @@ export interface ChatMessage {
   timestamp?: string;
 }
 
-export interface ChatToolTrace {
-  tool_name: string;
-  used: boolean;
-  reason?: string;
-  query?: string;
-  result_count?: number;
-}
-
 export interface ChatRequest {
   message: string;
   conversation_id?: string;
-  history?: Array<{ role: string; content: string }>;
-  follow_up_context?: FollowUpContext;
-  top_k?: number;
+  use_context?: boolean;
+  max_tokens?: number;
 }
 
 export interface ChatResponse {
@@ -116,8 +107,6 @@ export interface ChatResponse {
   conversation_id: string;
   references?: DocumentResult[];
   timestamp: string;
-  tool_trace?: ChatToolTrace[];
-  mode?: 'direct' | 'search' | 'follow_up';
 }
 
 export interface DocumentDetail {
