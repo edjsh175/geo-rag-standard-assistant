@@ -1,0 +1,38 @@
+# VCS and editor artifacts
+.git
+.gitignore
+.vscode
+.idea
+
+# Secrets and local env files
+.env
+.env.*
+!.env.example
+Backend/.env
+Backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Python virtual environments and caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node/build artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# Logs and backups
+logs/
+*.log
+*.backup
+
+# Local data and temp assets
+data/
+tmp/
+temp/

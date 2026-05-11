@@ -3,18 +3,154 @@
 """
 
 import logging
+import re
 import string
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from app.core.llm_config import llm_config
 from app.core.database import db_manager
+from app.services.document_asset_service import DocumentAssetService
 from sqlalchemy import text
 from app.models.search_models import (
-    DocumentResult, SpatialFilter, MetadataFilter
+    DocumentResult, FollowUpContext, MetadataFilter, SpatialFilter
 )
 
 logger = logging.getLogger(__name__)
+
+PROVINCE_STANDARD_PREFIXES = {
+    "北京市": "DB11",
+    "天津市": "DB12",
+    "河北省": "DB13",
+    "山西省": "DB14",
+    "内蒙古自治区": "DB15",
+    "辽宁省": "DB21",
+    "吉林省": "DB22",
+    "黑龙江省": "DB23",
+    "上海市": "DB31",
+    "江苏省": "DB32",
+    "浙江省": "DB33",
+    "安徽省": "DB34",
+    "福建省": "DB35",
+    "江西省": "DB36",
+    "山东省": "DB37",
+    "河南省": "DB41",
+    "湖北省": "DB42",
+    "湖南省": "DB43",
+    "广东省": "DB44",
+    "广西壮族自治区": "DB45",
+    "海南省": "DB46",
+    "重庆市": "DB50",
+    "四川省": "DB51",
+    "贵州省": "DB52",
+    "云南省": "DB53",
+    "西藏自治区": "DB54",
+    "陕西省": "DB61",
+    "甘肃省": "DB62",
+    "青海省": "DB63",
+    "宁夏回族自治区": "DB64",
+    "新疆维吾尔自治区": "DB65",
+}
+
+QUERY_STOP_WORDS = {
+    "查一下", "查询", "检索", "有哪些", "哪些", "相关", "标准", "规范",
+    "一下", "请", "的", "有", "吗", "？", "?", "和", "与",
+}
+
+STANDARD_CODE_QUERY_PATTERN = re.compile(
+    r"""
+    (?P<code>
+        [A-Z]{1,6}\d{0,4}
+        (?:\s*[/_]\s*[A-Z])?
+        (?:\s*[-_/]?\s*\d+(?:\.\d+)*)+
+        \s*[-—]\s*\d{4}
+    )
+    """,
+    re.VERBOSE,
+)
+COMPACT_STANDARD_CODE_PATTERN = re.compile(r"^[A-Z]{2,10}\d{6,}$")
+DOCUMENT_FOLLOW_UP_SUMMARY_HINTS = (
+    "主要内容",
+    "讲了什么",
+    "主要讲",
+    "核心要求",
+    "主要要求",
+    "适用范围",
+    "总结",
+    "概述",
+    "摘要",
+    "重点",
+    "说了什么",
+)
+
+
+COMMON_GREETING_QUERIES = {
+    "你好", "您好", "hello", "hi", "hey", "嗨",
+    "早上好", "下午好", "晚上好", "晚安",
+    "在吗", "有人吗", "你好呀", "您好呀",
+    "hello there", "hi there", "哈喽", "哈啰", "嘿",
+}
+
+DIALOG_MANAGEMENT_HINTS = (
+    "上一个问题",
+    "上一条",
+    "上一轮",
+    "刚才的问题",
+    "刚才的回答",
+    "重复一下",
+    "总结一下我们刚才",
+    "我们刚才在讨论什么",
+    "我刚刚问了什么",
+)
+
+CASUAL_CHAT_HINTS = (
+    "闲聊",
+    "聊天",
+    "聊聊",
+    "随便聊",
+    "你是谁",
+    "介绍一下你自己",
+    "你能做什么",
+    "你会什么",
+    "讲个笑话",
+    "今天天气",
+    "天气怎么样",
+    "现在几点",
+)
+
+PLACEHOLDER_SUMMARY_VALUES = {
+    "",
+    "无",
+    "暂无",
+    "未提供",
+    "none",
+    "null",
+    "n/a",
+    "-",
+    "/",
+}
+
+
+def _normalize_query_text(query: str) -> str:
+    cleaned_query = query.strip().lower()
+    punct_set = set("。，！？；：、“”‘’、（）【】《》,.!?;:\"'`~!@#$%^&*()-_=+[]{}|\\/<>")
+    for punct in punct_set:
+        cleaned_query = cleaned_query.replace(punct, "")
+    return cleaned_query
+
+
+def _region_aliases(name: str) -> List[str]:
+    aliases = {
+        name,
+        name.removesuffix("省"),
+        name.removesuffix("市"),
+        name.removesuffix("特别行政区"),
+        name.removesuffix("壮族自治区"),
+        name.removesuffix("回族自治区"),
+        name.removesuffix("维吾尔自治区"),
+        name.removesuffix("自治区"),
+    }
+    return [alias for alias in aliases if alias]
 
 
 class SearchService:
@@ -107,12 +243,33 @@ class SearchService:
 
             # 1. 获取查询的向量嵌入
             query_embedding = await self._get_query_embedding(query)
+            exact_standard_code_results = await self._exact_standard_code_search(
+                query=query,
+                top_k=top_k * 2,
+            )
 
             # 2. 向量相似度搜索
             vector_results = await self._vector_search(
                 query_embedding=query_embedding,
                 top_k=top_k * 2,  # 获取更多结果用于后续过滤
                 threshold=threshold
+            )
+
+            keyword_results = await self._keyword_search(
+                query=query,
+                top_k=top_k * 2,
+            )
+
+            keyword_results = self._merge_and_dedupe_results(
+                exact_standard_code_results,
+                keyword_results,
+                top_k=top_k * 3,
+            )
+
+            vector_results = self._merge_and_dedupe_results(
+                keyword_results,
+                vector_results,
+                top_k=top_k * 2,
             )
 
             # 3. 应用空间过滤器
@@ -148,6 +305,255 @@ class SearchService:
         except Exception as e:
             logger.error(f"检索失败: {e}", exc_info=True)
             raise
+
+    def _extract_keyword_terms(self, query: str) -> List[str]:
+        """从自然语言查询中提取适合数据库 LIKE 检索的关键词。"""
+        compact_query = re.sub(r"\s+", "", query)
+        terms: List[str] = []
+
+        for region_name, standard_prefix in PROVINCE_STANDARD_PREFIXES.items():
+            matched_aliases = [alias for alias in _region_aliases(region_name) if alias in compact_query]
+            if matched_aliases:
+                terms.extend([*matched_aliases, standard_prefix])
+
+        cleaned = compact_query
+        for word in QUERY_STOP_WORDS:
+            cleaned = cleaned.replace(word, "")
+
+        for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{2,}", cleaned):
+            if token and token not in QUERY_STOP_WORDS:
+                terms.append(token)
+
+        deduped_terms: List[str] = []
+        for term in terms:
+            if term not in deduped_terms:
+                deduped_terms.append(term)
+        return deduped_terms[:6]
+
+    async def _keyword_search(self, query: str, top_k: int) -> List[DocumentResult]:
+        """关键词兜底检索，用于地区编号和明确主题词。"""
+        terms = self._extract_keyword_terms(query)
+        if not terms or not db_manager.postgres_sessionmaker:
+            return []
+
+        try:
+            conditions = []
+            params: Dict[str, Any] = {"limit": top_k}
+            score_parts = []
+
+            for i, term in enumerate(terms):
+                param_name = f"kw_{i}"
+                params[param_name] = f"%{term}%"
+                conditions.append(
+                    f"(standard_code ILIKE :{param_name} OR document_name ILIKE :{param_name} OR content ILIKE :{param_name})"
+                )
+                score_parts.append(
+                    f"(CASE WHEN standard_code ILIKE :{param_name} THEN 0.20 ELSE 0 END)"
+                    f" + (CASE WHEN document_name ILIKE :{param_name} THEN 0.12 ELSE 0 END)"
+                    f" + (CASE WHEN content ILIKE :{param_name} THEN 0.04 ELSE 0 END)"
+                )
+
+            sql = f"""
+                WITH matched AS (
+                    SELECT DISTINCT ON (document_name)
+                        id, standard_code, document_name, content,
+                        LEAST(0.95, 0.55 + ({' + '.join(score_parts)})) AS similarity
+                    FROM policy_chunks
+                    WHERE {' OR '.join(conditions)}
+                    ORDER BY document_name, similarity DESC, id
+                )
+                SELECT id, standard_code, document_name, content, similarity
+                FROM matched
+                ORDER BY similarity DESC, document_name
+                LIMIT :limit
+            """
+
+            async with db_manager.get_postgres_session() as session:
+                result = await session.execute(text(sql), params)
+                rows = result.fetchall()
+
+            keyword_results = []
+            for row in rows:
+                keyword_results.append(DocumentResult(
+                    id=row.id,
+                    title=row.document_name,
+                    content=row.content[:500] if row.content else "",
+                    similarity=float(row.similarity),
+                    metadata={
+                        "standard_code": row.standard_code,
+                        "document_name": row.document_name,
+                        "match_type": "keyword",
+                    },
+                    spatial_info=None,
+                    file_type="unknown",
+                    file_size=0,
+                    upload_time=datetime.now(),
+                    source_url=None,
+                ))
+
+            logger.info("关键词检索命中 %s 条: query='%s', terms=%s", len(keyword_results), query, terms)
+            return keyword_results
+        except Exception as e:
+            logger.warning("关键词检索失败，回退到向量检索结果: %s", e, exc_info=True)
+            return []
+
+    def _merge_and_dedupe_results(
+        self,
+        primary_results: List[DocumentResult],
+        secondary_results: List[DocumentResult],
+        top_k: int,
+    ) -> List[DocumentResult]:
+        """合并多路检索结果，并按文档名去重。"""
+        merged: Dict[str, DocumentResult] = {}
+
+        for result in [*primary_results, *secondary_results]:
+            key = result.metadata.get("document_name") or result.title or result.id
+            existing = merged.get(key)
+            if not existing or result.similarity > existing.similarity:
+                merged[key] = result
+
+        return sorted(merged.values(), key=lambda item: item.similarity, reverse=True)[:top_k]
+
+    def _extract_standard_code_query(self, query: str) -> Optional[str]:
+        """Extract and normalize a standard-code-like query when present."""
+        upper_query = (query or "").upper().strip()
+        if not upper_query:
+            return None
+
+        match = STANDARD_CODE_QUERY_PATTERN.search(upper_query)
+        if match:
+            normalized = DocumentAssetService.normalize_standard_code(match.group("code"))
+            if normalized:
+                return normalized
+
+        compact_query = re.sub(r"[^0-9A-Z]+", "", upper_query)
+        if (
+            COMPACT_STANDARD_CODE_PATTERN.fullmatch(compact_query)
+            and compact_query[-4:].isdigit()
+        ):
+            normalized = DocumentAssetService.normalize_standard_code(compact_query)
+            if normalized:
+                return normalized
+
+        return None
+
+    def _get_standard_code_match_type(
+        self,
+        query_standard_code: Optional[str],
+        result_standard_code: Optional[str],
+    ) -> str:
+        if not query_standard_code or not result_standard_code:
+            return "none"
+
+        normalized_result_code = DocumentAssetService.normalize_standard_code(result_standard_code)
+        if not normalized_result_code:
+            return "none"
+
+        if normalized_result_code == query_standard_code:
+            return "exact"
+
+        if (
+            query_standard_code in normalized_result_code
+            or normalized_result_code in query_standard_code
+        ):
+            return "partial"
+
+        return "none"
+
+    def _prioritize_exact_standard_code_matches(
+        self,
+        query: str,
+        results: List[DocumentResult],
+    ) -> List[DocumentResult]:
+        query_standard_code = self._extract_standard_code_query(query)
+        if not query_standard_code:
+            return results
+
+        exact_matches: List[DocumentResult] = []
+        other_results: List[DocumentResult] = []
+
+        for result in results:
+            standard_code = result.metadata.get("standard_code")
+            match_type = self._get_standard_code_match_type(
+                query_standard_code,
+                str(standard_code).strip() if standard_code else None,
+            )
+            result.metadata["standard_code_match_type"] = match_type
+
+            if match_type == "exact":
+                exact_matches.append(result)
+            else:
+                other_results.append(result)
+
+        if not exact_matches:
+            return results
+
+        logger.info(
+            "Prioritized %s exact standard-code matches for query=%r",
+            len(exact_matches),
+            query,
+        )
+        return [*exact_matches, *other_results]
+
+    async def _exact_standard_code_search(
+        self,
+        query: str,
+        top_k: int,
+    ) -> List[DocumentResult]:
+        query_standard_code = self._extract_standard_code_query(query)
+        if not query_standard_code or not db_manager.postgres_sessionmaker:
+            return []
+
+        sql = text(
+            """
+            SELECT
+                id,
+                standard_code,
+                document_name,
+                content
+            FROM policy_chunks
+            WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
+            ORDER BY document_name, id
+            LIMIT :limit
+            """
+        )
+
+        async with db_manager.get_postgres_session() as session:
+            result = await session.execute(
+                sql,
+                {"standard_code": query_standard_code, "limit": top_k},
+            )
+            rows = result.fetchall()
+
+        exact_results = [
+            DocumentResult(
+                id=row.id,
+                title=row.document_name,
+                content=row.content[:500] if row.content else "",
+                similarity=1.0,
+                metadata={
+                    "standard_code": row.standard_code,
+                    "document_name": row.document_name,
+                    "match_type": "standard_code_exact",
+                    "standard_code_match_type": "exact",
+                },
+                spatial_info=None,
+                file_type="unknown",
+                file_size=0,
+                upload_time=datetime.now(),
+                source_url=None,
+            )
+            for row in rows
+        ]
+
+        if exact_results:
+            logger.info(
+                "Exact standard-code search matched %s rows for query=%r",
+                len(exact_results),
+                query,
+            )
+
+        return exact_results
 
     async def hybrid_search(
         self,
@@ -435,12 +841,16 @@ class SearchService:
     ) -> List[DocumentResult]:
         """使用大模型对结果进行重排序"""
         try:
-            if not results or len(results) <= 1:
+            if not results:
                 return results
 
             # TODO: 实现大模型重排序逻辑
             # 可以使用交叉编码器或大模型进行相关性评估
-            return results[:top_k]
+            prioritized_results = self._prioritize_exact_standard_code_matches(
+                query,
+                results,
+            )
+            return prioritized_results[:top_k]
 
         except Exception as e:
             logger.error(f"重排序失败: {e}")
@@ -545,6 +955,218 @@ class SearchService:
             logger.error(f"意图检测失败: {e}")
             # 默认返回search以保证向后兼容
             return "search"
+
+    async def load_follow_up_document_result(
+        self,
+        follow_up_context: Optional[FollowUpContext],
+        asset_service: DocumentAssetService,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[DocumentResult]]:
+        """Load the resolved follow-up document and convert it to a single-document result."""
+        if not follow_up_context or not follow_up_context.target_document_id:
+            return None, None
+
+        detail = await asset_service.get_document_detail_payload(follow_up_context.target_document_id)
+        if not detail:
+            logger.info(
+                "Follow-up target document was not found: %s",
+                follow_up_context.target_document_id,
+            )
+            return None, None
+
+        content = str(detail.get("content") or "").strip()
+        if not content:
+            logger.info(
+                "Follow-up target document has no usable content: %s",
+                follow_up_context.target_document_id,
+            )
+            return None, None
+
+        file_info = detail.get("file_info") or {}
+        metadata = dict(detail.get("metadata") or {})
+        standard_info = detail.get("standard_info") or {}
+        custom_fields = dict(metadata.get("custom_fields") or {})
+        if standard_info.get("code"):
+            metadata["standard_code"] = standard_info["code"]
+            custom_fields.setdefault("standard_code", standard_info["code"])
+        metadata["custom_fields"] = custom_fields
+        metadata["follow_up_resolution_source"] = follow_up_context.resolution_source
+
+        result = DocumentResult(
+            id=str(detail["id"]),
+            title=str(detail.get("title") or detail["id"]),
+            content=content[:2000],
+            similarity=1.0,
+            metadata=metadata,
+            spatial_info=detail.get("spatial_info"),
+            file_type=str(file_info.get("type") or "pdf"),
+            file_size=int(file_info.get("size") or 0),
+            upload_time=file_info.get("upload_time") or datetime.now(),
+            source_url=detail.get("download_url"),
+            download_available=bool(detail.get("download_available")),
+            download_url=detail.get("download_url"),
+        )
+        return detail, result
+
+    def _is_document_summary_query(self, query: str) -> bool:
+        compact_query = re.sub(r"\s+", "", query or "")
+        return any(hint in compact_query for hint in DOCUMENT_FOLLOW_UP_SUMMARY_HINTS)
+
+    def extract_explicit_document_id(self, query: str) -> Optional[str]:
+        compact_query = re.sub(r"\s+", "", query or "")
+        match = re.search(r"(\d{4,})(?=的|讲|说|内容|标准|文档)|\b(\d{4,})\b", compact_query)
+        if not match:
+            return None
+        return match.group(1) or match.group(2)
+
+    def _build_follow_up_document_context(self, document_detail: Dict[str, Any]) -> str:
+        metadata = document_detail.get("metadata") or {}
+        standard_info = document_detail.get("standard_info") or {}
+        file_info = document_detail.get("file_info") or {}
+        custom_fields = metadata.get("custom_fields") or {}
+
+        content = str(document_detail.get("content") or "").strip()
+        content_excerpt = content[:6000]
+
+        context_lines = [
+            f"文档标题: {document_detail.get('title') or ''}",
+            f"文档ID: {document_detail.get('id') or ''}",
+            f"标准编号: {standard_info.get('code') or custom_fields.get('standard_code') or ''}",
+            f"关键词: {', '.join(metadata.get('keywords') or [])}",
+            f"适用范围: {metadata.get('description') or ''}",
+            f"文件类型: {file_info.get('type') or ''}",
+            "",
+            "文档内容:",
+            content_excerpt,
+        ]
+        return "\n".join(context_lines).strip()
+
+    def _extract_content_evidence(self, content: str, limit: int = 3) -> List[str]:
+        normalized = re.sub(r"\s+", " ", content or "").strip()
+        if not normalized:
+            return []
+
+        parts = re.split(r"(?<=[。；！？!?])\s+|(?<=\.)\s+", normalized)
+        evidences: List[str] = []
+        for part in parts:
+            cleaned = part.strip(" \t\r\n-")
+            if len(cleaned) < 12:
+                continue
+            evidences.append(cleaned[:120])
+            if len(evidences) >= limit:
+                break
+
+        if evidences:
+            return evidences
+
+        return [normalized[:120]]
+
+    def _normalize_evidence_blockquotes(self, answer: str) -> str:
+        """Render evidence lines as Markdown blockquotes for softer citation styling."""
+        if not answer:
+            return answer
+
+        normalized_lines: List[str] = []
+        for raw_line in answer.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                normalized_lines.append(raw_line)
+                continue
+
+            if re.match(r"^>?\s*依据\d+[：:]", stripped):
+                quote_body = re.sub(r"^>?\s*", "", stripped, count=1)
+                normalized_lines.append(f"> {quote_body}")
+                continue
+
+            normalized_lines.append(raw_line)
+
+        return "\n".join(normalized_lines)
+
+    def build_document_follow_up_fallback_answer(
+        self,
+        query: str,
+        document_detail: Dict[str, Any],
+    ) -> str:
+        title = str(document_detail.get("title") or document_detail.get("id") or "该文档")
+        metadata = document_detail.get("metadata") or {}
+        standard_info = document_detail.get("standard_info") or {}
+        content = str(document_detail.get("content") or "").strip()
+        evidence_lines = self._extract_content_evidence(content)
+        raw_summary_source = metadata.get("description")
+        summary_source = re.sub(r"\s+", " ", str(raw_summary_source or "")).strip()
+        if summary_source.lower() in PLACEHOLDER_SUMMARY_VALUES:
+            summary_source = ""
+        if not summary_source and content:
+            summary_source = content[:160]
+        summary_source = re.sub(r"\s+", " ", str(summary_source)).strip()
+        summary_source = summary_source[:180] if summary_source else "该文档内容中可提取的信息有限。"
+
+        header = f"《{title}》的主要内容可概括为：{summary_source}"
+        if standard_info.get("code"):
+            header += f"\n标准编号：{standard_info['code']}"
+
+        if not evidence_lines:
+            return header
+
+        evidence_text = "\n".join(
+            f"依据{i}：{evidence}"
+            for i, evidence in enumerate(evidence_lines, start=1)
+        )
+        return self._normalize_evidence_blockquotes(f"{header}\n{evidence_text}")
+
+    async def generate_document_follow_up_answer(
+        self,
+        query: str,
+        document_detail: Dict[str, Any],
+        history: Optional[List[Dict[str, str]]] = None,
+    ) -> tuple[str, float]:
+        """Generate a direct answer grounded in a single resolved document."""
+        start_time = datetime.now()
+        truncated_history = self._truncate_history(history)
+        is_summary_query = self._is_document_summary_query(query)
+        document_context = self._build_follow_up_document_context(document_detail)
+
+        system_prompt = f"""
+你是一个专业的空间规划与标准文档助手。现在用户正在追问一份已经锁定的单篇文档。
+
+回答要求:
+1. 只能依据下面提供的这份文档内容回答，不能扩展到其他文档，也不能重新检索。
+2. 如果文档内容不足以支持回答，明确说明“该文档内容中未找到足够依据回答这个问题”。
+3. 如果用户在问“主要内容/讲了什么/适用范围/核心要求/总结”等概要类问题，先给出直接摘要，再补充 1 到 3 条依据。
+4. 回答保持简洁、直接，不要输出“已检索到相关标准，请查看下方参考文档”。
+5. 若引用依据，使用“依据1 / 依据2 / 依据3”形式，每条只概括文档中的关键信息。
+
+当前问题是否为概要类问题: {"是" if is_summary_query else "否"}
+
+目标文档:
+{document_context}
+"""
+        system_prompt += (
+            "\nAdditional formatting rule:\n"
+            "- Format every evidence line as a Markdown blockquote, for example `> 依据1：……`.\n"
+            "- Do not write evidence lines as normal body paragraphs.\n"
+        )
+
+        messages = [{"role": "system", "content": system_prompt}]
+        if truncated_history:
+            messages.extend(truncated_history)
+        messages.append({"role": "user", "content": query})
+
+        try:
+            answer = await llm_config.chat_completion(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=900,
+            )
+            generation_time = (datetime.now() - start_time).total_seconds()
+            return self._normalize_evidence_blockquotes(answer), generation_time
+        except Exception as exc:
+            logger.warning(
+                "Document follow-up answer generation failed, using deterministic fallback: %s",
+                exc,
+            )
+            answer = self.build_document_follow_up_fallback_answer(query, document_detail)
+            generation_time = (datetime.now() - start_time).total_seconds()
+            return self._normalize_evidence_blockquotes(answer), generation_time
 
     async def generate_answer(
         self,
@@ -872,3 +1494,64 @@ class SearchService:
             # 返回友好的备用回复
             backup_response = "您好！我是 GeoAI 空间规划智能助手，专门为您提供国土空间规划、测绘标准、地理信息相关的政策法规查询服务。请问有什么可以帮助您的吗？"
             return backup_response, 0.0
+
+    def _detect_rule_based_intent(self, query: str) -> Optional[str]:
+        cleaned_query = _normalize_query_text(query)
+        compact_query = re.sub(r"\s+", "", cleaned_query)
+
+        if not compact_query:
+            return "other"
+
+        if cleaned_query in COMMON_GREETING_QUERIES or compact_query in COMMON_GREETING_QUERIES:
+            return "greeting"
+
+        if any(hint in compact_query for hint in DIALOG_MANAGEMENT_HINTS):
+            return "dialog_management"
+
+        if any(hint in compact_query for hint in CASUAL_CHAT_HINTS):
+            return "other"
+
+        return None
+
+    async def detect_intent(self, query: str) -> str:
+        """Detect user intent for search, follow-up, chitchat, and dialog-management turns."""
+        rule_based_intent = self._detect_rule_based_intent(query)
+        if rule_based_intent:
+            logger.info("Rule-based intent detected for query=%r: %s", query, rule_based_intent)
+            return rule_based_intent
+
+        try:
+            system_prompt = """
+            你是一个意图分类器，负责判断用户输入的意图。
+            请将用户输入分类为以下五种意图之一：
+            1. "search" - 用户想要搜索或查询地理信息、测绘、国土空间规划相关的标准、规范、文档、政策等
+            2. "greeting" - 用户只是在打招呼、问候、寒暄
+            3. "clarification" - 用户在对之前的对话进行追问、澄清、细化
+            4. "dialog_management" - 用户在询问对话本身，例如上一条问题、刚才讨论内容、重复回答等
+            5. "other" - 其他非检索闲聊或无关问题
+
+            只返回意图类别字符串，不要有任何解释或额外文本。
+            """
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": query},
+            ]
+
+            intent = await llm_config.chat_completion(
+                messages=messages,
+                temperature=0.1,
+                max_tokens=20,
+            )
+            intent = intent.strip().lower()
+
+            valid_intents = {"search", "greeting", "clarification", "dialog_management", "other"}
+            if intent in valid_intents:
+                logger.info("LLM intent detected for query=%r: %s", query, intent)
+                return intent
+
+            logger.warning("Invalid intent returned by model for query=%r: %r", query, intent)
+            return "search"
+        except Exception as exc:
+            logger.error("Intent detection failed for query=%r: %s", query, exc)
+            return "search"

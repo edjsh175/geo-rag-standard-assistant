@@ -1,21 +1,26 @@
 """
-智能检索数据模型
+Search request and response models.
 """
 
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from __future__ import annotations
+
 from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class SpatialFilter(BaseModel):
-    """空间过滤器"""
-    geometry: Optional[Dict[str, Any]] = None  # GeoJSON 几何对象
-    distance: Optional[float] = Field(None, description="距离（米）")
-    spatial_relation: str = Field("within", description="空间关系: within, intersects, near")
+    """Spatial filtering for search results."""
+
+    geometry: Optional[Dict[str, Any]] = None
+    distance: Optional[float] = Field(None, description="Distance in meters.")
+    spatial_relation: str = Field("within", description="within, intersects, or near")
 
 
 class MetadataFilter(BaseModel):
-    """元数据过滤器"""
+    """Metadata filtering for search results."""
+
     document_type: Optional[str] = None
     source: Optional[str] = None
     year: Optional[int] = None
@@ -25,74 +30,106 @@ class MetadataFilter(BaseModel):
 
 
 class DocumentResult(BaseModel):
-    """文档检索结果"""
-    id: str = Field(..., description="文档ID")
-    title: str = Field(..., description="文档标题")
-    content: str = Field(..., description="文档内容摘要")
-    similarity: float = Field(..., description="相似度分数", ge=0, le=1)
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="文档元数据")
-    spatial_info: Optional[Dict[str, Any]] = Field(None, description="空间信息")
-    file_type: str = Field(..., description="文件类型")
-    file_size: int = Field(..., description="文件大小（字节）")
-    upload_time: datetime = Field(..., description="上传时间")
-    source_url: Optional[str] = Field(None, description="源URL")
+    """A single search result document."""
 
-    # 字段验证器：自动将 int 类型的 id 转换为 str
+    id: str = Field(..., description="Document identifier.")
+    title: str = Field(..., description="Document title.")
+    content: str = Field(..., description="Snippet or summary content.")
+    similarity: float = Field(..., ge=0, le=1, description="Similarity score.")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata payload.")
+    spatial_info: Optional[Dict[str, Any]] = Field(None, description="Optional spatial metadata.")
+    file_type: str = Field(..., description="File extension or logical type.")
+    file_size: int = Field(..., description="File size in bytes.")
+    upload_time: datetime = Field(..., description="Upload or import timestamp.")
+    source_url: Optional[str] = Field(None, description="Legacy source URL field.")
+    download_available: bool = Field(False, description="Whether the original file can be downloaded.")
+    download_url: Optional[str] = Field(None, description="Authenticated download URL.")
+
     @field_validator("id", mode="before")
     @classmethod
-    def coerce_id_to_str(cls, v) -> str:
-        """将 id 字段自动转换为字符串类型"""
-        return str(v)
+    def coerce_id_to_str(cls, value: Any) -> str:
+        return str(value)
+
+
+class FollowUpCandidateDocument(BaseModel):
+    """A candidate document that can be referenced by a follow-up question."""
+
+    id: str = Field(..., description="Document identifier shown to the user.")
+    title: str = Field(..., description="Document title shown to the user.")
+    rank: int = Field(..., ge=1, description="1-based rank from the previous assistant reply.")
+
+
+class FollowUpContext(BaseModel):
+    """Client-provided context for document-specific follow-up questions."""
+
+    target_document_id: Optional[str] = Field(None, description="Resolved follow-up target document id.")
+    candidate_documents: List[FollowUpCandidateDocument] = Field(
+        default_factory=list,
+        description="Candidate documents from the previous assistant response.",
+    )
+    resolution_source: Optional[Literal["explicit_text", "ordinal", "selected_document"]] = Field(
+        None,
+        description="How the client resolved the follow-up target.",
+    )
 
 
 class SearchRequest(BaseModel):
-    """检索请求"""
-    query: str = Field(..., description="检索查询语句", min_length=1, max_length=1000)
-    top_k: int = Field(10, description="返回结果数量", ge=1, le=100)
-    threshold: float = Field(0.7, description="相似度阈值", ge=0, le=1)
-    spatial_filter: Optional[SpatialFilter] = Field(None, description="空间过滤器")
-    metadata_filter: Optional[MetadataFilter] = Field(None, description="元数据过滤器")
-    use_rerank: bool = Field(True, description="是否使用重排序")
-    search_mode: str = Field("hybrid", description="检索模式: semantic, keyword, hybrid")
-    use_generation: bool = Field(False, description="是否使用大模型生成答案")
-    stream: bool = Field(False, description="是否使用流式传输(SSE)返回答案")
-    history: Optional[List[Dict[str, str]]] = Field([], description="历史对话记录")
+    """Search request payload."""
+
+    query: str = Field(..., min_length=1, max_length=1000, description="Search query.")
+    top_k: int = Field(10, ge=1, le=100, description="Maximum number of results.")
+    threshold: float = Field(0.7, ge=0, le=1, description="Similarity threshold.")
+    spatial_filter: Optional[SpatialFilter] = Field(None, description="Optional spatial filter.")
+    metadata_filter: Optional[MetadataFilter] = Field(None, description="Optional metadata filter.")
+    use_rerank: bool = Field(True, description="Whether to rerank results.")
+    search_mode: str = Field("hybrid", description="semantic, keyword, or hybrid")
+    use_generation: bool = Field(False, description="Whether to generate a natural-language answer.")
+    stream: bool = Field(False, description="Whether to stream the generated answer with SSE.")
+    history: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="Conversation history.")
+    follow_up_context: Optional[FollowUpContext] = Field(
+        None,
+        description="Optional document follow-up context resolved on the client.",
+    )
 
 
 class SearchResponse(BaseModel):
-    """检索响应"""
-    query: str = Field(..., description="原始查询")
-    results: List[DocumentResult] = Field(default_factory=list, description="检索结果")
-    total_count: int = Field(0, description="总结果数量")
-    search_time: float = Field(0.0, description="检索耗时（秒）")
-    search_mode: str = Field("hybrid", description="使用的检索模式")
-    suggestions: Optional[List[str]] = Field(None, description="搜索建议")
-    generated_answer: Optional[str] = Field(None, description="大模型生成的答案")
-    generation_time: Optional[float] = Field(None, description="生成耗时（秒）")
+    """Search response payload."""
+
+    query: str = Field(..., description="Original query.")
+    results: List[DocumentResult] = Field(default_factory=list, description="Matched results.")
+    total_count: int = Field(0, description="Total number of results.")
+    search_time: float = Field(0.0, description="Search duration in seconds.")
+    search_mode: str = Field("hybrid", description="Search mode used.")
+    suggestions: Optional[List[str]] = Field(None, description="Suggested related queries.")
+    generated_answer: Optional[str] = Field(None, description="Generated answer, if requested.")
+    generation_time: Optional[float] = Field(None, description="Generation duration in seconds.")
 
 
 class SearchHistory(BaseModel):
-    """搜索历史记录"""
-    id: str = Field(..., description="记录ID")
-    query: str = Field(..., description="查询语句")
-    results_count: int = Field(..., description="结果数量")
-    search_time: datetime = Field(..., description="搜索时间")
-    user_id: Optional[str] = Field(None, description="用户ID")
-    session_id: Optional[str] = Field(None, description="会话ID")
+    """Stored search history entry."""
+
+    id: str = Field(..., description="History identifier.")
+    query: str = Field(..., description="Search query.")
+    results_count: int = Field(..., description="Number of results returned.")
+    search_time: datetime = Field(..., description="When the search ran.")
+    user_id: Optional[str] = Field(None, description="Optional user identifier.")
+    session_id: Optional[str] = Field(None, description="Optional session identifier.")
 
 
 class SearchStatistic(BaseModel):
-    """搜索统计"""
-    total_searches: int = Field(0, description="总搜索次数")
-    average_results: float = Field(0.0, description="平均结果数量")
-    popular_queries: List[Dict[str, Any]] = Field(default_factory=list, description="热门查询")
-    search_trends: Dict[str, int] = Field(default_factory=dict, description="搜索趋势")
+    """Aggregate search statistics."""
+
+    total_searches: int = Field(0, description="Total search count.")
+    average_results: float = Field(0.0, description="Average result count.")
+    popular_queries: List[Dict[str, Any]] = Field(default_factory=list, description="Popular query samples.")
+    search_trends: Dict[str, int] = Field(default_factory=dict, description="Search trend counters.")
 
 
 class FeedbackRequest(BaseModel):
-    """搜索反馈请求"""
-    query: str = Field(..., description="查询语句")
-    result_id: str = Field(..., description="结果ID")
-    feedback_type: str = Field(..., description="反馈类型: relevant, irrelevant, helpful, not_helpful")
-    comment: Optional[str] = Field(None, description="反馈评论")
-    rating: Optional[int] = Field(None, description="评分（1-5）", ge=1, le=5)
+    """Feedback payload for a search result."""
+
+    query: str = Field(..., description="Original query.")
+    result_id: str = Field(..., description="Selected result identifier.")
+    feedback_type: str = Field(..., description="relevant, irrelevant, helpful, or not_helpful")
+    comment: Optional[str] = Field(None, description="Optional feedback comment.")
+    rating: Optional[int] = Field(None, ge=1, le=5, description="Optional rating score.")

@@ -18,22 +18,244 @@ import {
   Bell,
   Radio,
   Sun,
-  Moon
+  Moon,
+  LogOut
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import CesiumGlobe from './components/CesiumGlobe';
 import OpenLayersMap from './components/OpenLayersMap';
+import BootScreen from './components/BootScreen';
 import Chat from './components/Chat';
+import { useAuth } from './auth/AuthProvider';
+import { ensureBackendHealth, loadProvinceCollection, resetBootstrapCache } from './lib/bootstrap';
 import { cn } from './lib/utils';
+import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
 import { searchService } from './services/searchService';
 import { chatService } from './services/chatService';
 import { documentService } from './services/documentService';
-import type { SearchResult, Document, ChatMessage as ChatMessageType, DocumentPreview } from './types';
+import type {
+  SearchResult,
+  Document,
+  ChatMessage as ChatMessageType,
+  DocumentPreview,
+  FollowUpContext,
+  FollowUpCandidateDocument,
+} from './types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
 
+const PROVINCE_MAP: Record<string, string> = {
+  '110000': '北京市',
+  '120000': '天津市',
+  '130000': '河北省',
+  '140000': '山西省',
+  '150000': '内蒙古自治区',
+  '210000': '辽宁省',
+  '220000': '吉林省',
+  '230000': '黑龙江省',
+  '310000': '上海市',
+  '320000': '江苏省',
+  '330000': '浙江省',
+  '340000': '安徽省',
+  '350000': '福建省',
+  '360000': '江西省',
+  '370000': '山东省',
+  '410000': '河南省',
+  '420000': '湖北省',
+  '430000': '湖南省',
+  '440000': '广东省',
+  '450000': '广西壮族自治区',
+  '460000': '海南省',
+  '500000': '重庆市',
+  '510000': '四川省',
+  '520000': '贵州省',
+  '530000': '云南省',
+  '540000': '西藏自治区',
+  '610000': '陕西省',
+  '620000': '甘肃省',
+  '630000': '青海省',
+  '640000': '宁夏回族自治区',
+  '650000': '新疆维吾尔自治区',
+  '710000': '台湾省',
+  '810000': '香港特别行政区',
+  '820000': '澳门特别行政区',
+};
+
+const buildRegionAliases = (name: string): string[] => {
+  const compactName = name.replace(/\s+/g, '');
+  const aliasSet = new Set([
+    compactName,
+    compactName.replace(/省$/, ''),
+    compactName.replace(/市$/, ''),
+    compactName.replace(/特别行政区$/, ''),
+    compactName.replace(/壮族自治区$/, ''),
+    compactName.replace(/回族自治区$/, ''),
+    compactName.replace(/维吾尔自治区$/, ''),
+    compactName.replace(/自治区$/, ''),
+  ]);
+  return Array.from(aliasSet).filter(Boolean);
+};
+
+const extractRegionFromQuery = (content: string): { adcode: string; name: string } | null => {
+  const normalized = content.replace(/\s+/g, '');
+  for (const [adcode, name] of Object.entries(PROVINCE_MAP)) {
+    if (buildRegionAliases(name).some((alias) => normalized.includes(alias))) {
+      return { adcode, name };
+    }
+  }
+  return null;
+};
+
+const CURRENT_REGION_QUERY_PATTERN =
+  /((当前|现在|刚才|我).*(选中|选择|点选|高亮).*(什么|哪里|哪个|区域|地区|省份|省))|((选中|选择|点选|高亮).*(什么|哪里|哪个|区域|地区|省份|省))|((当前|现在).*(什么|哪里|哪个).*(区域|地区|省份|省))|((当前|现在).*(区域|地区|省份|省).*(什么|哪里|哪个))/;
+
+const REGION_REFERENCE_PATTERN =
+  /(该地区|该区域|该省份|该省|该地|当地|本地区|这里|此处|当前区域|当前地区|当前省份|当前省|选中区域|选中地区|所选区域|所选地区|这个地区|这个区域|这个省份|这个省)/g;
+
+const DOCUMENT_FOLLOW_UP_CUE_PATTERN =
+  /(主要内容|讲了什么|主要讲|说了什么|核心要求|主要要求|适用范围|总结|概述|摘要|重点|介绍|解读|内容是什么)/;
+
+const DOCUMENT_REFERENCE_PATTERN =
+  /(这个标准|这个文档|这份文档|上面那个|上述标准|上述文档|该标准|该文档)/;
+
+const ORDINAL_PATTERNS: Array<{ pattern: RegExp; rank: number | 'last' }> = [
+  { pattern: /第(?:1|一)个/, rank: 1 },
+  { pattern: /第(?:2|二)个/, rank: 2 },
+  { pattern: /第(?:3|三)个/, rank: 3 },
+  { pattern: /最后一个/, rank: 'last' },
+];
+
+const isCurrentRegionQuestion = (content: string): boolean =>
+  CURRENT_REGION_QUERY_PATTERN.test(content.replace(/\s+/g, ''));
+
+const buildRegionAwareQuery = (
+  content: string,
+  region: { adcode: string; name: string } | null
+): string => {
+  if (!region || extractRegionFromQuery(content)) {
+    return content;
+  }
+
+  REGION_REFERENCE_PATTERN.lastIndex = 0;
+  if (!REGION_REFERENCE_PATTERN.test(content)) {
+    return content;
+  }
+
+  REGION_REFERENCE_PATTERN.lastIndex = 0;
+  const expanded = content.replace(REGION_REFERENCE_PATTERN, region.name);
+  return `${region.name} ${expanded}`;
+};
+
+const getLastAssistantCitations = (messages: ChatMessageType[]): FollowUpCandidateDocument[] => {
+  const latestAssistantMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && (message.metadata?.citations?.length ?? 0) > 0);
+
+  if (!latestAssistantMessage?.metadata?.citations) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const candidates: FollowUpCandidateDocument[] = [];
+  latestAssistantMessage.metadata.citations.forEach((citation, index) => {
+    if (!citation.document_id || seen.has(citation.document_id)) {
+      return;
+    }
+    seen.add(citation.document_id);
+    candidates.push({
+      id: citation.document_id,
+      title: citation.title,
+      rank: index + 1,
+    });
+  });
+  return candidates;
+};
+
+const resolveFollowUpContext = (
+  content: string,
+  messages: ChatMessageType[],
+  selectedDocument: Document | null
+): FollowUpContext | undefined => {
+  const compactContent = content.replace(/\s+/g, '');
+  const candidates = getLastAssistantCitations(messages);
+  const explicitIdMatch = compactContent.match(/\b(\d{4,})\b|(\d{4,})(?=的|讲|说|内容|标准|文档)/);
+  const allKnownDocuments = [
+    ...candidates,
+    ...(selectedDocument
+      ? [
+          {
+            id: selectedDocument.id,
+            title: selectedDocument.metadata.title,
+            rank: 0,
+          },
+        ]
+      : []),
+  ];
+
+  const hasFollowUpCue =
+    DOCUMENT_FOLLOW_UP_CUE_PATTERN.test(compactContent) || DOCUMENT_REFERENCE_PATTERN.test(compactContent);
+
+  const explicitDocumentId = explicitIdMatch?.[1] || explicitIdMatch?.[2];
+  if (explicitDocumentId && hasFollowUpCue) {
+    return {
+      target_document_id: explicitDocumentId,
+      candidate_documents: candidates,
+      resolution_source: 'explicit_text',
+    };
+  }
+
+  const explicitDocument = allKnownDocuments.find((candidate) => compactContent.includes(candidate.id));
+  if (explicitDocument && hasFollowUpCue) {
+    return {
+      target_document_id: explicitDocument.id,
+      candidate_documents: candidates,
+      resolution_source: 'explicit_text',
+    };
+  }
+
+  for (const ordinalPattern of ORDINAL_PATTERNS) {
+    if (!ordinalPattern.pattern.test(compactContent) || !hasFollowUpCue || candidates.length === 0) {
+      continue;
+    }
+
+    const target =
+      ordinalPattern.rank === 'last'
+        ? candidates[candidates.length - 1]
+        : candidates.find((candidate) => candidate.rank === ordinalPattern.rank);
+
+    if (target) {
+      return {
+        target_document_id: target.id,
+        candidate_documents: candidates,
+        resolution_source: 'ordinal',
+      };
+    }
+  }
+
+  if (selectedDocument && DOCUMENT_REFERENCE_PATTERN.test(compactContent)) {
+    return {
+      target_document_id: selectedDocument.id,
+      candidate_documents: candidates,
+      resolution_source: 'selected_document',
+    };
+  }
+
+  return undefined;
+};
+
+const getBootErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return '系统初始化失败，请稍后重试。';
+};
+
+type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
+
 export default function App() {
+  const { logout, user } = useAuth();
+  const reduceMotion = useReducedMotion();
   // ==================== 全局空间状态 ====================
   const viewMode = useMapStore((s) => s.viewMode);
   const setViewMode = useMapStore((s) => s.setViewMode);
@@ -42,6 +264,18 @@ export default function App() {
   const setViewState = useMapStore((s) => s.setViewState);
   const resetView = useMapStore((s) => s.resetView);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [bootStatus, setBootStatus] = useState('正在检查服务健康状态');
+  const [bootDetail, setBootDetail] = useState('请稍候，系统正在恢复安全会话与地图核心资源。');
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootBaseReady, setBootBaseReady] = useState(false);
+  const [bootRetryKey, setBootRetryKey] = useState(0);
+  const [bootStage, setBootStage] = useState<BootCeremonyStage>('loading');
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [mapReady, setMapReady] = useState<{ '2D': boolean; '3D': boolean }>({
+    '2D': false,
+    '3D': false,
+  });
+  const enterCeremonyTimerRef = useRef<number | null>(null);
 
   // ==================== 主题管理 ====================
   useEffect(() => {
@@ -71,6 +305,112 @@ export default function App() {
     }
   };
 
+  const markMapReady = useCallback((mode: '2D' | '3D') => {
+    setMapReady((prev) => (prev[mode] ? prev : { ...prev, [mode]: true }));
+  }, []);
+
+  const handleMapReady2D = useCallback(() => {
+    markMapReady('2D');
+  }, [markMapReady]);
+
+  const handleMapReady3D = useCallback(() => {
+    markMapReady('3D');
+  }, [markMapReady]);
+
+  const retryBoot = useCallback(() => {
+    if (enterCeremonyTimerRef.current) {
+      window.clearTimeout(enterCeremonyTimerRef.current);
+      enterCeremonyTimerRef.current = null;
+    }
+    resetBootstrapCache();
+    setBootError(null);
+    setBootBaseReady(false);
+    setBootStage('loading');
+    setBootRetryKey((prev) => prev + 1);
+  }, []);
+
+  const handleEnterSystem = useCallback(() => {
+    if (bootStage !== 'ready') return;
+
+    setBootStage('entering');
+    setBootStatus('正在展开主控界面');
+    setBootDetail('地图已就绪，正在唤醒控制台与检索工作台。');
+
+    if (enterCeremonyTimerRef.current) {
+      window.clearTimeout(enterCeremonyTimerRef.current);
+    }
+
+    enterCeremonyTimerRef.current = window.setTimeout(() => {
+      setBootStage('done');
+      enterCeremonyTimerRef.current = null;
+    }, reduceMotion ? 260 : 1280);
+  }, [bootStage, reduceMotion]);
+
+  const handleLogout = useCallback(async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }, [isLoggingOut, logout]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const runBootSequence = async () => {
+      try {
+        setBootError(null);
+        setBootBaseReady(false);
+        setBootStatus('正在检查服务健康状态');
+        setBootDetail('正在确认核心接口与数据服务可用性。');
+        await ensureBackendHealth();
+        if (cancelled) return;
+
+        setBootStatus('正在预加载行政区划数据');
+        setBootDetail('正在准备首屏地图所需的核心行政区划资源。');
+        await loadProvinceCollection();
+        if (cancelled) return;
+
+        setBootBaseReady(true);
+        setBootStatus(viewMode === '3D' ? '正在准备三维地图引擎' : '正在准备二维地图引擎');
+        setBootDetail('地图引擎初始化完成后将自动进入主界面。');
+      } catch (error) {
+        if (cancelled) return;
+        setBootError(getBootErrorMessage(error));
+      }
+    };
+
+    runBootSequence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bootRetryKey]);
+
+  useEffect(() => {
+    if (bootError || !bootBaseReady || !mapReady[viewMode] || bootStage !== 'loading') return;
+
+    setBootStage('ready');
+    setBootStatus('系统准备就绪');
+    setBootDetail('地图与核心资源已完成加载，点击一次进入系统。');
+  }, [bootBaseReady, bootError, bootStage, mapReady, viewMode]);
+
+  useEffect(() => {
+    return () => {
+      if (enterCeremonyTimerRef.current) {
+        window.clearTimeout(enterCeremonyTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!bootBaseReady || bootError || bootStage !== 'loading') return;
+    setBootStatus(viewMode === '3D' ? '正在准备三维地图视图' : '正在准备二维地图视图');
+    setBootDetail('正在完成首屏地图初始化，请稍候。');
+  }, [bootBaseReady, bootError, bootStage, viewMode]);
+
   // 2D/3D 地图容器 ref，用于视角交接
   const olContainerRef = useRef<HTMLDivElement>(null);
   const cesiumContainerRef = useRef<HTMLDivElement>(null);
@@ -81,18 +421,14 @@ export default function App() {
     if (targetMode === viewMode) return;
 
     if (viewMode === '3D' && targetMode === '2D') {
-      // 3D → 2D：如果是自由视角（无选中省份），读取 Cesium 相机参数换算 zoom 写入 Store
-      const { activeRegion } = useMapStore.getState();
-      if (!activeRegion) {
-        const cesiumEl = document.getElementById('cesiumContainer');
-        if (cesiumEl && (cesiumEl as any).__snapshotView) {
-          (cesiumEl as any).__snapshotView();
-        }
-        // 此时 store.viewState.height 已更新，补算 zoom
-        const { height, center } = useMapStore.getState().viewState;
-        const zoom = heightToZoom(height, center[1]);
-        setViewState({ zoom, center });
+      // 3D -> 2D: always snapshot the current Cesium view so post-focus pan/zoom survives mode switching.
+      const cesiumEl = document.getElementById('cesiumContainer');
+      if (cesiumEl && (cesiumEl as any).__snapshotView) {
+        (cesiumEl as any).__snapshotView();
       }
+      const { height, center } = useMapStore.getState().viewState;
+      const zoom = heightToZoom(height, center[1]);
+      setViewState({ zoom, center });
     } else {
       // 2D → 3D：读取 OL 视角，换算 height，写入 Store
       const olEl = olContainerRef.current?.querySelector('div[class]') ?? olContainerRef.current;
@@ -151,6 +487,7 @@ export default function App() {
   const [isSearching, setIsSearching] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
+  const [isDownloadingDocument, setIsDownloadingDocument] = useState(false);
 
   const handleReferenceClick = (doc: Document) => {
     setSelectedDocument(doc);
@@ -204,6 +541,8 @@ export default function App() {
           indexing_status: 'completed',
           storage_path: '',
           access_url: doc.source_url,
+          download_available: doc.download_available,
+          download_url: doc.download_url,
           version: 1
         },
         highlights: {},
@@ -304,6 +643,13 @@ export default function App() {
   const handleChatSubmit = async (content: string) => {
     if (!content.trim()) return;
 
+    const regionFromQuery = extractRegionFromQuery(content);
+    const regionContext = regionFromQuery ?? activeRegion;
+    const followUpContext = resolveFollowUpContext(content, messages, selectedDocument);
+    if (regionFromQuery) {
+      setActiveRegion(regionFromQuery);
+    }
+
     // 构建历史记录：将当前消息列表转换为API格式
     const history = messages.map(msg => ({
       role: msg.role,
@@ -320,6 +666,23 @@ export default function App() {
 
     setMessages(prev => [...prev, userMessage]);
 
+    if (isCurrentRegionQuestion(content)) {
+      const assistantMessage: ChatMessageType = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: regionContext
+          ? `当前地图选中的区域是${regionContext.name}（ADCODE：${regionContext.adcode}）。`
+          : '当前地图还没有选中具体区域。请先在地图上点击一个省级区域，或直接在问题中说明区域名称。',
+        timestamp: new Date().toISOString(),
+        metadata: {
+          search_query: content,
+          selected_region: regionContext ?? undefined
+        }
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+      return;
+    }
+
     // 创建新的AbortController
     abortControllerRef.current?.abort(); // 中止之前的请求
     const abortController = new AbortController();
@@ -329,7 +692,23 @@ export default function App() {
 
     try {
       // 发送到聊天API，传递signal
-      const response = await chatService.sendMessage(content, undefined, history, abortController.signal);
+      const queryForBackend = buildRegionAwareQuery(content, regionContext);
+      const contextualHistory = regionContext
+        ? [
+            {
+              role: 'system',
+              content: `当前地图选中区域：${regionContext.name}，ADCODE：${regionContext.adcode}。当用户提到“该地区”“当前区域”“这里”“当地”等指代时，均指这个区域。`
+            },
+            ...history
+          ]
+        : history;
+      const response = await chatService.sendMessage(
+        queryForBackend,
+        undefined,
+        contextualHistory,
+        abortController.signal,
+        followUpContext
+      );
 
       // 检查是否被中止
       if (abortController.signal.aborted) {
@@ -379,6 +758,8 @@ export default function App() {
         indexing_status: 'completed',
         storage_path: '',
         access_url: ref.source_url,
+        download_available: ref.download_available,
+        download_url: ref.download_url,
         version: 1
       }));
 
@@ -399,7 +780,7 @@ export default function App() {
             '540000': '西藏自治区', '610000': '陕西省', '620000': '甘肃省', '630000': '青海省', '640000': '宁夏回族自治区',
             '650000': '新疆维吾尔自治区', '710000': '台湾省', '810000': '香港特别行政区', '820000': '澳门特别行政区'
           };
-          finalName = provinceMap[adcode] || adcode;
+          finalName = PROVINCE_MAP[adcode] || adcode;
         }
 
         console.log(`提取到地理位置信息: ${finalName}(${adcode})，触发地图飞行`);
@@ -414,7 +795,10 @@ export default function App() {
         metadata: {
           document_ids: documents.map(d => d.id),
           citations: citations,
-          search_query: content
+          search_query: queryForBackend,
+          original_query: content,
+          follow_up_context: followUpContext,
+          selected_region: regionContext ?? undefined
         }
       };
 
@@ -500,7 +884,9 @@ export default function App() {
         is_indexed: true,
         indexing_status: 'completed',
         storage_path: '',
-        access_url: documentDetail.metadata.source_url,
+        access_url: documentDetail.download_url,
+        download_available: documentDetail.download_available,
+        download_url: documentDetail.download_url,
         version: 1
       };
 
@@ -514,6 +900,32 @@ export default function App() {
   };
 
   // 处理引用点击
+  const handleDocumentDownload = async () => {
+    if (!selectedDocument?.id || !selectedDocument.download_available || isDownloadingDocument) {
+      return;
+    }
+
+    setIsDownloadingDocument(true);
+    try {
+      const { blob, filename } = await documentService.downloadDocument(selectedDocument.id);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = window.document.createElement('a');
+      link.href = objectUrl;
+      link.download =
+        filename ||
+        selectedDocument.filename ||
+        `${selectedDocument.id}.${selectedDocument.file_type || 'pdf'}`;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error('鏂囨。涓嬭浇澶辫触:', error);
+    } finally {
+      setIsDownloadingDocument(false);
+    }
+  };
+
   const handleCitationClick = async (documentId: string) => {
     const doc = await fetchDocumentDetails(documentId);
     if (doc) {
@@ -540,16 +952,85 @@ export default function App() {
     };
   }, []);
 
+  const showBootOverlay = !!bootError || bootStage !== 'done';
+  const uiVisible = bootStage === 'entering' || bootStage === 'done';
+  const uiInteractive = bootStage === 'done';
+  const bootPhase = bootError
+    ? 'loading'
+    : bootStage === 'ready'
+      ? 'ready'
+      : bootStage === 'entering'
+        ? 'entering'
+        : 'loading';
+  const getLayerTransition = (delay: number) =>
+    reduceMotion
+      ? { duration: 0.2, delay: Math.min(delay, 0.08), ease: 'easeOut' as const }
+      : { type: 'spring' as const, damping: 24, stiffness: 210, mass: 0.92, delay };
+
   return (
     <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
       {/* Background Map Layer */}
-      <section className="absolute inset-0 z-0 overflow-hidden" style={{background:'#08080b'}}>
-        <CesiumGlobe theme={theme} visible={viewMode === '3D'} layers={layers} />
-        <OpenLayersMap theme={theme} visible={viewMode === '2D'} layers={layers} />
-      </section>
+      <motion.section
+        className="absolute inset-0 z-0 overflow-hidden"
+        initial={false}
+        animate={{
+          opacity: bootStage === 'loading' ? 0.7 : bootStage === 'ready' ? 0.86 : 1,
+          scale: uiVisible ? 1 : reduceMotion ? 1.01 : 1.045,
+          filter: uiVisible
+            ? 'blur(0px) saturate(1) brightness(1)'
+            : reduceMotion
+              ? 'blur(2px) saturate(0.92) brightness(0.88)'
+              : 'blur(12px) saturate(0.82) brightness(0.72)',
+        }}
+        transition={
+          reduceMotion
+            ? { duration: 0.28, ease: 'easeOut' }
+            : { duration: 1.05, ease: [0.22, 1, 0.36, 1] }
+        }
+        style={{ background: '#08080b', pointerEvents: uiInteractive ? 'auto' : 'none' }}
+      >
+        <CesiumGlobe
+          theme={theme}
+          visible={viewMode === '3D'}
+          layers={layers}
+          onReady={handleMapReady3D}
+        />
+        <OpenLayersMap
+          theme={theme}
+          visible={viewMode === '2D'}
+          layers={layers}
+          onReady={handleMapReady2D}
+        />
+      </motion.section>
+
+      {showBootOverlay ? (
+        <BootScreen
+          compact
+          phase={bootPhase}
+          status={bootStatus}
+          detail={bootDetail}
+          error={bootError}
+          onAction={bootError ? retryBoot : undefined}
+          onPrimaryAction={bootError ? undefined : handleEnterSystem}
+          primaryActionLabel="进入系统"
+        />
+      ) : null}
 
       {/* Floating Header */}
-      <header className="fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6" style={{border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+      <motion.header
+        className={cn(
+          "fixed top-4 left-4 right-4 z-50 glass h-[48px] rounded-2xl flex items-center justify-between px-6",
+          uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+        )}
+        initial={false}
+        animate={{
+          opacity: uiVisible ? 1 : 0,
+          y: uiVisible ? 0 : reduceMotion ? -6 : -30,
+          filter: uiVisible ? 'blur(0px)' : 'blur(12px)',
+        }}
+        transition={getLayerTransition(reduceMotion ? 0.03 : 0.28)}
+        style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
+      >
         <div className="flex items-center gap-6">
           {/* Logo */}
           <div className="flex items-center gap-2.5 font-headline">
@@ -599,11 +1080,19 @@ export default function App() {
             <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all relative bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Bell className="w-3.5 h-3.5 text-on-background/40" /><span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-orange-400 shadow-orange-glow" /></button>
             <button className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-on-background/5 hover:bg-on-background/10 border border-on-background/5"><Settings className="w-3.5 h-3.5 text-on-background/40" /></button>
           </div>
-          <div className="w-7 h-7 rounded-full overflow-hidden ml-1 border border-on-background/10">
-            <img className="w-full h-full object-cover" src="https://picsum.photos/seed/user/100/100" alt="Avatar" referrerPolicy="no-referrer" />
-          </div>
+          <button
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="ml-1 inline-flex items-center gap-2 rounded-full border border-on-background/10 bg-on-background/5 px-2 py-1 text-[12px] font-semibold text-on-background/70 transition hover:bg-on-background/10 disabled:opacity-60"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-container/15 text-primary-container">
+              {(user?.username?.slice(0, 1) || 'A').toUpperCase()}
+            </span>
+            <span className="hidden sm:inline">{isLoggingOut ? '退出中' : '退出登录'}</span>
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
         </div>
-      </header>
+      </motion.header>
 
       {/* Side Nav - Removed as requested */}
 
@@ -611,8 +1100,20 @@ export default function App() {
       {/* Floating Overlay Controls / Content */}
       <main className="absolute inset-0 pointer-events-none z-10">
         {/* Layer Controls - Bottom Left */}
-        <div className="absolute bottom-16 left-6 z-10 pointer-events-auto">
-          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+        <motion.div
+          className={cn(
+            "absolute bottom-16 left-6 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? -6 : -34,
+            y: uiVisible ? 0 : reduceMotion ? 6 : 22,
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.05 : 0.42)}
+        >
+          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{...glassLightStyle,minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             <div className="flex items-center gap-1.5 mb-0.5">
               <Layers className="w-3 h-3" style={{color:'rgba(240,112,64,0.7)'}} />
               <span className="text-[11.5px] font-semibold uppercase tracking-[0.15em]" style={{color:'rgba(240,112,64,0.65)'}}>图层控制</span>
@@ -636,10 +1137,22 @@ export default function App() {
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
         {/* Info Badge - Top Left (below header) */}
-        <div className="absolute top-[80px] left-5 z-10 pointer-events-auto">
+        <motion.div
+          className={cn(
+            "absolute top-[80px] left-5 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? -6 : -28,
+            y: uiVisible ? 0 : reduceMotion ? 4 : 10,
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.06 : 0.36)}
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={activeRegion?.adcode ?? 'overview'}
@@ -648,7 +1161,7 @@ export default function App() {
               exit={{ opacity: 0, x: 6, scale: 0.97 }}
               transition={{ duration: 0.2 }}
               className="glass-light flex flex-col items-start px-4 py-3 rounded-xl"
-              style={{border:'0.5px solid var(--color-outline-glow)',boxShadow:'0 0 24px rgba(0,0,0,0.1)'}}
+              style={{...glassLightStyle,border:'0.5px solid var(--color-outline-glow)',boxShadow:'0 0 24px rgba(0,0,0,0.1)'}}
             >
               {activeRegion ? (
                 <>
@@ -663,11 +1176,22 @@ export default function App() {
               )}
             </motion.div>
           </AnimatePresence>
-        </div>
+        </motion.div>
 
         {/* Mode Switcher - Bottom Center */}
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
-          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+        <motion.div
+          className={cn(
+            "absolute bottom-5 left-1/2 -translate-x-1/2 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            y: uiVisible ? 0 : reduceMotion ? 6 : 26,
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.07 : 0.54)}
+        >
+          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
             {(['3D 地球','2D 地图'] as const).map((label,i) => {
               const mode = i===0 ? '3D' : '2D';
               const active = viewMode === mode;
@@ -681,11 +1205,24 @@ export default function App() {
               );
             })}
           </div>
-        </div>
+        </motion.div>
 
         {/* AI Chat Panel - Floating Right */}
-        <div className="absolute top-[80px] bottom-6 right-6 w-[420px] pointer-events-auto z-20">
-          <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl">
+        <motion.div
+          className={cn(
+            "absolute top-[80px] bottom-6 right-6 w-[420px] z-20",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? 10 : 42,
+            y: uiVisible ? 0 : reduceMotion ? 6 : 18,
+            scale: uiVisible ? 1 : reduceMotion ? 0.995 : 0.975,
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.08 : 0.66)}
+        >
+          <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl" style={glassStyle}>
             <Chat
               messages={messages}
               onSendMessage={handleChatSubmit}
@@ -700,33 +1237,53 @@ export default function App() {
               quickTags={['#城镇开发边界', '#永久基本农田', '#生态保护红线', '#四川技术规范']}
             />
           </div>
-        </div>
+        </motion.div>
 
         {/* Coordinate Display */}
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px] text-on-background/30">
+        <motion.div
+          className="absolute bottom-5 left-1/2 -translate-x-1/2 -mb-12 z-10 flex items-center justify-center gap-3 font-mono text-[11.5px] text-on-background/30"
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            y: uiVisible ? 0 : reduceMotion ? 4 : 18,
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.07 : 0.6)}
+        >
           <span>LNG 104.0665</span>
           <span className="opacity-40">|</span>
           <span>LAT 30.5723</span>
           <span className="opacity-40">|</span>
           <span>ELE 500m</span>
           <span className="text-primary-container/40">WGS84</span>
-        </div>
+        </motion.div>
 
         {/* Reset View - Optimized Position to Bottom-Left Cluster */}
-        <div className="absolute bottom-[200px] left-6 z-10 pointer-events-auto">
+        <motion.div
+          className={cn(
+            "absolute bottom-[200px] left-6 z-10",
+            uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
+          )}
+          initial={false}
+          animate={{
+            opacity: uiVisible ? 1 : 0,
+            x: uiVisible ? 0 : reduceMotion ? -6 : -24,
+            y: uiVisible ? 0 : reduceMotion ? 4 : 10,
+          }}
+          transition={getLayerTransition(reduceMotion ? 0.06 : 0.5)}
+        >
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={resetView}
             className="glass-light flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer"
-            style={{border:'0.5px solid var(--color-outline-glow)', color:'var(--color-primary-container)', boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
+            style={{...glassLightStyle,border:'0.5px solid var(--color-outline-glow)', color:'var(--color-primary-container)', boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
             onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(240,112,64,0.12)'}}
             onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background=''}}
           >
             <RotateCcw className="w-3.5 h-3.5" />
             复位视角
           </motion.button>
-        </div>
+        </motion.div>
       </main>
 
       {/* Details Drawer */}
@@ -738,7 +1295,7 @@ export default function App() {
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 28, stiffness: 220 }}
             className="fixed right-6 top-[80px] bottom-6 w-[420px] z-[60] flex flex-col"
-            style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(32px)', border: '0.5px solid var(--color-outline)', borderRadius: '1.5rem', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}
+            style={{ background: 'var(--glass-bg)', ...drawerGlassStyle, border: '0.5px solid var(--color-outline)', borderRadius: '1.5rem', boxShadow: '0 24px 64px rgba(0,0,0,0.3)' }}
           >
             {/* Details Drawer Header */}
             <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ borderBottom: '0.5px solid var(--color-outline)' }}>

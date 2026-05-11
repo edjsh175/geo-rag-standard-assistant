@@ -44,6 +44,8 @@ export interface Document {
   indexing_status: 'pending' | 'processing' | 'completed' | 'failed';
   storage_path: string;
   access_url?: string;
+  download_available?: boolean;
+  download_url?: string;
   version: number;
 }
 
@@ -126,6 +128,12 @@ export interface ChatMessage {
     document_ids?: string[];
     citations?: Citation[];
     search_query?: string;
+    original_query?: string;
+    follow_up_context?: FollowUpContext;
+    selected_region?: {
+      adcode: string;
+      name: string;
+    };
   };
 }
 
@@ -163,6 +171,18 @@ export interface Citation {
   excerpt: string;
   page_number?: number;
   confidence: number;
+}
+
+export interface FollowUpCandidateDocument {
+  id: string;
+  title: string;
+  rank: number;
+}
+
+export interface FollowUpContext {
+  target_document_id?: string;
+  candidate_documents?: FollowUpCandidateDocument[];
+  resolution_source?: 'explicit_text' | 'ordinal' | 'selected_document';
 }
 
 // 系统状态

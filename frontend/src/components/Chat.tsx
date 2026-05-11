@@ -4,6 +4,7 @@ import { Bot, Sparkles, Send, Mic, History, X, Download, FileText } from 'lucide
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
+import { glassLightStyle } from '../lib/glass';
 import { ChatMessage as ChatMessageType, Citation, Document } from '../types';
 import LoadingIndicator from './LoadingIndicator';
 import { useAutoScroll } from '../hooks/useAutoScroll';
@@ -51,11 +52,20 @@ const Chat: React.FC<ChatProps> = ({
     if (isLoading && !isAutoScrollLocked) scrollToBottom({ behavior: 'smooth' });
   }, [isLoading, isAutoScrollLocked, scrollToBottom]);
 
+  const displayQuickTags = [
+    '#土地整治与利用',
+    '#地裂缝监测预警',
+    '#应急避险与处置',
+  ];
+
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isLoading || disabled) return;
-    await onSendMessage(inputValue);
     onInputChange('');
-    inputRef.current?.focus();
+    const messageToSend = inputValue;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+    await onSendMessage(messageToSend);
   }, [inputValue, isLoading, disabled, onSendMessage, onInputChange]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -82,7 +92,7 @@ const Chat: React.FC<ChatProps> = ({
       {/* ── Header ── */}
       <div
         className="px-5 py-3.5 flex items-center justify-between shrink-0 glass-light"
-        style={{ borderBottom: '0.5px solid var(--color-outline)' }}
+        style={{ ...glassLightStyle, borderBottom: '0.5px solid var(--color-outline)' }}
       >
         <div className="flex items-center gap-3">
           {/* AI Avatar */}
@@ -149,7 +159,7 @@ const Chat: React.FC<ChatProps> = ({
       {/* ── Input Area ── */}
       <div
         className="shrink-0 px-4 pb-4 pt-3 glass-light"
-        style={{ borderTop: '0.5px solid var(--color-outline)' }}
+        style={{ ...glassLightStyle, borderTop: '0.5px solid var(--color-outline)' }}
       >
         {/* Input */}
         <div className="relative">
@@ -166,7 +176,7 @@ const Chat: React.FC<ChatProps> = ({
             onBlur={e => { e.currentTarget.style.border = 'var(--color-outline)'; e.currentTarget.style.boxShadow = 'none'; }}
             placeholder="输入规划指令或搜索关键词..."
             type="text"
-            disabled={disabled || isLoading}
+            disabled={disabled}
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
             <button className="w-6 h-6 flex items-center justify-center rounded-lg transition-all" style={{ color: 'rgba(255,255,255,0.25)' }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,112,64,0.7)'; }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; }}>
@@ -187,7 +197,7 @@ const Chat: React.FC<ChatProps> = ({
 
         {/* Quick Tags */}
         <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
-          {quickTags.map(tag => (
+          {displayQuickTags.map(tag => (
             <button
               key={tag}
               onClick={() => onInputChange(tag.replace(/^#/, ''))}
@@ -209,7 +219,7 @@ interface ChatMessageProps {
 const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) => {
   const isUser = message.role === 'user';
   return (
-    <div className={cn('flex', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
+    <div className={cn('flex min-w-0 max-w-full', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
       {/* AI avatar */}
       {!isUser && (
         <div
@@ -220,11 +230,11 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
         </div>
       )}
 
-      <div className="flex-1 space-y-3">
+      <div className="min-w-0 flex-1 space-y-3">
         {/* Bubble */}
         <div
           className={cn(
-            "rounded-xl text-[15px] leading-[1.75] p-3.5 border",
+            "max-w-full overflow-hidden rounded-xl text-[15px] leading-[1.75] p-3.5 border break-words",
             isUser ? "bg-primary-container/[0.07] border-primary-container/[0.18] text-on-background/90" : "bg-surface-container/60 border-outline text-on-background/90"
           )}
           style={
@@ -234,7 +244,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
           }
         >
           {!isUser ? (
-            <div className="prose">
+            <div className="prose max-w-full">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
             </div>
           ) : message.content}

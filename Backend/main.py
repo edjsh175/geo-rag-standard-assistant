@@ -1,65 +1,63 @@
 """
-GeoAI 空间规划智能检索与可视化系统 - FastAPI 后端入口
-基于 requirement V1.0 (2026年3月) 设计
+GeoAI FastAPI backend entrypoint.
 """
 
-import os
+import logging
 import sys
-from pathlib import Path
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 
-# 添加项目根目录到 Python 路径
+from fastapi import FastAPI, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from app.api import router as api_router
+from app.core.auth import validate_admin_auth_configuration
 from app.core.config import settings
 from app.core.database import db_manager
-from app.core.llm_config import llm_config
-
-import logging
+from app.core.llm_config import llm_config  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    logger.info("正在初始化数据库连接...")
+    validate_admin_auth_configuration()
+    logger.info("Admin authentication configuration loaded.")
 
-    # 使用 db_manager 统一初始化的锁机制
+    logger.info("Initializing database connections...")
     await db_manager.initialize()
-    
+
     app.state.postgres_initialized = db_manager.postgres_engine is not None
     app.state.mysql_initialized = db_manager.mysql_engine is not None
     app.state.redis_initialized = db_manager.redis_client is not None
-    
-    if not app.state.postgres_initialized:
-        logger.error("PostgreSQL 连接初始化失败。向量搜索功能将会不可用。")
 
-    logger.info("大模型配置已加载")
+    if not app.state.postgres_initialized:
+        logger.error("PostgreSQL initialization failed. Vector search will be unavailable.")
+
+    logger.info("LLM configuration loaded.")
 
     yield
 
-    # 关闭时清理
-    logger.info("正在关闭数据库连接...")
+    logger.info("Closing database connections...")
     await db_manager.close()
-    logger.info("数据库连接已关闭")
+    logger.info("Database connections closed.")
 
 
-# 创建 FastAPI 应用实例
 app = FastAPI(
-    title="GeoAI 空间规划智能检索与可视化系统 API",
-    description="基于大模型和空间数据库的智能检索与可视化后端服务",
-    version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    title="GeoAI API",
+    description="Backend API for GeoAI spatial search and visualization.",
+    version=settings.APP_VERSION,
+    docs_url="/api/docs" if settings.DEBUG else None,
+    redoc_url="/api/redoc" if settings.DEBUG else None,
+    openapi_url="/api/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
-# 配置 CORS 中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -68,69 +66,99 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 挂载 API 路由
 app.include_router(api_router, prefix="/api")
 
-# 调试：打印所有路由
-print("=== 注册的路由 ===")
-for route in app.routes:
-    if hasattr(route, "methods") and hasattr(route, "path"):
-        print(f"{route.path} [{', '.join(route.methods)}]")
-print("=================")
+
+def _connection_status(flag_name: str) -> str:
+    return "connected" if getattr(app.state, flag_name, False) else "disconnected"
+
+
+async def _check_database_dependencies() -> dict[str, str]:
+    database_status = {
+        "postgres": "disconnected",
+        "mysql": "disconnected",
+        "redis": "disconnected",
+    }
+
+    try:
+        await db_manager._test_engine("PostgreSQL", db_manager.postgres_engine)
+        database_status["postgres"] = "connected"
+    except Exception:
+        database_status["postgres"] = "disconnected"
+
+    try:
+        await db_manager._test_engine("MySQL", db_manager.mysql_engine)
+        database_status["mysql"] = "connected"
+    except Exception:
+        database_status["mysql"] = "disconnected"
+
+    try:
+        if db_manager.redis_client:
+            await db_manager.redis_client.ping()
+            database_status["redis"] = "connected"
+    except Exception:
+        database_status["redis"] = "disconnected"
+
+    return database_status
+
 
 @app.get("/")
 async def root():
-    """根端点，返回服务状态"""
-    # 获取各个数据库的初始化状态
-    postgres_status = "connected" if hasattr(app.state, "postgres_initialized") and app.state.postgres_initialized else "disconnected"
-    mysql_status = "connected" if hasattr(app.state, "mysql_initialized") and app.state.mysql_initialized else "disconnected"
-    redis_status = "connected" if hasattr(app.state, "redis_initialized") and app.state.redis_initialized else "disconnected"
-
-    # 总体状态：如果 PostgreSQL 连接成功则认为数据库功能可用
-    overall_db_status = "connected" if postgres_status == "connected" else "disconnected"
+    postgres_status = _connection_status("postgres_initialized")
+    mysql_status = _connection_status("mysql_initialized")
+    redis_status = _connection_status("redis_initialized")
 
     return {
-        "service": "GeoAI 空间规划智能检索与可视化系统 API",
-        "version": "1.0.0",
+        "service": "GeoAI API",
+        "version": settings.APP_VERSION,
         "status": "running",
-        "database": overall_db_status,
+        "database": "connected" if postgres_status == "connected" else "disconnected",
         "databases": {
             "postgres": postgres_status,
             "mysql": mysql_status,
-            "redis": redis_status
+            "redis": redis_status,
         },
-        "docs": "/api/docs",
-        "timestamp": datetime.now().isoformat()
+        "docs": "/api/docs" if settings.DEBUG else None,
+        "timestamp": datetime.now().isoformat(),
     }
+
 
 @app.get("/health")
 async def health_check():
-    """健康检查端点"""
-    # 获取各个数据库的初始化状态
-    postgres_status = "connected" if hasattr(app.state, "postgres_initialized") and app.state.postgres_initialized else "disconnected"
-    mysql_status = "connected" if hasattr(app.state, "mysql_initialized") and app.state.mysql_initialized else "disconnected"
-    redis_status = "connected" if hasattr(app.state, "redis_initialized") and app.state.redis_initialized else "disconnected"
+    database_status = await _check_database_dependencies()
+    required_healthy = (
+        database_status["postgres"] == "connected"
+        and database_status["mysql"] == "connected"
+    )
 
-    # 总体健康状态：如果 PostgreSQL 连接成功则认为服务健康
-    overall_status = "healthy" if postgres_status == "connected" else "degraded"
-
-    return {
-        "status": overall_status,
-        "databases": {
-            "postgres": postgres_status,
-            "mysql": mysql_status,
-            "redis": redis_status
-        },
+    payload = {
+        "status": "healthy" if required_healthy else "degraded",
+        "databases": database_status,
         "timestamp": datetime.now().isoformat(),
-        "message": "PostgreSQL is required for vector search functionality" if postgres_status == "disconnected" else "All core systems operational"
+        "message": (
+            "All required systems operational"
+            if required_healthy
+            else "PostgreSQL and MySQL are required for search and metadata functionality"
+        ),
     }
+
+    return JSONResponse(
+        status_code=(
+            status.HTTP_200_OK
+            if required_healthy
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+        content=payload,
+    )
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "main:app",
         host=settings.HOST,
         port=settings.PORT,
         reload=settings.DEBUG,
-        log_level="info"
+        log_level="info",
     )

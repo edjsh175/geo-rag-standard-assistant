@@ -165,6 +165,14 @@ data/external/
 *.prj
 *.cpg
 
+# Keep reproducible frontend build config under version control
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/public/data/china-provinces.json
+!frontend/tsconfig.json
+!frontend/src/lib/
+!frontend/src/lib/**
+
 # Docker volumes
 docker_data/
 
@@ -187,6 +195,7 @@ config/local.yaml
 *.tmp
 *.temp
 temp/
+.codex_tmp/
 
 # OS generated files
 .DS_Store

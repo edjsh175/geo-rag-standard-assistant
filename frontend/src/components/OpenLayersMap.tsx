@@ -5,7 +5,6 @@ import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import VectorImageLayer from 'ol/layer/VectorImage';
 import VectorSource from 'ol/source/Vector';
-import OSM from 'ol/source/OSM';
 import XYZ from 'ol/source/XYZ';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import GeoJSON from 'ol/format/GeoJSON';
@@ -13,6 +12,7 @@ import { Style, Stroke, Fill } from 'ol/style';
 import Feature from 'ol/Feature';
 import { easeOut } from 'ol/easing';
 import type MapBrowserEvent from 'ol/MapBrowserEvent';
+import { loadProvinceCollection } from '../lib/bootstrap';
 import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapStore';
 
 // ============================================================
@@ -28,6 +28,7 @@ interface OpenLayersMapProps {
     admin: boolean;
     wms: boolean;
   };
+  onReady?: () => void;
 }
 
 // ==================== 三态样式 ====================
@@ -57,13 +58,15 @@ const SELECTED_STYLE = [
   })
 ];
 
-const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', layers }) => {
+const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', layers, onReady }) => {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const provincesLayerRef = useRef<VectorImageLayer | null>(null);
   const provincesSourceRef = useRef<VectorSource | null>(null);
   const baseLayersRef = useRef<{ cartoLight?: TileLayer, cartoDark?: TileLayer, tdtCva?: TileLayer, satellite?: TileLayer }>({});
   const geoJsonCache = useRef<any>(null);
+  const readyNotifiedRef = useRef(false);
+  const onReadyRef = useRef(onReady);
 
   // 交互状态
   const hoveredFeatureRef = useRef<Feature | null>(null);
@@ -75,17 +78,22 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   const setActiveRegion = useMapStore((s) => s.setActiveRegion);
   const setViewState = useMapStore((s) => s.setViewState);
 
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
+  const notifyReady = useCallback(() => {
+    if (!readyNotifiedRef.current) {
+      readyNotifiedRef.current = true;
+      onReadyRef.current?.();
+    }
+  }, []);
+
   // ==================== 数据加载 ====================
   const loadProvincesData = useCallback(async () => {
     if (geoJsonCache.current) return geoJsonCache.current;
     try {
-      const response = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json');
-      if (!response.ok) {
-        const empty = { type: 'FeatureCollection', features: [] };
-        geoJsonCache.current = empty;
-        return empty;
-      }
-      const geoJson = await response.json();
+      const geoJson = await loadProvinceCollection();
       geoJsonCache.current = geoJson;
       return geoJson;
     } catch (error) {
@@ -124,14 +132,14 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   }, []);
 
   // ==================== 高亮同步：根据 adcode 遍历要素 ====================
-  const syncHighlight = useCallback((adcode: string | null) => {
+  const syncHighlight = useCallback((adcode: string | null, shouldFly = true) => {
     const source = provincesSourceRef.current;
     if (!source) return;
 
     let styleChanged = false;
+    let targetFeature: Feature | null = null;
 
-    // 清除旧选中
-    if (selectedFeatureRef.current) {
+    if (selectedFeatureRef.current && String(selectedFeatureRef.current.get('adcode')) !== adcode) {
       selectedFeatureRef.current.setStyle(DEFAULT_STYLE);
       selectedFeatureRef.current = null;
       styleChanged = true;
@@ -144,25 +152,31 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       return;
     }
 
-    // 遍历查找匹配要素（DataV adcode 为 number，Store 中为 string，统一用 String 比较）
     for (const feature of source.getFeatures()) {
       if (String(feature.get('adcode')) === adcode) {
-        feature.setStyle(SELECTED_STYLE);
-        selectedFeatureRef.current = feature;
-        styleChanged = true;
-        
-        if (styleChanged) {
-          // 在触发飞行前强制同步重绘，确保高亮立马渲染到 VectorImageLayer 的图片缓存中
-          // 避免因为即将进入动画期而导致样式延迟更新
-          mapRef.current?.renderSync();
-        }
-        
-        // 增加微小延迟，确保浏览器完成画布的底层更新
-        setTimeout(() => {
-          flyToFeature(feature);
-        }, 10);
+        targetFeature = feature;
         break;
       }
+    }
+
+    if (!targetFeature) return;
+
+    if (selectedFeatureRef.current !== targetFeature) {
+      targetFeature.setStyle(SELECTED_STYLE);
+      selectedFeatureRef.current = targetFeature;
+      styleChanged = true;
+    }
+
+    if (styleChanged) {
+      mapRef.current?.renderSync();
+    }
+
+    if (shouldFly) {
+      setTimeout(() => {
+        if (targetFeature) {
+          flyToFeature(targetFeature);
+        }
+      }, 10);
     }
   }, [flyToFeature]);
 
@@ -238,9 +252,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     setTimeout(() => {
       map.updateSize();
       const region = useMapStore.getState().activeRegion;
-      if (region) {
-        syncHighlight(region.adcode);
-      }
+      syncHighlight(region?.adcode ?? null, false);
     }, 100);
   }, [visible, syncHighlight]);
 
@@ -262,30 +274,23 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     provincesLayerRef.current = provincesLayer;
 
     const TDT_TK = import.meta.env.VITE_TIANDITU_TK || '';
+    const getTiandituUrl = (layer: 'vec_w' | 'cva_w' | 'img_w') =>
+      `/tianditu/DataServer?T=${layer}&x={x}&y={y}&l={z}&tk=${TDT_TK}`;
 
-    // CartoDB 极简底图（日间，使用 Fastly 节点抗代理拦截）
+    // Same-origin Tianditu vector base map for mainland network reliability.
     const cartoLightLayer = new TileLayer({
       source: new XYZ({
-        urls: [
-          'https://cartodb-basemaps-a.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-b.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-c.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-d.global.ssl.fastly.net/light_nolabels/{z}/{x}/{y}.png'
-        ]
+        url: getTiandituUrl('vec_w'),
       }),
       preload: 4,
       visible: !layers.wms && theme === 'light',
     });
 
-    // CartoDB 极简底图（夜间，使用 Fastly 节点抗代理拦截）
+    // Dark mode reuses Tianditu through the same proxy for mainland reliability.
     const cartoDarkLayer = new TileLayer({
+      className: 'ol-layer geoai-dark-basemap',
       source: new XYZ({
-        urls: [
-          'https://cartodb-basemaps-a.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-b.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-c.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png',
-          'https://cartodb-basemaps-d.global.ssl.fastly.net/dark_nolabels/{z}/{x}/{y}.png'
-        ]
+        url: getTiandituUrl('vec_w'),
       }),
       preload: 4,
       visible: !layers.wms && theme === 'dark',
@@ -293,8 +298,9 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
 
     // 天地图中文注记
     const tdtCvaLayer = new TileLayer({
+      className: 'ol-layer geoai-tdt-labels',
       source: new XYZ({
-        url: `https://t0.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+        url: getTiandituUrl('cva_w'),
       }),
       preload: 4,
       visible: true, // 注记始终保持在上面（如果你希望在卫星下也显示的话。如果没有字就不显示，可以改为 !layers.wms）
@@ -305,7 +311,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     // 天地图卫星影像
     const satelliteLayer = new TileLayer({
       source: new XYZ({
-        url: `https://t0.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${TDT_TK}`,
+        url: getTiandituUrl('img_w'),
       }),
       preload: 4,
       visible: layers.wms,
@@ -447,13 +453,14 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       });
       provincesSourceRef.current.clear();
       provincesSourceRef.current.addFeatures(features);
+      notifyReady();
     })();
 
     return () => {
       viewport.removeEventListener('pointerleave', handlePointerLeave);
       map.setTarget(undefined);
     };
-  }, [loadProvincesData, flyToFeature, setActiveRegion]);
+  }, [loadProvincesData, flyToFeature, notifyReady, setActiveRegion]);
 
   // ==================== 图层可见性 ====================
   useEffect(() => {

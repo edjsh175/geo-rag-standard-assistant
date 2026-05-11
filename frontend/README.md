@@ -1,20 +1,34 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+﻿# GeoAI Frontend
 
-# Run and deploy your AI Studio app
+## 概述
+前端基于 React + Vite，提供：
+- 聊天检索交互面板
+- 2D/3D 地图展示与联动
+- 文档引用与详情抽屉
 
-This contains everything you need to run your app locally.
+## 本地启动
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-View your app in AI Studio: https://ai.studio/apps/92bdd86b-7e87-4174-91df-f8967488d7c0
+默认地址：`http://localhost:3000`
 
-## Run Locally
+## API 配置
+前端 API 基础地址位于 `src/lib/api/config.ts`：
+- 默认：`/api`
+- 本地开发时，Vite 会把 `/api` 代理到 `http://localhost:8000`
+- 仅在跨域或特殊部署场景通过 `VITE_API_URL` 覆盖
 
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## 目录
+```text
+frontend/
+├─ src/
+│  ├─ components/
+│  ├─ services/
+│  ├─ store/
+│  └─ App.tsx
+├─ package.json
+└─ vite.config.ts
+```

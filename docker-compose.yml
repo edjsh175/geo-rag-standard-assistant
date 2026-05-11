@@ -1,48 +1,45 @@
-services:
-  # PostgreSQL + PostGIS + pgvector 三合一数据库
+﻿services:
   postgis:
     image: postgis/postgis:16-3.4
     container_name: geoai-postgis
     environment:
-      POSTGRES_DB: geoai_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${GEOAI_POSTGRES_DB:-geoai_db}
+      POSTGRES_USER: ${GEOAI_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${GEOAI_POSTGRES_PASSWORD:-change_me_postgres}
     ports:
       - "5432:5432"
     volumes:
       - postgis_data:/var/lib/postgresql/data
-      - ./docker/init-scripts:/docker-entrypoint-initdb.d  # 初始化脚本
+      - ./docker/init-scripts:/docker-entrypoint-initdb.d
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${GEOAI_POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # GeoServer 地图服务（可选）
   geoserver:
     image: osgeo/geoserver:2.24.0
     container_name: geoai-geoserver
     environment:
-      GEOSERVER_ADMIN_USER: admin
-      GEOSERVER_ADMIN_PASSWORD: geoserver
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER:-admin}
+      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD:-change_me_geoserver}
     ports:
       - "8080:8080"
     volumes:
       - geoserver_data:/opt/geoserver/data_dir
-      - ./docker/geoserver/styles:/styles  # 自定义样式
+      - ./docker/geoserver/styles:/styles
     depends_on:
       postgis:
         condition: service_healthy
     restart: unless-stopped
 
-  # MySQL 元数据数据库
   mysql:
     image: mysql:8.0
     container_name: geoai-mysql
     environment:
-      MYSQL_DATABASE: disaster_knowledge
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ${GEOAI_MYSQL_DATABASE:-disaster_knowledge}
+      MYSQL_ROOT_PASSWORD: ${GEOAI_MYSQL_ROOT_PASSWORD:-change_me_mysql}
     ports:
       - "3306:3306"
     volumes:
@@ -55,7 +52,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI 后端服务
   backend:
     build:
       context: .
@@ -63,36 +59,35 @@ services:
       target: backend
     container_name: geoai-backend
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgis:5432/geoai_db
-      - MYSQL_URL=mysql://root:root@mysql:3306/disaster_knowledge
-      - GEOSERVER_URL=http://geoserver:8080/geoserver
-      - REDIS_URL=redis://:123456@redis:6379/0
-      - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=admin
-      - MINIO_SECRET_KEY=password123
-      - MINIO_BUCKET=geoai-assets
-      - ZHIPU_API_KEY=${ZHIPU_API_KEY:-}
+      DATABASE_URL: ${GEOAI_DATABASE_URL:-postgresql+asyncpg://postgres:change_me_postgres@postgis:5432/geoai_db}
+      MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/disaster_knowledge}
+      GEOSERVER_URL: ${GEOAI_GEOSERVER_URL:-http://geoserver:8080/geoserver}
+      REDIS_URL: ${GEOAI_REDIS_URL:-redis://:change_me_redis@redis:6379/0}
+      MINIO_ENDPOINT: ${GEOAI_MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${GEOAI_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${GEOAI_MINIO_SECRET_KEY:-change_me_minio}
+      MINIO_BUCKET: ${GEOAI_MINIO_BUCKET:-geoai-assets}
+      ZHIPU_API_KEY: ${GEOAI_ZHIPU_API_KEY:-}
+      OPENAI_API_KEY: ${GEOAI_OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${GEOAI_DEEPSEEK_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data  # 挂载数据目录
-      - ./logs:/app/logs  # 挂载日志目录
+      - ./data:/app/data
+      - ./logs:/app/logs
     depends_on:
       postgis:
         condition: service_healthy
       mysql:
         condition: service_healthy
     restart: unless-stopped
-    command: >
-      sh -c "python scripts/build_vector_db.py --init &&
-             uvicorn src.geoai.api.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: uvicorn Backend.main:app --host 0.0.0.0 --port 8000
 
-  # Nginx 前端代理（未来Vue前端）
   frontend:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: frontend
+      target: frontend-runtime
     container_name: geoai-frontend
     ports:
       - "80:80"
@@ -100,7 +95,6 @@ services:
       - backend
     restart: unless-stopped
 
-  # Redis 缓存（可选）
   redis:
     image: redis:7-alpine
     container_name: geoai-redis
@@ -109,15 +103,14 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
-    command: redis-server --requirepass 123456 --appendonly yes
+    command: redis-server --requirepass ${GEOAI_REDIS_PASSWORD:-change_me_redis} --appendonly yes
 
-  # MinIO 对象存储
   minio:
     image: minio/minio
     container_name: geoai-minio
     environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: password123
+      MINIO_ROOT_USER: ${GEOAI_MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${GEOAI_MINIO_ROOT_PASSWORD:-change_me_minio}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -141,3 +134,5 @@ volumes:
 networks:
   default:
     name: geoai-network
+
+
