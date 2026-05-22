@@ -1,44 +1,57 @@
-﻿# GeoAI 空间规划智能检索与可视化系统
+# GeoRAG Planning Assistant / GeoRAG 国土空间规划智能检索与可视化助手
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Node](https://img.shields.io/badge/Node-18%2B-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
-GeoAI 面向测绘/国土空间规划标准文档，提供：
-- 文档切分与向量化入库
-- 语义检索 + 大模型回答
-- 地图联动展示（OpenLayers 2D + Cesium 3D）
+GeoRAG Planning Assistant is a retrieval-augmented assistant for spatial planning and surveying standards. It combines semantic document search, LLM-based Q&A, citation-backed answers, and 2D/3D geospatial visualization.
 
-## 当前技术栈
-- 后端：FastAPI、SQLAlchemy Async、PostgreSQL(pgvector/PostGIS)、MySQL、Redis
-- 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand
+GeoRAG 国土空间规划智能检索与可视化助手面向国土空间规划、测绘标准与地理信息政策资料，提供文档语义检索、大模型问答、引用溯源和二维/三维地图联动能力。
 
-MinIO 目前不是当前运行路径的必需依赖，仅作为后续“AI 引用文档点击下载”对象存储流程的预留能力。
+## Features / 功能
 
-## 后端入口（已统一）
-容器与联调统一使用：`Backend/main.py`
-- 本地启动：`uvicorn main:app --reload --host 0.0.0.0 --port 8000`（在 `Backend` 目录）
-- Docker 启动：`docker-compose.yml` 中 backend 命令已对齐 `Backend.main:app`
+- Document ingestion and chunking for planning, surveying, and GIS standards.
+- Vector retrieval over standards, policies, and technical documents.
+- LLM Q&A with document citations and follow-up context.
+- 2D/3D map visualization with OpenLayers and Cesium.
+- Backend APIs for search, spatial data, documents, authentication, and system status.
 
-## 目录结构
+- 标准文档切分、清洗与向量化入库。
+- 面向标准、规范、政策资料的语义检索。
+- 支持引用来源和上下文追问的大模型问答。
+- 基于 OpenLayers 与 Cesium 的二维/三维地图展示。
+- 提供检索、空间、文档、认证和系统管理相关 API。
+
+## Tech Stack / 技术栈
+
+- Backend: FastAPI, SQLAlchemy Async, PostgreSQL, pgvector, PostGIS, MySQL, Redis.
+- Frontend: React 19, TypeScript, Vite, OpenLayers, Cesium, Zustand.
+- Data services: PostgreSQL stores vector and spatial data in tables such as `policy_chunks` and `spatial_regions`; MySQL stores standard metadata in `disaster_knowledge.geoai_metadata`.
+
+MinIO is currently reserved for future object storage and source-document download flows. It is not required for the main retrieval and visualization path.
+
+MinIO 当前作为后续对象存储和源文档下载能力预留，不是主检索与可视化链路的必需依赖。
+
+## Architecture / 架构概览
+
 ```text
-ragAI知识库/
-├─ Backend/                  # 主后端（唯一联调入口）
+geo-rag-planning-assistant/
+├─ Backend/                  # FastAPI backend entrypoint: Backend/main.py
 │  ├─ main.py
 │  └─ app/
-├─ frontend/                 # React 前端
+├─ frontend/                 # React + Vite frontend
 │  ├─ src/
 │  └─ package.json
-├─ src/geoai/                # 历史脚本与模块
-├─ scripts/                  # 数据处理脚本
-├─ docs/
-│  └─ requirement.md
+├─ src/geoai/                # Legacy scripts and modules
+├─ scripts/                  # Data processing and deployment scripts
+├─ docs/                     # Product, deployment, and release docs
 └─ docker-compose.yml
 ```
 
-## 快速开始
+## Quick Start / 快速开始
 
-### 后端
+### Backend / 后端
+
 ```bash
 cd Backend
 python -m venv .venv
@@ -48,30 +61,46 @@ copy .env.example .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-启动后端前必须在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于 `policy_chunks` 向量/空间检索数据，MySQL 使用 `disaster_knowledge.geoai_metadata` 存储标准元数据；任一核心数据库不可用时后端会启动失败。
+Before starting the backend, configure usable PostgreSQL and MySQL connections in `Backend/.env`. PostgreSQL is required for vector and spatial retrieval data; MySQL is required for standards metadata. The backend fails fast if either core database is unavailable.
 
-### 前端
+启动后端前，请在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于向量/空间检索数据，MySQL 用于标准元数据；任一核心数据库不可用时后端会启动失败。
+
+### Frontend / 前端
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-前端默认请求同源路径 `/api`。本地开发时 Vite 会把 `/api` 代理到 `http://localhost:8000`；只有跨域或特殊部署时才需要通过 `VITE_API_URL` 覆盖。
+The frontend uses `/api` by default. During local development, Vite proxies `/api` to `http://localhost:8000`; use `VITE_API_URL` only for cross-origin or special deployment scenarios.
+
+前端默认请求同源 `/api`。本地开发时 Vite 会把 `/api` 代理到 `http://localhost:8000`；只有跨域或特殊部署时才需要通过 `VITE_API_URL` 覆盖。
 
 ### Docker
+
 ```bash
 docker compose up -d
 ```
 
-## 安全说明
-- 仓库中的示例配置已替换为占位符，不再包含真实密钥。
-- 生产环境请通过本地 `.env` 或部署平台密钥管理注入凭据。
+## Documentation / 文档
 
-## 文档
-- 产品需求：`docs/requirement.md`
-- 后端说明：`Backend/README.md`
-- 前端说明：`frontend/README.md`
+- Product requirements / 产品需求：`docs/requirement.md`
+- Backend guide / 后端说明：`Backend/README.md`
+- Frontend guide / 前端说明：`frontend/README.md`
+- Deployment guide / 部署说明：`docs/DEPLOY.md`
+- Release workflow / 发布流程：`docs/RELEASE_WORKFLOW.md`
+
+## Security / 安全说明
+
+- Example configuration values are placeholders and must not be used in production.
+- Real credentials should be injected through local `.env` files or deployment platform secret management.
+- Do not commit real API keys, database passwords, or server credentials.
+
+- 仓库示例配置均应使用占位符。
+- 生产凭据请通过本地 `.env` 或部署平台密钥管理注入。
+- 不要提交真实 API Key、数据库密码或服务器凭据。
 
 ## License
+
 MIT

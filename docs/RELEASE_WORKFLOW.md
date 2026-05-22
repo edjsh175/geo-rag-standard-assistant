@@ -1,4 +1,4 @@
-# GeoAI 发布工作流
+# GeoRAG Planning Assistant 发布工作流
 
 这份文档只回答一件事：以后如何把代码安全、可追踪地发布到服务器。
 
