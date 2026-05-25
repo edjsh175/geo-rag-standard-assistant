@@ -100,8 +100,8 @@ AUTH_COOKIE_SECURE=True
 ```bash
 cd /srv/geoai/app
 git fetch origin
-git switch prod-hardening
-git pull --ff-only origin prod-hardening
+git switch main
+git pull --ff-only origin main
 node scripts/deploy_frontend_build.mjs \
   --expected-commit YOUR_GIT_COMMIT_SHA \
   --npm-install ci

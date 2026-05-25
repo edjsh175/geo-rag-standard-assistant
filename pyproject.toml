@@ -104,14 +104,15 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["Backend/tests"]
+pythonpath = ["Backend"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
+addopts = "-q"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["Backend/app"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

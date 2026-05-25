@@ -4,7 +4,7 @@
 
 ## 1. 分支约定
 
-- `prod-hardening`：正式生产主线
+- `main`：正式生产主线
 - `fix/*`、`feat/*`：短期开发分支
 - `backup/local-YYYYMMDD-HHMM`：本地脏状态快照
 - `backup/server-YYYYMMDD-HHMM`：服务器上线前快照
@@ -21,8 +21,8 @@
 从生产主线拉一个短分支：
 
 ```bash
-git switch prod-hardening
-git pull --ff-only origin prod-hardening
+git switch main
+git pull --ff-only origin main
 git switch -c fix/your-change
 ```
 
@@ -34,7 +34,7 @@ git commit -m "fix: describe your change"
 git push -u origin fix/your-change
 ```
 
-确认无误后，把变更合回 `prod-hardening`。
+确认无误后，把变更合回 `main`。
 
 ## 3. 有脏状态时先备份
 
@@ -54,8 +54,8 @@ git push -u origin backup/local-YYYYMMDD-HHMM
 先在本地确认要发布的 commit：
 
 ```bash
-git switch prod-hardening
-git pull --ff-only origin prod-hardening
+git switch main
+git pull --ff-only origin main
 git rev-parse HEAD
 ```
 
@@ -66,8 +66,8 @@ git rev-parse HEAD
 ```bash
 cd /srv/geoai/app
 git fetch origin
-git switch prod-hardening
-git pull --ff-only origin prod-hardening
+git switch main
+git pull --ff-only origin main
 node scripts/deploy_frontend_build.mjs \
   --expected-commit YOUR_GIT_COMMIT_SHA \
   --npm-install skip
@@ -114,7 +114,7 @@ curl -s https://SERVER_PUBLIC_IP/api/search/health
 
 必须确认：
 
-- 当前分支是 `prod-hardening`
+- 当前分支是 `main`
 - 当前 `HEAD` 等于你准备发布的 commit
 - `git status --short` 为空，或只剩明确允许的临时文件
 - `frontend/dist/build-meta.json` 里的 `git_commit` 也等于同一个 commit
