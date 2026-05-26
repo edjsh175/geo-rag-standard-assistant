@@ -1,4 +1,4 @@
-﻿"""
+"""
 GeoAI application settings.
 Use environment variables in production.
 """

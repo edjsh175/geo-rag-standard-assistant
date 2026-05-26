@@ -1,4 +1,4 @@
-﻿services:
+services:
   postgis:
     image: postgis/postgis:16-3.4
     container_name: geoai-postgis

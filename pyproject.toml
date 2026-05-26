@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "geoai-system"
+name = "geo-rag-planning-assistant"
 version = "0.1.0"
-description = "GeoAI空间规划智能检索与可视化系统"
+description = "GeoRAG assistant for spatial planning and surveying standards: semantic search, LLM Q&A, and 2D/3D map visualization."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "GIS Development Team", email = "team@example.com"},
+    {name = "GeoRAG Planning Assistant Contributors"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
     "Topic :: Text Processing :: General",
 ]
-keywords = ["gis", "rag", "llm", "postgis", "spatial-analysis"]
+keywords = ["geoai", "georag", "rag", "llm", "semantic-search", "spatial-planning", "surveying", "postgis", "pgvector"]
 requires-python = ">=3.12"
 dependencies = [
     "geopandas>=1.1.0",
@@ -59,10 +59,9 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/geoai-system"
-Repository = "https://github.com/yourusername/geoai-system.git"
-Documentation = "https://yourusername.github.io/geoai-system/"
-Issues = "https://github.com/yourusername/geoai-system/issues"
+Homepage = "https://github.com/edjsh175/geo-rag-planning-assistant"
+Repository = "https://github.com/edjsh175/geo-rag-planning-assistant.git"
+Issues = "https://github.com/edjsh175/geo-rag-planning-assistant/issues"
 
 [project.scripts]
 build-vector-db = "scripts.build_vector_db:main"
@@ -105,14 +104,15 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["Backend/tests"]
+pythonpath = ["Backend"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
+addopts = "-q"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["Backend/app"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

@@ -1,6 +1,6 @@
 # 登录页与启动加载页部署说明
 
-本文记录 GeoAI 当前“单管理员登录 + 启动加载页”的运行方式，以及部署时必须注意的事项。
+本文记录 GeoRAG Planning Assistant 当前“单管理员登录 + 启动加载页”的运行方式，以及部署时必须注意的事项。
 
 ## 1. 功能范围
 
@@ -100,8 +100,8 @@ AUTH_COOKIE_SECURE=True
 ```bash
 cd /srv/geoai/app
 git fetch origin
-git switch prod-hardening
-git pull --ff-only origin prod-hardening
+git switch main
+git pull --ff-only origin main
 node scripts/deploy_frontend_build.mjs \
   --expected-commit YOUR_GIT_COMMIT_SHA \
   --npm-install ci

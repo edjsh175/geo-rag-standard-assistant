@@ -1,4 +1,4 @@
-# GeoAI 竞赛环境部署指南
+# GeoRAG Planning Assistant 竞赛环境部署指南
 
 本文档用于小型单机竞赛演示部署，当前推荐采用 **非 Docker** 方式部署。
 
@@ -57,7 +57,7 @@ systemctl enable --now redis-server
 ```bash
 mkdir -p /srv/geoai
 cd /srv/geoai
-git clone https://github.com/edjsh175/-AI---RAG-.git app
+git clone https://github.com/edjsh175/geo-rag-planning-assistant.git app
 cd app
 git checkout prod-hardening
 ```

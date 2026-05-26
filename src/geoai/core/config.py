@@ -1,4 +1,4 @@
-﻿"""
+"""
 Project configuration module.
 Load sensitive values from environment variables first.
 """

@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "geo-rag-planning-assistant-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "node ./scripts/check-text-encoding.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
