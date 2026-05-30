@@ -43,9 +43,12 @@ export const chatService = {
         signal,
       });
       const searchResponse = response.data;
+      const quota = searchResponse.quota;
 
       // 转换搜索响应为聊天响应
-      const fallbackMessage = (searchResponse.results?.length ?? 0) > 0
+      const fallbackMessage = quota?.exhausted
+        ? `${quota.contact_text}\n\n您仍可继续查看检索结果、引用文档和地图联动内容。`
+        : (searchResponse.results?.length ?? 0) > 0
         ? '已检索到相关标准，请查看下方参考文档。'
         : '未在库中检索到相关标准规定。';
 
@@ -54,6 +57,7 @@ export const chatService = {
         conversation_id: conversationId || `conv_${Date.now()}`,
         references: searchResponse.results || [],
         timestamp: new Date().toISOString(),
+        quota,
       };
 
       return chatResponse;

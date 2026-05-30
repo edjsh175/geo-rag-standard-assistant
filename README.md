@@ -8,6 +8,12 @@ GeoRAG Planning Assistant is a retrieval-augmented assistant for spatial plannin
 
 GeoRAG 国土空间规划智能检索与可视化助手面向国土空间规划、测绘标准与地理信息政策资料，提供文档语义检索、大模型问答、引用溯源和二维/三维地图联动能力。
 
+## Live Demo / 在线演示
+
+- Demo: [https://8.156.85.7/](https://8.156.85.7/)
+- Click `访客体验` to enter without registration.
+- Visitor mode supports retrieval, map exploration, citations, and limited AI answers. When the AI quota is used up, search results remain available.
+
 ## Features / 功能
 
 - Document ingestion and chunking for planning, surveying, and GIS standards.

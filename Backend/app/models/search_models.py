@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.services.demo_quota_service import DemoQuotaStatus
+
 
 class SpatialFilter(BaseModel):
     """Spatial filtering for search results."""
@@ -103,6 +105,7 @@ class SearchResponse(BaseModel):
     suggestions: Optional[List[str]] = Field(None, description="Suggested related queries.")
     generated_answer: Optional[str] = Field(None, description="Generated answer, if requested.")
     generation_time: Optional[float] = Field(None, description="Generation duration in seconds.")
+    quota: Optional[DemoQuotaStatus] = Field(None, description="Visitor demo quota status.")
 
 
 class SearchHistory(BaseModel):

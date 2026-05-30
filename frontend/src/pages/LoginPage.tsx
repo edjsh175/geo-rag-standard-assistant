@@ -23,11 +23,12 @@ function getErrorMessage(error: unknown): string {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { login, status } = useAuth();
+  const { login, startDemo, status } = useAuth();
   const theme = useResolvedTheme();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [demoSubmitting, setDemoSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isLight = theme === 'light';
 
@@ -46,6 +47,19 @@ export default function LoginPage() {
       setError(getErrorMessage(nextError));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDemoAccess = async () => {
+    setDemoSubmitting(true);
+    setError(null);
+    try {
+      await startDemo();
+      navigate('/', { replace: true });
+    } catch (nextError) {
+      setError(getErrorMessage(nextError));
+    } finally {
+      setDemoSubmitting(false);
     }
   };
 
@@ -175,13 +189,32 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || demoSubmitting}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-container px-4 py-3 text-sm font-semibold text-on-primary-fixed transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <span>{submitting ? '正在验证身份' : '进入系统'}</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
             </form>
+
+            <div className="my-5 flex items-center gap-3">
+              <div className="h-px flex-1 bg-outline/60" />
+              <span className="text-xs font-medium text-on-background/45">公开演示</span>
+              <div className="h-px flex-1 bg-outline/60" />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDemoAccess}
+              disabled={submitting || demoSubmitting}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-primary-container/25 bg-primary-container/10 px-4 py-3 text-sm font-semibold text-primary-container transition hover:bg-primary-container/15 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              <span>{demoSubmitting ? '正在开启演示' : '访客体验'}</span>
+              <ArrowRight className="h-4 w-4" />
+            </button>
+            <p className="mt-3 text-center text-xs leading-5 text-on-background/45">
+              访客无需注册，可体验检索、地图和有限次数的 AI 回答。
+            </p>
           </div>
         </section>
       </main>

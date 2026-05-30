@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
 
-from app.core.security import require_authenticated_admin
+from app.core.security import require_authenticated_user
 
-router = APIRouter(dependencies=[Depends(require_authenticated_admin)])
+router = APIRouter(dependencies=[Depends(require_authenticated_user)])
 
 
 class SpatialQuery(BaseModel):

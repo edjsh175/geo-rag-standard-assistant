@@ -254,7 +254,8 @@ const getBootErrorMessage = (error: unknown): string => {
 type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
 
 export default function App() {
-  const { logout, user } = useAuth();
+  const { logout, user, updateQuota } = useAuth();
+  const isVisitor = user?.role === 'visitor';
   const reduceMotion = useReducedMotion();
   // ==================== 全局空间状态 ====================
   const viewMode = useMapStore((s) => s.viewMode);
@@ -709,6 +710,9 @@ export default function App() {
         abortController.signal,
         followUpContext
       );
+      if (response.quota) {
+        updateQuota(response.quota);
+      }
 
       // 检查是否被中止
       if (abortController.signal.aborted) {
@@ -1044,8 +1048,10 @@ export default function App() {
           </div>
           <nav className="flex items-center h-[48px] ml-2 gap-1">
             <a className="nav-active text-xs font-medium h-full flex items-center px-4 transition-all" href="#">检索</a>
-            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">知识库</a>
-            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">系统管理</a>
+            <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="/crawler/">知识库</a>
+            {!isVisitor && (
+              <a className="text-xs font-medium h-full flex items-center px-4 transition-colors text-on-background/35 hover:text-on-background/70" href="#">系统管理</a>
+            )}
           </nav>
         </div>
         <div className="flex items-center gap-3">
@@ -1233,7 +1239,13 @@ export default function App() {
               onCitationClick={handleCitationClick}
               disabled={isSearching}
               title="Sentinel GeoAI"
-              status="模型就绪 · RAG 已同步"
+              status={
+                user?.role === 'visitor'
+                  ? user.quota?.exhausted
+                    ? '访客模式 · AI 额度已用完'
+                    : `访客模式 · AI 剩余 ${user.quota?.remaining ?? 0}/${user.quota?.daily_limit ?? 10}`
+                  : '模型就绪 · RAG 已同步'
+              }
               quickTags={['#城镇开发边界', '#永久基本农田', '#生态保护红线', '#四川技术规范']}
             />
           </div>

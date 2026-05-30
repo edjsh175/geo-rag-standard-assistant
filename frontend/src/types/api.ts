@@ -53,6 +53,15 @@ export interface SearchRequest {
   follow_up_context?: FollowUpContext;
 }
 
+export interface DemoQuotaStatus {
+  remaining: number;
+  daily_limit: number;
+  global_remaining: number;
+  reset_at: string;
+  exhausted: boolean;
+  contact_text: string;
+}
+
 export interface SearchResponse {
   query: string;
   results: DocumentResult[];
@@ -62,6 +71,7 @@ export interface SearchResponse {
   suggestions?: string[];
   generated_answer?: string;
   generation_time?: number;
+  quota?: DemoQuotaStatus;
 }
 
 export interface SearchHistory {
@@ -107,6 +117,7 @@ export interface ChatResponse {
   conversation_id: string;
   references?: DocumentResult[];
   timestamp: string;
+  quota?: DemoQuotaStatus;
 }
 
 export interface DocumentDetail {
