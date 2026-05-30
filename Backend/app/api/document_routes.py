@@ -15,12 +15,12 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from app.core.config import settings
-from app.core.security import require_authenticated_admin, require_system_api_key
+from app.core.security import require_admin_or_system_api_key, require_authenticated_admin, require_authenticated_user
 from app.models.document_models import DocumentMetadata
 from app.services.document_asset_service import DocumentAssetService
 from app.services.document_service import DocumentService
 
-router = APIRouter(dependencies=[Depends(require_authenticated_admin)])
+router = APIRouter()
 
 
 class UploadResponse(BaseModel):
@@ -111,7 +111,7 @@ async def _read_upload_with_limit(file: UploadFile) -> bytes:
 @router.post(
     "/presigned-url",
     response_model=PresignedResponse,
-    dependencies=[Depends(require_system_api_key)],
+    dependencies=[Depends(require_admin_or_system_api_key)],
 )
 async def generate_presigned_url(
     request: PresignedRequest,
@@ -133,7 +133,11 @@ async def generate_presigned_url(
         ) from exc
 
 
-@router.post("/upload", response_model=UploadResponse, dependencies=[Depends(require_system_api_key)])
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    dependencies=[Depends(require_admin_or_system_api_key)],
+)
 async def upload_document(
     file: UploadFile = File(..., description="Document to upload."),
     title: Optional[str] = Form(None, description="Document title."),
@@ -182,6 +186,7 @@ async def upload_document(
 async def download_document_object(
     object_name: str,
     document_service: DocumentService = Depends(DocumentService),
+    _current_user=Depends(require_authenticated_admin),
 ):
     try:
         download_data = document_service.get_download_stream(object_name)
@@ -208,6 +213,7 @@ async def download_document_by_id(
     doc_id: str,
     document_service: DocumentService = Depends(DocumentService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    _current_user=Depends(require_authenticated_user),
 ):
     download_target = await asset_service.get_download_target(doc_id)
     if not download_target:
@@ -239,6 +245,7 @@ async def list_documents(
     page: int = Query(1, description="Page number."),
     page_size: int = Query(20, description="Page size."),
     file_type: Optional[str] = Query(None, description="File type filter."),
+    _current_user=Depends(require_authenticated_user),
 ):
     _ = file_type
     return {
@@ -249,7 +256,10 @@ async def list_documents(
     }
 
 
-@router.post("/batch-upload", dependencies=[Depends(require_system_api_key)])
+@router.post(
+    "/batch-upload",
+    dependencies=[Depends(require_admin_or_system_api_key)],
+)
 async def batch_upload_documents(
     files: List[UploadFile] = File(..., description="Documents to upload."),
     document_service: DocumentService = Depends(DocumentService),
@@ -287,7 +297,10 @@ async def batch_upload_documents(
     }
 
 
-@router.post("/reindex/{doc_id}", dependencies=[Depends(require_system_api_key)])
+@router.post(
+    "/reindex/{doc_id}",
+    dependencies=[Depends(require_admin_or_system_api_key)],
+)
 async def reindex_document(doc_id: str):
     return {
         "document_id": doc_id,
@@ -296,7 +309,7 @@ async def reindex_document(doc_id: str):
 
 
 @router.get("/statistics")
-async def get_document_statistics():
+async def get_document_statistics(_current_admin=Depends(require_authenticated_admin)):
     return {
         "total_documents": 0,
         "total_size": 0,
@@ -313,6 +326,7 @@ async def get_document_statistics():
 async def get_document_info(
     doc_id: str,
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    _current_user=Depends(require_authenticated_user),
 ):
     detail = await asset_service.get_document_detail_payload(doc_id)
     if not detail:
@@ -320,7 +334,10 @@ async def get_document_info(
     return DocumentDetailResponse(**detail)
 
 
-@router.delete("/{doc_id}", dependencies=[Depends(require_system_api_key)])
+@router.delete(
+    "/{doc_id}",
+    dependencies=[Depends(require_admin_or_system_api_key)],
+)
 async def delete_document(doc_id: str):
     return {
         "document_id": doc_id,

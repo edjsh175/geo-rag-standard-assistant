@@ -11,6 +11,7 @@ import { AxiosError } from 'axios';
 
 import { API_UNAUTHORIZED_EVENT } from '../lib/api/config';
 import { authService, type AuthUser, type LoginCredentials } from '../services/authService';
+import type { DemoQuotaStatus } from '../types/api';
 
 type AuthStatus = 'booting' | 'anonymous' | 'authenticated';
 
@@ -18,8 +19,10 @@ interface AuthContextValue {
   status: AuthStatus;
   user: AuthUser | null;
   login: (credentials: LoginCredentials) => Promise<AuthUser>;
+  startDemo: () => Promise<AuthUser>;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
+  updateQuota: (quota: DemoQuotaStatus) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -68,6 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return nextUser;
   }, []);
 
+  const startDemo = useCallback(async () => {
+    const nextUser = await authService.startDemo();
+    setUser(nextUser);
+    setStatus('authenticated');
+    return nextUser;
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await authService.logout();
@@ -77,15 +87,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateQuota = useCallback((quota: DemoQuotaStatus) => {
+    setUser((current) => (current ? { ...current, quota } : current));
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       status,
       user,
       login,
+      startDemo,
       logout,
       refreshSession,
+      updateQuota,
     }),
-    [login, logout, refreshSession, status, user]
+    [login, logout, refreshSession, startDemo, status, updateQuota, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

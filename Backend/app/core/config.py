@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     AUTH_COOKIE_SAMESITE: str = "lax"
     SYSTEM_API_KEY: Optional[str] = None
     SYSTEM_CLEAR_CACHE_CONFIRM_VALUE: str = "clear-cache"
+    PUBLIC_DEMO_ENABLED: bool = True
+    DEMO_DAILY_AI_QUOTA_PER_VISITOR: int = 10
+    DEMO_DAILY_AI_QUOTA_PER_IP: int = 30
+    DEMO_GLOBAL_DAILY_AI_QUOTA: int = 300
+    DEMO_QUOTA_TIMEZONE: str = "Asia/Shanghai"
+    DEMO_CONTACT_TEXT: str = "演示额度已用完，请联系项目作者获取更多体验额度。"
 
     LOG_LEVEL: str = "INFO"
     LOG_FILE: Optional[Path] = Path("logs/geoai.log")

@@ -13,15 +13,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.core.security import require_authenticated_admin
+from app.core.auth import UserIdentity
+from app.core.security import require_authenticated_user
 from app.models.search_models import FollowUpContext, SearchRequest, SearchResponse
+from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
 from app.services.document_asset_service import DocumentAssetService
 from app.services.search_service import SearchService
 
 logger = logging.getLogger(__name__)
 
 public_router = APIRouter()
-router = APIRouter(dependencies=[Depends(require_authenticated_admin)])
+router = APIRouter()
 
 RELAXED_VECTOR_THRESHOLD = 0.35
 NON_SEARCH_INTENTS = {"greeting", "other", "dialog_management"}
@@ -40,11 +42,21 @@ async def health_check() -> HealthCheckResponse:
 @router.post("/query", response_model=SearchResponse)
 async def search_documents(
     request: SearchRequest,
+    current_user: UserIdentity = Depends(require_authenticated_user),
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    quota_service: DemoQuotaService = Depends(get_demo_quota_service),
 ):
     try:
         start_time = datetime.now()
+        quota_decision = await _consume_visitor_generation_quota(
+            request,
+            current_user,
+            quota_service,
+        )
+        generation_allowed = request.use_generation and (
+            quota_decision is None or quota_decision.allowed
+        )
 
         follow_up_context = request.follow_up_context
         if (
@@ -75,7 +87,9 @@ async def search_documents(
                     search_mode=request.search_mode,
                 )
 
-                if request.use_generation:
+                base_response.quota = _quota_status(quota_decision)
+
+                if generation_allowed:
                     try:
                         generated_answer, generation_time = await search_service.generate_document_follow_up_answer(
                             query=request.query,
@@ -91,8 +105,18 @@ async def search_documents(
                         )
                     else:
                         return base_response
-                else:
-                    return base_response
+                return base_response
+
+        if not generation_allowed:
+            results = await _retrieve_results(request, search_service, asset_service)
+            return SearchResponse(
+                query=request.query,
+                results=results,
+                total_count=len(results),
+                search_time=(datetime.now() - start_time).total_seconds(),
+                search_mode=request.search_mode,
+                quota=_quota_status(quota_decision),
+            )
 
         intent = await search_service.detect_intent(request.query)
         logger.info("Search intent detected for query=%r: %s", request.query, intent)
@@ -105,7 +129,7 @@ async def search_documents(
                     query=request.query,
                     history=request.history,
                 )
-            elif request.use_generation:
+            elif generation_allowed:
                 try:
                     generated_answer, _ = await search_service.generate_chitchat_response(
                         query=request.query,
@@ -124,33 +148,12 @@ async def search_documents(
                 total_count=0,
                 search_time=(datetime.now() - start_time).total_seconds(),
                 search_mode=request.search_mode,
-                generated_answer=generated_answer if request.use_generation else None,
-                generation_time=generation_time if request.use_generation else None,
+                generated_answer=generated_answer if generation_allowed else None,
+                generation_time=generation_time if generation_allowed else None,
+                quota=_quota_status(quota_decision),
             )
 
-        results = await search_service.search(
-            query=request.query,
-            top_k=request.top_k,
-            threshold=request.threshold,
-            spatial_filter=request.spatial_filter,
-            metadata_filter=request.metadata_filter,
-        )
-
-        if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
-            logger.info(
-                "Retrying search with relaxed threshold: %.2f -> %.2f",
-                request.threshold,
-                RELAXED_VECTOR_THRESHOLD,
-            )
-            results = await search_service.search(
-                query=request.query,
-                top_k=request.top_k,
-                threshold=RELAXED_VECTOR_THRESHOLD,
-                spatial_filter=request.spatial_filter,
-                metadata_filter=request.metadata_filter,
-            )
-
-        results = await asset_service.enrich_search_results(results)
+        results = await _retrieve_results(request, search_service, asset_service)
 
         base_response = SearchResponse(
             query=request.query,
@@ -160,7 +163,9 @@ async def search_documents(
             search_mode=request.search_mode,
         )
 
-        if not request.use_generation:
+        base_response.quota = _quota_status(quota_decision)
+
+        if not generation_allowed:
             return base_response
 
         if getattr(request, "stream", False):
@@ -202,7 +207,9 @@ async def hybrid_search(
     top_k: int = Query(10, description="Maximum number of results."),
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    current_user: UserIdentity = Depends(require_authenticated_user),
 ):
+    _ = current_user
     try:
         results = await search_service.hybrid_search(
             text_query=query,
@@ -235,7 +242,9 @@ async def find_similar_documents(
     top_k: int = Query(5, description="Maximum number of similar documents."),
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    current_user: UserIdentity = Depends(require_authenticated_user),
 ):
+    _ = current_user
     try:
         similar_docs = await search_service.find_similar_documents(doc_id=doc_id, top_k=top_k)
         similar_docs = await asset_service.enrich_search_results(similar_docs)
@@ -245,3 +254,57 @@ async def find_similar_documents(
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Find similar documents failed: {exc}") from exc
+
+
+async def _retrieve_results(
+    request: SearchRequest,
+    search_service: SearchService,
+    asset_service: DocumentAssetService,
+):
+    results = await search_service.search(
+        query=request.query,
+        top_k=request.top_k,
+        threshold=request.threshold,
+        spatial_filter=request.spatial_filter,
+        metadata_filter=request.metadata_filter,
+    )
+
+    if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
+        logger.info(
+            "Retrying search with relaxed threshold: %.2f -> %.2f",
+            request.threshold,
+            RELAXED_VECTOR_THRESHOLD,
+        )
+        results = await search_service.search(
+            query=request.query,
+            top_k=request.top_k,
+            threshold=RELAXED_VECTOR_THRESHOLD,
+            spatial_filter=request.spatial_filter,
+            metadata_filter=request.metadata_filter,
+        )
+
+    return await asset_service.enrich_search_results(results)
+
+
+def _quota_status(quota_decision: DemoQuotaDecision | None):
+    return quota_decision.quota if quota_decision else None
+
+
+async def _consume_visitor_generation_quota(
+    request: SearchRequest,
+    current_user,
+    quota_service,
+) -> DemoQuotaDecision | None:
+    if not request.use_generation or getattr(current_user, "role", None) != "visitor":
+        return None
+
+    visitor_id = getattr(current_user, "visitor_id", None)
+    ip_hash = getattr(current_user, "ip_hash", None)
+    if not visitor_id or not ip_hash:
+        return DemoQuotaDecision(
+            allowed=False,
+            quota=quota_service._unavailable_status(),
+            reason="visitor_identity_missing",
+        )
+
+    return await quota_service.consume_generation(visitor_id, ip_hash)

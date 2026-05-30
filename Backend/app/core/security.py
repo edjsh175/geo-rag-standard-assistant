@@ -3,7 +3,7 @@ from typing import Annotated
 
 from fastapi import Header, HTTPException, Request, status
 
-from app.core.auth import AdminIdentity, get_authenticated_admin
+from app.core.auth import AdminIdentity, UserIdentity, get_authenticated_admin, get_authenticated_user
 from app.core.config import settings
 
 
@@ -32,6 +32,25 @@ def require_system_api_key(
     return x_api_key
 
 
+def require_admin_or_system_api_key(
+    request: Request,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> str:
+    expected_api_key = settings.SYSTEM_API_KEY
+    if x_api_key and expected_api_key and compare_digest(x_api_key, expected_api_key):
+        return "system"
+
+    try:
+        admin = get_authenticated_admin(request)
+    except HTTPException as admin_exc:
+        if x_api_key:
+            detail = "Invalid API key" if expected_api_key else "System management API is not configured"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail) from admin_exc
+        raise
+
+    return admin.username
+
+
 def require_clear_cache_confirmation(
     x_confirm_action: Annotated[str | None, Header(alias="X-Confirm-Action")] = None,
 ) -> str:
@@ -47,3 +66,7 @@ def require_clear_cache_confirmation(
 
 def require_authenticated_admin(request: Request) -> AdminIdentity:
     return get_authenticated_admin(request)
+
+
+def require_authenticated_user(request: Request) -> UserIdentity:
+    return get_authenticated_user(request)

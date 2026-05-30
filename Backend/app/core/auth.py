@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hmac
+import uuid
 from secrets import compare_digest
+from typing import Optional
 
 from fastapi import HTTPException, Request, Response, status
 from jose import JWTError, jwt
@@ -18,6 +21,14 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 class AdminIdentity:
     username: str
     role: str = "admin"
+
+
+@dataclass(frozen=True)
+class UserIdentity:
+    username: str
+    role: str = "admin"
+    visitor_id: Optional[str] = None
+    ip_hash: Optional[str] = None
 
 
 def validate_admin_auth_configuration() -> None:
@@ -57,6 +68,19 @@ def create_access_token(subject: str) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def create_visitor_access_token(visitor_id: Optional[str] = None) -> str:
+    subject = visitor_id or str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(days=1)
+    payload = {
+        "sub": "demo-visitor",
+        "role": "visitor",
+        "visitor_id": subject,
+        "exp": expires_at,
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
 def decode_access_token(token: str) -> dict[str, str]:
     return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
 
@@ -87,8 +111,29 @@ def clear_auth_cookie(response: Response) -> None:
     )
 
 
-def get_authenticated_admin(request: Request) -> AdminIdentity:
-    validate_admin_auth_configuration()
+def get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def hash_client_ip(request: Request) -> str:
+    return hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        get_client_ip(request).encode("utf-8"),
+        digestmod="sha256",
+    ).hexdigest()
+
+
+def get_authenticated_user(request: Request) -> UserIdentity:
+    if not settings.SECRET_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SECRET_KEY is not configured.",
+        )
 
     token = request.cookies.get(settings.AUTH_COOKIE_NAME)
     if not token:
@@ -106,10 +151,37 @@ def get_authenticated_admin(request: Request) -> AdminIdentity:
         ) from exc
 
     username = payload.get("sub") or ""
-    if not settings.ADMIN_USERNAME or not compare_digest(username, settings.ADMIN_USERNAME):
+    role = payload.get("role") or "admin"
+
+    if role == "visitor":
+        visitor_id = payload.get("visitor_id") or ""
+        if not visitor_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Visitor session is invalid.",
+            )
+        return UserIdentity(
+            username="demo-visitor",
+            role="visitor",
+            visitor_id=visitor_id,
+            ip_hash=hash_client_ip(request),
+        )
+
+    if role != "admin" or not settings.ADMIN_USERNAME or not compare_digest(username, settings.ADMIN_USERNAME):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session user is not allowed.",
         )
 
-    return AdminIdentity(username=username)
+    return UserIdentity(username=username, role="admin")
+
+
+def get_authenticated_admin(request: Request) -> AdminIdentity:
+    validate_admin_auth_configuration()
+    identity = get_authenticated_user(request)
+    if identity.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required.",
+        )
+    return AdminIdentity(username=identity.username)
