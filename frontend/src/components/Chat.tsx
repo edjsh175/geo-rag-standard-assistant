@@ -21,6 +21,7 @@ export interface ChatProps {
   title?: string;
   status?: string;
   quickTags?: string[];
+  headerAction?: React.ReactNode;
   className?: string;
 }
 
@@ -36,6 +37,7 @@ const Chat: React.FC<ChatProps> = ({
   title = 'Sentinel GeoAI',
   status = '模型就绪 · RAG 已同步',
   quickTags = ['#城镇开发边界', '#永久基本农田', '#生态保护红线', '#四川技术规范'],
+  headerAction,
   className,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -110,11 +112,14 @@ const Chat: React.FC<ChatProps> = ({
             </div>
           </div>
         </div>
-        <button
-          className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
-        >
-          <History className="w-3.5 h-3.5 opacity-60 text-on-background" />
-        </button>
+        <div className="flex items-center gap-2">
+          {headerAction}
+          <button
+            className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
+          >
+            <History className="w-3.5 h-3.5 opacity-60 text-on-background" />
+          </button>
+        </div>
       </div>
 
       {/* ── Messages ── */}

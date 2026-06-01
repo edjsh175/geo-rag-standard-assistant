@@ -6,13 +6,14 @@ import TileLayer from 'ol/layer/Tile';
 import VectorImageLayer from 'ol/layer/VectorImage';
 import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
-import { fromLonLat, toLonLat } from 'ol/proj';
+import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
 import GeoJSON from 'ol/format/GeoJSON';
 import { Style, Stroke, Fill } from 'ol/style';
 import Feature from 'ol/Feature';
 import { easeOut } from 'ol/easing';
 import type MapBrowserEvent from 'ol/MapBrowserEvent';
 import { loadProvinceCollection } from '../lib/bootstrap';
+import { getMapFitPadding, type MapLayoutMode } from '../lib/mapViewport';
 import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapStore';
 
 // ============================================================
@@ -24,6 +25,8 @@ import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapSto
 interface OpenLayersMapProps {
   visible: boolean;
   theme?: 'light' | 'dark';
+  layoutMode?: MapLayoutMode;
+  viewportWidth?: number;
   layers: {
     admin: boolean;
     wms: boolean;
@@ -34,6 +37,7 @@ interface OpenLayersMapProps {
 // ==================== 三态样式 ====================
 
 const TECH_ORANGE = '#f07040';
+const CHINA_EXTENT_4326: [number, number, number, number] = [73, 12, 135, 54];
 
 // 默认：极细边框，低透明填充
 const DEFAULT_STYLE = new Style({
@@ -58,7 +62,14 @@ const SELECTED_STYLE = [
   })
 ];
 
-const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', layers, onReady }) => {
+const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
+  visible,
+  theme = 'dark',
+  layoutMode = 'standard',
+  viewportWidth = typeof window === 'undefined' ? 1920 : window.innerWidth,
+  layers,
+  onReady,
+}) => {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const provincesLayerRef = useRef<VectorImageLayer | null>(null);
@@ -67,6 +78,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
   const geoJsonCache = useRef<any>(null);
   const readyNotifiedRef = useRef(false);
   const onReadyRef = useRef(onReady);
+  const layoutModeRef = useRef<MapLayoutMode>(layoutMode);
+  const viewportWidthRef = useRef(viewportWidth);
 
   // 交互状态
   const hoveredFeatureRef = useRef<Feature | null>(null);
@@ -82,12 +95,41 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
     onReadyRef.current = onReady;
   }, [onReady]);
 
+  useEffect(() => {
+    layoutModeRef.current = layoutMode;
+    viewportWidthRef.current = viewportWidth;
+  }, [layoutMode, viewportWidth]);
+
   const notifyReady = useCallback(() => {
     if (!readyNotifiedRef.current) {
       readyNotifiedRef.current = true;
       onReadyRef.current?.();
     }
   }, []);
+
+  const getFitPadding = useCallback((map: Map) => {
+    const [mapWidth = viewportWidthRef.current] = map.getSize() ?? [];
+    return getMapFitPadding(layoutModeRef.current, mapWidth);
+  }, []);
+
+  const flyToExtent = useCallback((extent: [number, number, number, number], maxZoom = 9) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.getView().fit(extent, {
+      duration: 800,
+      padding: getFitPadding(map),
+      easing: easeOut,
+      maxZoom,
+    });
+  }, [getFitPadding]);
+
+  const flyToOverview = useCallback(() => {
+    flyToExtent(
+      transformExtent(CHINA_EXTENT_4326, 'EPSG:4326', 'EPSG:3857') as [number, number, number, number],
+      INITIAL_VIEW.zoom
+    );
+  }, [flyToExtent]);
 
   // ==================== 数据加载 ====================
   const loadProvincesData = useCallback(async () => {
@@ -123,13 +165,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       extent[3] + height * 0.3,
     ];
 
-    map.getView().fit(expandedExtent, {
-      duration: 800,
-      padding: [40, 40, 40, 40], // extent 已自带宏大留白，无需过大 padding
-      easing: easeOut,
-      maxZoom: 9,
-    });
-  }, []);
+    flyToExtent(expandedExtent as [number, number, number, number]);
+  }, [flyToExtent]);
 
   // ==================== 高亮同步：根据 adcode 遍历要素 ====================
   const syncHighlight = useCallback((adcode: string | null, shouldFly = true) => {
@@ -221,20 +258,12 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
         } else {
           // 复位：清除高亮 + 飞回初始视角
           syncHighlight(null);
-          const map = mapRef.current;
-          if (map) {
-            map.getView().animate({
-              center: fromLonLat(INITIAL_VIEW.center),
-              zoom: INITIAL_VIEW.zoom,
-              duration: 800,
-              easing: easeOut,
-            });
-          }
+          flyToOverview();
         }
       }
     );
     return unsub;
-  }, [visible, syncHighlight]);
+  }, [visible, syncHighlight, flyToOverview]);
 
   // ==================== 从 Store 恢复视角（2D 切入时） ====================
   useEffect(() => {
@@ -255,6 +284,20 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       syncHighlight(region?.adcode ?? null, false);
     }, 100);
   }, [visible, syncHighlight]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.updateSize();
+    const region = useMapStore.getState().activeRegion;
+    if (region) {
+      syncHighlight(region.adcode, true);
+    } else {
+      flyToOverview();
+    }
+  }, [layoutMode, viewportWidth, visible, syncHighlight, flyToOverview]);
 
   // ==================== 初始化地图 + 交互 ====================
   useEffect(() => {
@@ -410,6 +453,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
             selectedFeatureRef.current = null;
             map.renderSync(); // 强制立刻重绘清除选中状态
             suppressStoreSync.current = true;
+            flyToOverview();
             setActiveRegion(null);
             return;
           }
@@ -439,6 +483,18 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
         },
         { hitTolerance: 2, layerFilter: (l) => l === provincesLayer }
       );
+
+      if (!clicked) {
+        if (selectedFeatureRef.current) {
+          selectedFeatureRef.current.setStyle(DEFAULT_STYLE);
+          selectedFeatureRef.current = null;
+          map.renderSync();
+        }
+        hoveredFeatureRef.current = null;
+        suppressStoreSync.current = true;
+        flyToOverview();
+        setActiveRegion(null);
+      }
     });
 
     // 加载行政区划数据
@@ -460,7 +516,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({ visible, theme = 'dark', 
       viewport.removeEventListener('pointerleave', handlePointerLeave);
       map.setTarget(undefined);
     };
-  }, [loadProvincesData, flyToFeature, notifyReady, setActiveRegion]);
+  }, [loadProvincesData, flyToFeature, flyToOverview, notifyReady, setActiveRegion]);
 
   // ==================== 图层可见性 ====================
   useEffect(() => {
