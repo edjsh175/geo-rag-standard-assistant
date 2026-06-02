@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AxiosError } from 'axios';
+import gsap from 'gsap';
+import { useGSAP } from '@gsap/react';
 import { ArrowRight, LockKeyhole, ShieldCheck, UserRound } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
 
@@ -7,6 +9,22 @@ import { useAuth } from '../auth/AuthProvider';
 import { glassLightStyle, glassStyle } from '../lib/glass';
 import { useResolvedTheme } from '../lib/theme';
 import { cn } from '../lib/utils';
+
+gsap.registerPlugin(useGSAP);
+
+type LoginMotionConditions = {
+  isDesktop?: boolean;
+  reduceMotion?: boolean;
+};
+
+type AmbientOrbitLight = {
+  element: HTMLElement;
+  phase: number;
+  baseAlpha: number;
+  alphaPulse: number;
+  scaleBase: number;
+  scalePulse: number;
+};
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
@@ -22,6 +40,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 export default function LoginPage() {
+  const rootRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { login, startDemo, status } = useAuth();
   const theme = useResolvedTheme();
@@ -31,6 +50,245 @@ export default function LoginPage() {
   const [demoSubmitting, setDemoSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isLight = theme === 'light';
+
+  useGSAP(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const mm = gsap.matchMedia();
+
+    mm.add(
+      {
+        isDesktop: '(min-width: 1024px)',
+        reduceMotion: '(prefers-reduced-motion: reduce)',
+      },
+      (context) => {
+        const { isDesktop, reduceMotion } = (context.conditions ?? {}) as LoginMotionConditions;
+        const introItems = gsap.utils.toArray<HTMLElement>('[data-login-intro]');
+        const featureCards = gsap.utils.toArray<HTMLElement>('[data-login-feature]');
+        const motionLayers = gsap.utils.toArray<HTMLElement>('[data-login-motion-layer]');
+        const topAmbient = root.querySelector<HTMLElement>('[data-login-top-ambient]');
+        const rightAmbient = root.querySelector<HTMLElement>('[data-login-right-ambient]');
+        const gridLayer = root.querySelector<HTMLElement>('[data-login-grid]');
+        const cardShell = root.querySelector<HTMLElement>('[data-login-card-shell]');
+        const cardHalo = root.querySelector<HTMLElement>('[data-login-card-halo]');
+        const brandHaloRing = root.querySelector<HTMLElement>('[data-login-brand-halo-ring]');
+        const actionButtons = gsap.utils.toArray<HTMLElement>('[data-login-action]');
+        const cleanup: Array<() => void> = [];
+
+        gsap.set([...introItems, ...featureCards, ...motionLayers], {
+          willChange: 'transform, opacity',
+        });
+
+        gsap.from(introItems, {
+          autoAlpha: 0,
+          y: reduceMotion ? 6 : 22,
+          scale: reduceMotion ? 1 : 0.985,
+          duration: reduceMotion ? 0.2 : 0.82,
+          stagger: reduceMotion ? 0.03 : 0.08,
+          ease: 'power3.out',
+        });
+
+        const ambientLights: AmbientOrbitLight[] = [
+          ...(topAmbient
+            ? [
+                {
+                  element: topAmbient,
+                  phase: Math.PI * 1.25,
+                  baseAlpha: isLight ? 0.58 : 0.78,
+                  alphaPulse: isLight ? 0.08 : 0.1,
+                  scaleBase: 1,
+                  scalePulse: 0.07,
+                },
+              ]
+            : []),
+          ...(rightAmbient
+            ? [
+                {
+                  element: rightAmbient,
+                  phase: Math.PI * 0.25,
+                  baseAlpha: isLight ? 0.42 : 0.58,
+                  alphaPulse: isLight ? 0.07 : 0.09,
+                  scaleBase: 1.02,
+                  scalePulse: 0.06,
+                },
+              ]
+            : []),
+        ];
+
+        if (ambientLights.length > 0) {
+          const ambientElements = ambientLights.map((light) => light.element);
+          let orbitWidth = root.clientWidth || window.innerWidth;
+          let orbitHeight = root.clientHeight || window.innerHeight;
+
+          const refreshOrbitMetrics = () => {
+            const bounds = root.getBoundingClientRect();
+            orbitWidth = bounds.width || window.innerWidth;
+            orbitHeight = bounds.height || window.innerHeight;
+          };
+
+          const placeAmbientLights = (t = 0) => {
+            const radiusX = Math.max(orbitWidth * 0.58, 360);
+            const radiusY = Math.max(orbitHeight * 0.52, 280);
+            const angle =
+              t * 0.22 +
+              Math.sin(t * 0.47) * 0.28 +
+              Math.sin(t * 0.13) * 0.18;
+
+            ambientLights.forEach((light) => {
+              const orbitAngle = angle + light.phase;
+              const pulse = Math.sin(t * 0.36 + light.phase);
+
+              gsap.set(light.element, {
+                x: Math.cos(orbitAngle) * radiusX,
+                y: Math.sin(orbitAngle) * radiusY,
+                scale: light.scaleBase + pulse * light.scalePulse,
+                autoAlpha: light.baseAlpha + pulse * light.alphaPulse,
+              });
+            });
+          };
+
+          gsap.set(ambientElements, {
+            xPercent: -50,
+            yPercent: -50,
+            willChange: 'transform, opacity',
+          });
+
+          refreshOrbitMetrics();
+          placeAmbientLights(0);
+
+          const handleResize = () => {
+            refreshOrbitMetrics();
+            placeAmbientLights(gsap.ticker.time);
+          };
+
+          window.addEventListener('resize', handleResize);
+          cleanup.push(() => window.removeEventListener('resize', handleResize));
+
+          if (!reduceMotion) {
+            const updateAmbientOrbits = (time: number) => {
+              placeAmbientLights(time);
+            };
+
+            gsap.ticker.add(updateAmbientOrbits);
+            cleanup.push(() => gsap.ticker.remove(updateAmbientOrbits));
+          }
+        }
+
+        if (reduceMotion) {
+          return () => cleanup.forEach((dispose) => dispose());
+        }
+
+        if (gridLayer) {
+          gsap.to(gridLayer, {
+            x: 26,
+            y: -18,
+            duration: 18,
+            repeat: -1,
+            yoyo: true,
+            ease: 'sine.inOut',
+          });
+        }
+
+        if (brandHaloRing) {
+          gsap.set(brandHaloRing, {
+            transformOrigin: '50% 50%',
+            willChange: 'transform, opacity',
+          });
+          gsap.to(brandHaloRing, {
+            opacity: isLight ? 0.58 : 0.76,
+            scale: 1.14,
+            duration: 2.8,
+            repeat: -1,
+            yoyo: true,
+            ease: 'sine.inOut',
+          });
+        }
+
+        if (cardHalo) {
+          gsap.to(cardHalo, {
+            autoAlpha: 0.88,
+            scale: 1.012,
+            duration: 3.4,
+            repeat: -1,
+            yoyo: true,
+            ease: 'sine.inOut',
+          });
+        }
+
+        if (featureCards.length > 0) {
+          gsap.to(featureCards, {
+            y: (index) => (index % 2 === 0 ? -4 : 4),
+            duration: 4.2,
+            repeat: -1,
+            yoyo: true,
+            stagger: 0.42,
+            ease: 'sine.inOut',
+          });
+        }
+
+        actionButtons.forEach((button) => {
+          const arrow = button.querySelector<HTMLElement>('[data-login-action-arrow]');
+          if (!arrow) return;
+
+          const arrowXTo = gsap.quickTo(arrow, 'x', { duration: 0.34, ease: 'power3.out' });
+          const buttonYTo = gsap.quickTo(button, 'y', { duration: 0.34, ease: 'power3.out' });
+          const onEnter = () => {
+            arrowXTo(5);
+            buttonYTo(-1);
+          };
+          const onLeave = () => {
+            arrowXTo(0);
+            buttonYTo(0);
+          };
+
+          button.addEventListener('pointerenter', onEnter);
+          button.addEventListener('pointerleave', onLeave);
+          cleanup.push(() => {
+            button.removeEventListener('pointerenter', onEnter);
+            button.removeEventListener('pointerleave', onLeave);
+          });
+        });
+
+        if (isDesktop && cardShell) {
+          gsap.set(cardShell, { transformPerspective: 1200, transformOrigin: '50% 50%' });
+          const rotateXTo = gsap.quickTo(cardShell, 'rotationX', { duration: 0.7, ease: 'power3.out' });
+          const rotateYTo = gsap.quickTo(cardShell, 'rotationY', { duration: 0.7, ease: 'power3.out' });
+          const cardYTo = gsap.quickTo(cardShell, 'y', { duration: 0.7, ease: 'power3.out' });
+
+          const onPointerMove = (event: PointerEvent) => {
+            const bounds = root.getBoundingClientRect();
+            const relativeX = event.clientX - bounds.left;
+            const relativeY = event.clientY - bounds.top;
+            const centeredX = relativeX / bounds.width - 0.5;
+            const centeredY = relativeY / bounds.height - 0.5;
+
+            rotateXTo(centeredY * -10.5);
+            rotateYTo(centeredX * 12.75);
+            cardYTo(centeredY * 12);
+          };
+
+          const onPointerLeave = () => {
+            rotateXTo(0);
+            rotateYTo(0);
+            cardYTo(0);
+          };
+
+          root.addEventListener('pointermove', onPointerMove);
+          root.addEventListener('pointerleave', onPointerLeave);
+          cleanup.push(() => {
+            root.removeEventListener('pointermove', onPointerMove);
+            root.removeEventListener('pointerleave', onPointerLeave);
+          });
+        }
+
+        return () => cleanup.forEach((dispose) => dispose());
+      },
+      root
+    );
+
+    return () => mm.revert();
+  }, { scope: rootRef });
 
   if (status === 'authenticated') {
     return <Navigate to="/" replace />;
@@ -64,16 +322,41 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-on-background">
+    <div ref={rootRef} className="relative min-h-screen overflow-hidden bg-background text-on-background">
       <div
+        data-login-motion-layer
         className="absolute inset-0"
         style={{
           background: isLight
-            ? 'radial-gradient(circle at top left, rgba(240,112,64,0.14), transparent 28%), radial-gradient(circle at bottom right, rgba(28,28,33,0.08), transparent 22%)'
-            : 'radial-gradient(circle at top left, rgba(240,112,64,0.22), transparent 28%), radial-gradient(circle at bottom right, rgba(255,255,255,0.08), transparent 24%)',
+            ? 'radial-gradient(circle at bottom right, rgba(28,28,33,0.055), transparent 24%)'
+            : 'radial-gradient(circle at bottom right, rgba(255,255,255,0.045), transparent 26%)',
         }}
       />
       <div
+        data-login-motion-layer
+        data-login-top-ambient
+        className="pointer-events-none absolute left-1/2 top-1/2 h-[48vh] min-h-[360px] w-[48vw] min-w-[420px] rounded-full blur-3xl"
+        style={{
+          opacity: isLight ? 0.58 : 0.78,
+          background: isLight
+            ? 'radial-gradient(circle, rgba(240,112,64,0.24), rgba(240,112,64,0.08) 42%, transparent 68%)'
+            : 'radial-gradient(circle, rgba(240,112,64,0.34), rgba(240,112,64,0.12) 44%, transparent 70%)',
+        }}
+      />
+      <div
+        data-login-motion-layer
+        data-login-right-ambient
+        className="pointer-events-none absolute left-1/2 top-1/2 h-[72vh] min-h-[480px] w-[46vw] min-w-[420px] rounded-full blur-3xl"
+        style={{
+          opacity: isLight ? 0.42 : 0.58,
+          background: isLight
+            ? 'radial-gradient(circle, rgba(240,112,64,0.18), rgba(28,28,33,0.045) 42%, transparent 70%)'
+            : 'radial-gradient(circle, rgba(240,112,64,0.22), rgba(255,255,255,0.045) 42%, transparent 72%)',
+        }}
+      />
+      <div
+        data-login-motion-layer
+        data-login-grid
         className="absolute inset-0 [background-size:52px_52px]"
         style={{
           opacity: isLight ? 0.16 : 0.3,
@@ -85,19 +368,19 @@ export default function LoginPage() {
 
       <main className="relative mx-auto flex min-h-screen max-w-7xl items-center justify-between gap-10 px-6 py-12">
         <section className="hidden max-w-2xl lg:block">
-          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-primary-container/70">
+          <p data-login-intro className="text-sm font-semibold uppercase tracking-[0.3em] text-primary-container/70">
             Sentinel GeoAI
           </p>
-          <h1 className="mt-6 font-headline text-6xl font-semibold leading-[1.05] text-on-background">
+          <h1 data-login-intro className="mt-6 font-headline text-6xl font-semibold leading-[1.05] text-on-background">
             标准规范
             <br />
             智能空间查询系统
           </h1>
-          <p className="mt-6 max-w-xl text-lg leading-8 text-on-background/62">
+          <p data-login-intro className="mt-6 max-w-xl text-lg leading-8 text-on-background/62">
             使用管理员会话进入统一检索与空间分析工作台。登录后即可访问知识检索、地图联动、文档详情与系统管理能力。
           </p>
 
-          <div className="mt-10 grid max-w-xl gap-4">
+          <div data-login-intro className="mt-10 grid max-w-xl gap-4">
             {[
               '统一安全入口，避免匿名暴露内部业务接口',
               '登录态自动恢复，刷新后继续当前工作流',
@@ -105,6 +388,7 @@ export default function LoginPage() {
             ].map((item) => (
               <div
                 key={item}
+                data-login-feature
                 className="glass-light rounded-2xl border border-outline/60 px-5 py-4 text-sm text-on-background/75"
                 style={glassLightStyle}
               >
@@ -114,19 +398,38 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <section className="w-full max-w-md shrink-0">
+        <section className="w-full max-w-md shrink-0 [perspective:1200px]">
           <div
-            className="glass rounded-[28px] border border-outline/60 px-7 py-8"
-            style={{
-              ...glassStyle,
-              boxShadow: isLight
-                ? '0 24px 80px rgba(17, 24, 39, 0.12)'
-                : '0 24px 80px rgba(0,0,0,0.35)',
-            }}
+            data-login-card-shell
+            data-login-intro
+            className="relative"
           >
+            <div
+              data-login-card-halo
+              className="pointer-events-none absolute -inset-1 rounded-[30px] border border-primary-container/20 opacity-55"
+            />
+            <div
+              className="glass relative rounded-[28px] border border-outline/60 px-7 py-8"
+              style={{
+                ...glassStyle,
+                boxShadow: isLight
+                  ? '0 24px 80px rgba(17, 24, 39, 0.12)'
+                  : '0 24px 80px rgba(0,0,0,0.35)',
+              }}
+            >
             <div className="mb-8 flex items-center gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary-container/30 bg-primary-container/10 shadow-[0_0_24px_rgba(240,112,64,0.18)]">
-                <ShieldCheck className="h-6 w-6 text-primary-container" />
+              <div data-login-brand-halo className="relative flex h-14 w-14 items-center justify-center rounded-2xl border border-primary-container/30 bg-primary-container/10 shadow-[0_0_24px_rgba(240,112,64,0.18)]">
+                <div
+                  data-login-brand-halo-ring
+                  className="pointer-events-none absolute -inset-2 rounded-[22px] opacity-35 blur-sm"
+                  style={{
+                    background: isLight
+                      ? 'radial-gradient(circle, rgba(240,112,64,0.18), transparent 62%)'
+                      : 'radial-gradient(circle, rgba(240,112,64,0.28), transparent 64%)',
+                    boxShadow: '0 0 28px rgba(240,112,64,0.22)',
+                  }}
+                />
+                <ShieldCheck className="relative h-6 w-6 text-primary-container" />
               </div>
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-primary-container/70">
@@ -189,11 +492,12 @@ export default function LoginPage() {
 
               <button
                 type="submit"
+                data-login-action
                 disabled={submitting || demoSubmitting}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary-container px-4 py-3 text-sm font-semibold text-on-primary-fixed transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <span>{submitting ? '正在验证身份' : '进入系统'}</span>
-                <ArrowRight className="h-4 w-4" />
+                <ArrowRight data-login-action-arrow className="h-4 w-4" />
               </button>
             </form>
 
@@ -205,16 +509,18 @@ export default function LoginPage() {
 
             <button
               type="button"
+              data-login-action
               onClick={handleDemoAccess}
               disabled={submitting || demoSubmitting}
               className="flex w-full items-center justify-center gap-2 rounded-2xl border border-primary-container/25 bg-primary-container/10 px-4 py-3 text-sm font-semibold text-primary-container transition hover:bg-primary-container/15 disabled:cursor-not-allowed disabled:opacity-70"
             >
               <span>{demoSubmitting ? '正在开启演示' : '访客体验'}</span>
-              <ArrowRight className="h-4 w-4" />
+              <ArrowRight data-login-action-arrow className="h-4 w-4" />
             </button>
             <p className="mt-3 text-center text-xs leading-5 text-on-background/45">
               访客无需注册，可体验检索、地图和有限次数的 AI 回答。
             </p>
+            </div>
           </div>
         </section>
       </main>
