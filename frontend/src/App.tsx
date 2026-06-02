@@ -1383,7 +1383,7 @@ export default function App() {
                     <FileText className="w-10 h-10 text-primary-container" />
                   </div>
                   <div>
-                    <h2 className="text-xl font-extrabold text-[#f0f0f0] leading-tight font-headline">{selectedDocument.metadata.title}</h2>
+                    <h2 className="text-xl font-extrabold text-on-background/90 leading-tight font-headline">{selectedDocument.metadata.title}</h2>
                     <p className="text-primary-container font-mono text-xs mt-1">{selectedDocument.id}</p>
                   </div>
                 </div>
