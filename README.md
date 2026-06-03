@@ -20,6 +20,23 @@ GeoRAG Planning Assistant is a retrieval-augmented assistant for spatial plannin
 - Click `访客体验` on the login page to enter without registration.
 - Visitor mode supports document retrieval, map exploration, citation viewing, and limited AI answers. When the AI quota is used up, retrieval results, citations, and map views remain available.
 
+## 产品预览 / Screenshots
+
+登录页提供管理员入口和公开访客体验入口，适合快速进入演示环境。
+The login page supports both admin access and public visitor demo entry.
+
+![Login page](docs/screenshots/login-light.png)
+
+2D 地图工作台把标准检索、AI 问答和行政区划联动放在同一个操作界面中。
+The 2D workspace combines standards retrieval, AI Q&A, and administrative map interaction in one interface.
+
+![2D map workspace](docs/screenshots/workspace-2d-map.png)
+
+3D 地球视图用于展示更沉浸的空间浏览体验，并保留右侧问答与检索面板。
+The 3D globe view provides a more immersive spatial browsing experience while keeping the chat and retrieval panel available.
+
+![3D globe workspace](docs/screenshots/workspace-3d-globe.png)
+
 ## 核心能力 / Features
 
 - 标准知识库检索：支持规划、测绘、GIS 标准和政策资料的语义检索与关键词检索。
