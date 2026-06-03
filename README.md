@@ -1,4 +1,4 @@
-# GeoRAG Planning Assistant / GeoRAG 国土空间规划智能检索与可视化助手
+## GeoRAG Planning Assistant / GeoRAG 国土空间规划智能检索与可视化助手
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Node](https://img.shields.io/badge/Node-18%2B-green.svg)](https://nodejs.org/)
@@ -12,35 +12,37 @@ GeoRAG Planning Assistant is a retrieval-augmented assistant for spatial plannin
 
 ## 在线演示 / Live Demo
 
-- 在线地址：[https://8.156.85.7/](https://8.156.85.7/)
-- 打开页面后点击 `访客体验` 即可进入，无需注册账号。
-- 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。
-<img width="1916" height="949" alt="image" src="https://github.com/user-attachments/assets/5f0f736e-d5e1-4179-aef6-6f612e049182" />
+- 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址： 在线地址：[https://8.156.85.7/](https://8.156.85.7/)
+- 打开页面后点击  打开页面后点击 `访客体验` 即可进入，无需注册账号。 即可进入，无需注册账号。
+- 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。
+<img img width=="1916" height=="949" alt=="image" src=="https://github.com/user-attachments/assets/5f0f736e-d5e1-4179-aef6-6f612e049182" />
+<img width="1919" height="948" alt="image" src="https://github.com/user-attachments/assets/23da6b2f-7e6d-46c8-bba4-c714ba36b13b" />
 
 
-- Demo: [https://8.156.85.7/](https://8.156.85.7/)
-- Click `访客体验` on the login page to enter without registration.
-- Visitor mode supports document retrieval, map exploration, citation viewing, and limited AI answers. When the AI quota is used up, retrieval results, citations, and map views remain available.
+
+- Demo:  Demo: [https://8.156.85.7/](https://8.156.85.7/)
+- Click  Click `访客体验` on the login page to enter without registration. on the login page to enter without registration.
+- Visitor mode supports document retrieval, map exploration, citation viewing, and limited AI answers. When the AI quota is used up, retrieval results, citations, and map views remain available. Visitor mode supports document retrieval, map exploration, citation viewing, and limited AI answers. When the AI quota is used up, retrieval results, citations, and map views remain available.
 
 ## 核心能力 / Features
 
-- 标准知识库检索：支持规划、测绘、GIS 标准和政策资料的语义检索与关键词检索。
-  Standards retrieval: semantic and keyword search over planning, surveying, GIS standards, and policy documents.
-- RAG 问答与引用溯源：AI 回答基于检索结果生成，并保留可查看的文档引用。
-  RAG Q&A with citations: generated answers are grounded in retrieved documents and include traceable references.
-- 访客演示限额：公开演示不开放注册，通过访客会话和每日额度控制 AI 调用成本。
-  Public demo quota: no open registration; visitor sessions and daily quotas limit AI generation cost.
-- 2D/3D 地图联动：使用 OpenLayers 和 Cesium 展示空间数据，并支持地图与检索场景联动。
-  2D/3D map interaction: OpenLayers and Cesium power spatial visualization and search-to-map workflows.
-- 管理与展示分离：管理员保留上传、索引和系统管理能力，访客只访问展示和低成本检索能力。
-  Separated admin and demo access: administrators keep upload, indexing, and management tools, while visitors access presentation and low-cost retrieval features.
+- 标准知识库检索：支持规划、测绘、GIS 标准和政策资料的语义检索与关键词检索。 标准知识库检索：支持规划、测绘、GIS 标准和政策资料的语义检索与关键词检索。
+  Standards retrieval: semantic and keyword search over planning, surveying, GIS standards, and policy documents.  Standards retrieval: semantic and keyword search over planning, surveying, GIS standards, and policy documents.
+- RAG 问答与引用溯源：AI 回答基于检索结果生成，并保留可查看的文档引用。 RAG 问答与引用溯源：AI 回答基于检索结果生成，并保留可查看的文档引用。
+  RAG Q&A with citations: generated answers are grounded in retrieved documents and include traceable references.  RAG Q&A with citations: generated answers are grounded in retrieved documents and include traceable references.
+- 访客演示限额：公开演示不开放注册，通过访客会话和每日额度控制 AI 调用成本。 访客演示限额：公开演示不开放注册，通过访客会话和每日额度控制 AI 调用成本。
+  Public demo quota: no open registration; visitor sessions and daily quotas limit AI generation cost.  Public demo quota: no open registration; visitor sessions and daily quotas limit AI generation cost.
+- 2D/3D 地图联动：使用 OpenLayers 和 Cesium 展示空间数据，并支持地图与检索场景联动。 2D/3D 地图联动：使用 OpenLayers 和 Cesium 展示空间数据，并支持地图与检索场景联动。
+  2D/3D map interaction: OpenLayers and Cesium power spatial visualization and search-to-map workflows.  2D/3D map interaction: OpenLayers and Cesium power spatial visualization and search-to-map workflows.
+- 管理与展示分离：管理员保留上传、索引和系统管理能力，访客只访问展示和低成本检索能力。 管理与展示分离：管理员保留上传、索引和系统管理能力，访客只访问展示和低成本检索能力。
+  Separated admin and demo access: administrators keep upload, indexing, and management tools, while visitors access presentation and low-cost retrieval features.  Separated admin and demo access: administrators keep upload, indexing, and management tools, while visitors access presentation and low-cost retrieval features.
 
 ## 技术栈 / Tech Stack
 
-- 后端：FastAPI、SQLAlchemy Async、PostgreSQL、pgvector、PostGIS、MySQL、Redis。
-  Backend: FastAPI, SQLAlchemy Async, PostgreSQL, pgvector, PostGIS, MySQL, and Redis.
-- 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand。
-  Frontend: React 19, TypeScript, Vite, OpenLayers, Cesium, and Zustand.
+- 后端：FastAPI、SQLAlchemy Async、PostgreSQL、pgvector、PostGIS、MySQL、Redis。 后端：FastAPI、SQLAlchemy Async、PostgreSQL、pgvector、PostGIS、MySQL、Redis。
+  Backend: FastAPI, SQLAlchemy Async, PostgreSQL, pgvector, PostGIS, MySQL, and Redis.  Backend: FastAPI, SQLAlchemy Async, PostgreSQL, pgvector, PostGIS, MySQL, and Redis.
+- 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand。 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand。
+  Frontend: React 19, TypeScript, Vite, OpenLayers, Cesium, and Zustand.  Frontend: React 19, TypeScript, Vite, OpenLayers, Cesium, and Zustand.
 - 数据服务：PostgreSQL 存储向量与空间数据，MySQL 存储标准元数据，Redis 用于缓存和访客 AI 限额计数。
   Data services: PostgreSQL stores vector and spatial data, MySQL stores standards metadata, and Redis supports caching plus visitor AI quota counters.
 - 对象存储：MinIO 作为源文档下载和后续对象存储能力预留，不是主检索链路的必需依赖。
