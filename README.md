@@ -15,8 +15,6 @@ GeoRAG Planning Assistant is a retrieval-augmented assistant for spatial plannin
 - 在线地址：[https://8.156.85.7/](https://8.156.85.7/)
 - 打开页面后点击  打开页面后点击 `访客体验` 即可进入，无需注册账号。 即可进入，无需注册账号。
 - 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。
-<img img width=="1916" height=="949" alt=="image" src=="https://github.com/user-attachments/assets/5f0f736e-d5e1-4179-aef6-6f612e049182" />
-<img width="1919" height="948" alt="image" src="https://github.com/user-attachments/assets/23da6b2f-7e6d-46c8-bba4-c714ba36b13b" />
 
 
 
