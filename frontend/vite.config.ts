@@ -37,6 +37,11 @@ export default defineConfig(({mode}) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, '/api'),
         },
+        '/tianditu': {
+          target: 'https://t0.tianditu.gov.cn',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/tianditu/, ''),
+        },
       },
     },
   };

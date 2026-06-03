@@ -2,7 +2,14 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { loadProvinceCollection } from '../lib/bootstrap';
-import { useMapStore, INITIAL_VIEW } from '../store/useMapStore';
+import {
+  expandBoundsForPadding,
+  getMapFitPadding,
+  type LonLatBounds,
+  type MapLayoutMode,
+  type ViewportSize,
+} from '../lib/mapViewport';
+import { useMapStore } from '../store/useMapStore';
 
 // ============================================================
 //  Cesium 3D 地球引擎 — 性能优化版
@@ -25,6 +32,8 @@ declare module 'cesium' {
 interface CesiumGlobeProps {
   visible: boolean;
   theme?: 'light' | 'dark';
+  layoutMode?: MapLayoutMode;
+  viewportWidth?: number;
   layers: {
     admin: boolean;
     wms: boolean;
@@ -52,6 +61,7 @@ const STYLE_CLICKED = {
 
 // 中国全境矩形范围
 const CHINA_RECTANGLE = Cesium.Rectangle.fromDegrees(73.0, 12.0, 135.0, 54.0);
+const CHINA_BOUNDS: LonLatBounds = [73, 12, 135, 54];
 const DARK_GLOBE_BASE_COLOR = Cesium.Color.fromCssColorString('#060a10');
 const LIGHT_GLOBE_BASE_COLOR = Cesium.Color.fromCssColorString('#eef2f6');
 const DARK_TILE_FILTER = 'invert(92%) hue-rotate(180deg) saturate(60%) brightness(58%) contrast(118%)';
@@ -118,7 +128,14 @@ const createFilteredTiandituProvider = (
   return provider;
 };
 
-const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', layers, onReady }) => {
+const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
+  visible,
+  theme = 'dark',
+  layoutMode = 'standard',
+  viewportWidth = typeof window === 'undefined' ? 1920 : window.innerWidth,
+  layers,
+  onReady,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
 
@@ -138,6 +155,8 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
   const suppressStoreSync = useRef(false);
   const readyNotifiedRef = useRef(false);
   const onReadyRef = useRef(onReady);
+  const layoutModeRef = useRef<MapLayoutMode>(layoutMode);
+  const viewportWidthRef = useRef(viewportWidth);
 
   // 鼠标节流标记
   const pickPending = useRef(false);
@@ -155,12 +174,59 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     onReadyRef.current = onReady;
   }, [onReady]);
 
+  useEffect(() => {
+    layoutModeRef.current = layoutMode;
+    viewportWidthRef.current = viewportWidth;
+  }, [layoutMode, viewportWidth]);
+
   const notifyReady = useCallback(() => {
     if (!readyNotifiedRef.current) {
       readyNotifiedRef.current = true;
       onReadyRef.current?.();
     }
   }, []);
+
+  const getViewportSize = useCallback((): ViewportSize => {
+    const container = containerRef.current;
+    return [
+      container?.clientWidth || viewportWidthRef.current || 1920,
+      container?.clientHeight || (typeof window === 'undefined' ? 1080 : window.innerHeight),
+    ];
+  }, []);
+
+  const boundsToRectangle = useCallback((bounds: LonLatBounds) =>
+    Cesium.Rectangle.fromDegrees(bounds[0], bounds[1], bounds[2], bounds[3]), []);
+
+  const rectangleToBounds = useCallback((rectangle: Cesium.Rectangle): LonLatBounds => [
+    Cesium.Math.toDegrees(rectangle.west),
+    Cesium.Math.toDegrees(rectangle.south),
+    Cesium.Math.toDegrees(rectangle.east),
+    Cesium.Math.toDegrees(rectangle.north),
+  ], []);
+
+  const getLayoutRectangle = useCallback((rectangle: Cesium.Rectangle) => {
+    const viewport = getViewportSize();
+    const padding = getMapFitPadding(layoutModeRef.current, viewport[0]);
+    return boundsToRectangle(
+      expandBoundsForPadding(rectangleToBounds(rectangle), padding, viewport)
+    );
+  }, [boundsToRectangle, getViewportSize, rectangleToBounds]);
+
+  const flyToRectangle = useCallback((rectangle: Cesium.Rectangle, duration = 0.8) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    viewer.camera.flyTo({
+      destination: getLayoutRectangle(rectangle),
+      duration,
+      orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
+    });
+    requestRender();
+  }, [getLayoutRectangle, requestRender]);
+
+  const flyToOverview = useCallback((duration = 0.8) => {
+    flyToRectangle(boundsToRectangle(CHINA_BOUNDS), duration);
+  }, [boundsToRectangle, flyToRectangle]);
 
   // ==================== 数据加载 ====================
 
@@ -406,11 +472,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
         hoveredEntityRef.current = null;
 
         suppressStoreSync.current = true;
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
-          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-          duration: 0.8,
-        });
+        flyToOverview();
         setActiveRegion(null);
         requestRender();
         return;
@@ -428,13 +490,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
 
         suppressStoreSync.current = true;
         const rect = regionRectanglesRef.current.get(newAdcode);
-        if (rect) {
-          viewer.camera.flyTo({
-            destination: rect,
-            duration: 0.8,
-            orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 }
-          });
-        }
+        if (rect) flyToRectangle(rect);
         setActiveRegion({
           adcode: newAdcode,
           name: clickTarget.regionName || '',
@@ -443,11 +499,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
         // —— 点击空白 ——
         clickedEntityRef.current = null;
         suppressStoreSync.current = true;
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
-          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-          duration: 0.8,
-        });
+        flyToOverview();
         setActiveRegion(null);
       }
 
@@ -457,7 +509,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     // 禁用右键默认
     viewer.scene.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  }, [applyStyleByAdcode, setActiveRegion, requestRender]);
+  }, [applyStyleByAdcode, flyToOverview, flyToRectangle, setActiveRegion, requestRender]);
 
   // ==================== 从外部 Store 同步高亮 ====================
 
@@ -481,19 +533,12 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     applyStyleByAdcode(adcode, 'clicked');
 
     if (shouldFly) {
-      const viewer = viewerRef.current;
       const rect = regionRectanglesRef.current.get(adcode);
-      if (viewer && rect) {
-        viewer.camera.flyTo({
-          destination: rect,
-          duration: 0.8,
-          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 }
-        });
-      }
+      if (rect) flyToRectangle(rect);
     }
 
     requestRender();
-  }, [applyStyleByAdcode, requestRender]);
+  }, [applyStyleByAdcode, flyToRectangle, requestRender]);
 
 
   const loadAndRenderProvinces = useCallback(async () => {
@@ -556,19 +601,12 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
           syncHighlight(state.activeRegion.adcode);
         } else {
           syncHighlight(null);
-          const viewer = viewerRef.current;
-          if (viewer) {
-            viewer.camera.flyTo({
-              destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
-              orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-              duration: 1.8,
-            });
-          }
+          flyToOverview(1.8);
         }
       }
     );
     return unsub;
-  }, [visible, syncHighlight]);
+  }, [visible, syncHighlight, flyToOverview]);
 
   useEffect(() => {
     if (!visible) return;
@@ -585,6 +623,19 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     const region = useMapStore.getState().activeRegion;
     requestAnimationFrame(() => syncHighlight(region?.adcode ?? null, false));
   }, [visible, syncHighlight]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    const region = useMapStore.getState().activeRegion;
+    if (region) {
+      syncHighlight(region.adcode, true);
+    } else {
+      flyToOverview();
+    }
+  }, [layoutMode, viewportWidth, visible, syncHighlight, flyToOverview]);
 
 
   // ==================== Viewer 初始化与卸载 ====================
@@ -623,7 +674,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({ visible, theme = 'dark', laye
     viewer.scene.skyAtmosphere.show = false;
 
     viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees(INITIAL_VIEW.center[0], INITIAL_VIEW.center[1], INITIAL_VIEW.height),
+      destination: getLayoutRectangle(CHINA_RECTANGLE),
       orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
     });
 

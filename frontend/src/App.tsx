@@ -19,7 +19,9 @@ import {
   Radio,
   Sun,
   Moon,
-  LogOut
+  LogOut,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import CesiumGlobe from './components/CesiumGlobe';
@@ -43,6 +45,7 @@ import type {
 } from './types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
 
 const PROVINCE_MAP: Record<string, string> = {
@@ -272,6 +275,10 @@ export default function App() {
   const [bootRetryKey, setBootRetryKey] = useState(0);
   const [bootStage, setBootStage] = useState<BootCeremonyStage>('loading');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [chatExpanded, setChatExpanded] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(
+    () => (typeof window === 'undefined' ? 1920 : window.innerWidth)
+  );
   const [mapReady, setMapReady] = useState<{ '2D': boolean; '3D': boolean }>({
     '2D': false,
     '3D': false,
@@ -294,6 +301,13 @@ export default function App() {
     };
     mediaQuery.addEventListener('change', handler);
     return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => setViewportWidth(window.innerWidth);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   const handleThemeChange = (newTheme: 'dark' | 'light') => {
@@ -970,6 +984,17 @@ export default function App() {
     reduceMotion
       ? { duration: 0.2, delay: Math.min(delay, 0.08), ease: 'easeOut' as const }
       : { type: 'spring' as const, damping: 24, stiffness: 210, mass: 0.92, delay };
+  const mapLayoutMode: MapLayoutMode = chatExpanded ? 'chatExpanded' : 'standard';
+  const chatPanelWidth = getChatPanelWidth(mapLayoutMode, viewportWidth);
+  const chatPanelTransition = reduceMotion
+    ? { duration: 0.2, delay: bootStage === 'done' ? 0 : 0.08, ease: 'easeOut' as const }
+    : {
+        type: 'spring' as const,
+        damping: 25,
+        stiffness: 210,
+        mass: 0.9,
+        delay: bootStage === 'done' ? 0 : 0.66,
+      };
 
   return (
     <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
@@ -996,12 +1021,16 @@ export default function App() {
         <CesiumGlobe
           theme={theme}
           visible={viewMode === '3D'}
+          layoutMode={mapLayoutMode}
+          viewportWidth={viewportWidth}
           layers={layers}
           onReady={handleMapReady3D}
         />
         <OpenLayersMap
           theme={theme}
           visible={viewMode === '2D'}
+          layoutMode={mapLayoutMode}
+          viewportWidth={viewportWidth}
           layers={layers}
           onReady={handleMapReady2D}
         />
@@ -1216,17 +1245,18 @@ export default function App() {
         {/* AI Chat Panel - Floating Right */}
         <motion.div
           className={cn(
-            "absolute top-[80px] bottom-6 right-6 w-[420px] z-20",
+            "absolute top-[80px] bottom-6 right-6 z-20",
             uiInteractive ? 'pointer-events-auto' : 'pointer-events-none'
           )}
           initial={false}
           animate={{
             opacity: uiVisible ? 1 : 0,
+            width: chatPanelWidth,
             x: uiVisible ? 0 : reduceMotion ? 10 : 42,
             y: uiVisible ? 0 : reduceMotion ? 6 : 18,
             scale: uiVisible ? 1 : reduceMotion ? 0.995 : 0.975,
           }}
-          transition={getLayerTransition(reduceMotion ? 0.08 : 0.66)}
+          transition={chatPanelTransition}
         >
           <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl" style={glassStyle}>
             <Chat
@@ -1238,6 +1268,23 @@ export default function App() {
               onInputChange={setChatInput}
               onCitationClick={handleCitationClick}
               disabled={isSearching}
+              headerAction={
+                <motion.button
+                  type="button"
+                  aria-label={chatExpanded ? '收起对话框' : '展开对话框'}
+                  title={chatExpanded ? '收起对话框' : '展开对话框'}
+                  onClick={() => setChatExpanded((value) => !value)}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.94 }}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
+                >
+                  {chatExpanded ? (
+                    <Minimize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
+                  ) : (
+                    <Maximize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
+                  )}
+                </motion.button>
+              }
               title="Sentinel GeoAI"
               status={
                 user?.role === 'visitor'
@@ -1336,7 +1383,7 @@ export default function App() {
                     <FileText className="w-10 h-10 text-primary-container" />
                   </div>
                   <div>
-                    <h2 className="text-xl font-extrabold text-[#f0f0f0] leading-tight font-headline">{selectedDocument.metadata.title}</h2>
+                    <h2 className="text-xl font-extrabold text-on-background/90 leading-tight font-headline">{selectedDocument.metadata.title}</h2>
                     <p className="text-primary-container font-mono text-xs mt-1">{selectedDocument.id}</p>
                   </div>
                 </div>
