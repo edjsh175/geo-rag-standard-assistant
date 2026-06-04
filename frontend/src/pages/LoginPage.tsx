@@ -26,6 +26,92 @@ type AmbientOrbitLight = {
   scalePulse: number;
 };
 
+type LoginBackgroundTheme = {
+  pageWash: string;
+  gridBackgroundSize: string;
+  gridAccentBackgroundSize: string;
+  gridOpacity: number;
+  gridFineLine: string;
+  gridAccentLine: string;
+  topAmbient: {
+    opacity: number;
+    background: string;
+    baseAlpha: number;
+    alphaPulse: number;
+    scaleBase: number;
+    scalePulse: number;
+  };
+  rightAmbient: {
+    opacity: number;
+    background: string;
+    baseAlpha: number;
+    alphaPulse: number;
+    scaleBase: number;
+    scalePulse: number;
+  };
+};
+
+const LOGIN_BACKGROUND_THEME: Record<'light' | 'dark', LoginBackgroundTheme> = {
+  light: {
+    pageWash:
+      'radial-gradient(circle at bottom right, rgba(28,28,33,0.085), transparent 24%), radial-gradient(circle at 12% 18%, rgba(240,112,64,0.08), transparent 32%)',
+    gridBackgroundSize: '48px 48px',
+    gridAccentBackgroundSize: '192px 192px',
+    gridOpacity: 0.3,
+    gridFineLine:
+      'linear-gradient(rgba(28,28,33,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(28,28,33,0.1) 1px, transparent 1px)',
+    gridAccentLine:
+      'linear-gradient(rgba(240,112,64,0.09) 1px, transparent 1px), linear-gradient(90deg, rgba(240,112,64,0.09) 1px, transparent 1px)',
+    topAmbient: {
+      opacity: 0.74,
+      background:
+        'radial-gradient(circle, rgba(240,112,64,0.44), rgba(240,112,64,0.2) 38%, rgba(240,112,64,0.08) 58%, transparent 74%)',
+      baseAlpha: 0.74,
+      alphaPulse: 0.1,
+      scaleBase: 1,
+      scalePulse: 0.07,
+    },
+    rightAmbient: {
+      opacity: 0.62,
+      background:
+        'radial-gradient(circle, rgba(240,112,64,0.2), rgba(232,168,124,0.1) 42%, rgba(240,112,64,0.045) 64%, transparent 82%)',
+      baseAlpha: 0.62,
+      alphaPulse: 0.08,
+      scaleBase: 1.02,
+      scalePulse: 0.06,
+    },
+  },
+  dark: {
+    pageWash:
+      'radial-gradient(circle at bottom right, rgba(255,255,255,0.07), transparent 26%), radial-gradient(circle at 14% 18%, rgba(240,112,64,0.1), transparent 34%)',
+    gridBackgroundSize: '48px 48px',
+    gridAccentBackgroundSize: '192px 192px',
+    gridOpacity: 0.4,
+    gridFineLine:
+      'linear-gradient(rgba(255,255,255,0.072) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.072) 1px, transparent 1px)',
+    gridAccentLine:
+      'linear-gradient(rgba(240,112,64,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(240,112,64,0.12) 1px, transparent 1px)',
+    topAmbient: {
+      opacity: 0.86,
+      background:
+        'radial-gradient(circle, rgba(240,112,64,0.46), rgba(240,112,64,0.2) 42%, rgba(240,112,64,0.09) 62%, transparent 76%)',
+      baseAlpha: 0.86,
+      alphaPulse: 0.1,
+      scaleBase: 1,
+      scalePulse: 0.07,
+    },
+    rightAmbient: {
+      opacity: 0.72,
+      background:
+        'radial-gradient(circle, rgba(240,112,64,0.24), rgba(232,168,124,0.12) 42%, rgba(240,112,64,0.055) 66%, transparent 84%)',
+      baseAlpha: 0.72,
+      alphaPulse: 0.09,
+      scaleBase: 1.02,
+      scalePulse: 0.06,
+    },
+  },
+};
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
     return (
@@ -50,6 +136,7 @@ export default function LoginPage() {
   const [demoSubmitting, setDemoSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isLight = theme === 'light';
+  const backgroundTheme = LOGIN_BACKGROUND_THEME[theme];
 
   useGSAP(() => {
     const root = rootRef.current;
@@ -95,10 +182,10 @@ export default function LoginPage() {
                 {
                   element: topAmbient,
                   phase: Math.PI * 1.25,
-                  baseAlpha: isLight ? 0.58 : 0.78,
-                  alphaPulse: isLight ? 0.08 : 0.1,
-                  scaleBase: 1,
-                  scalePulse: 0.07,
+                  baseAlpha: backgroundTheme.topAmbient.baseAlpha,
+                  alphaPulse: backgroundTheme.topAmbient.alphaPulse,
+                  scaleBase: backgroundTheme.topAmbient.scaleBase,
+                  scalePulse: backgroundTheme.topAmbient.scalePulse,
                 },
               ]
             : []),
@@ -107,10 +194,10 @@ export default function LoginPage() {
                 {
                   element: rightAmbient,
                   phase: Math.PI * 0.25,
-                  baseAlpha: isLight ? 0.42 : 0.58,
-                  alphaPulse: isLight ? 0.07 : 0.09,
-                  scaleBase: 1.02,
-                  scalePulse: 0.06,
+                  baseAlpha: backgroundTheme.rightAmbient.baseAlpha,
+                  alphaPulse: backgroundTheme.rightAmbient.alphaPulse,
+                  scaleBase: backgroundTheme.rightAmbient.scaleBase,
+                  scalePulse: backgroundTheme.rightAmbient.scalePulse,
                 },
               ]
             : []),
@@ -327,42 +414,35 @@ export default function LoginPage() {
         data-login-motion-layer
         className="absolute inset-0"
         style={{
-          background: isLight
-            ? 'radial-gradient(circle at bottom right, rgba(28,28,33,0.055), transparent 24%)'
-            : 'radial-gradient(circle at bottom right, rgba(255,255,255,0.045), transparent 26%)',
+          background: backgroundTheme.pageWash,
         }}
       />
       <div
         data-login-motion-layer
         data-login-top-ambient
-        className="pointer-events-none absolute left-1/2 top-1/2 h-[48vh] min-h-[360px] w-[48vw] min-w-[420px] rounded-full blur-3xl"
+        className="pointer-events-none absolute left-1/2 top-1/2 h-[42vh] min-h-[320px] w-[42vw] min-w-[320px] rounded-full blur-3xl"
         style={{
-          opacity: isLight ? 0.58 : 0.78,
-          background: isLight
-            ? 'radial-gradient(circle, rgba(240,112,64,0.24), rgba(240,112,64,0.08) 42%, transparent 68%)'
-            : 'radial-gradient(circle, rgba(240,112,64,0.34), rgba(240,112,64,0.12) 44%, transparent 70%)',
+          opacity: backgroundTheme.topAmbient.opacity,
+          background: backgroundTheme.topAmbient.background,
         }}
       />
       <div
         data-login-motion-layer
         data-login-right-ambient
-        className="pointer-events-none absolute left-1/2 top-1/2 h-[72vh] min-h-[480px] w-[46vw] min-w-[420px] rounded-full blur-3xl"
+        className="pointer-events-none absolute left-1/2 top-1/2 h-[78vh] min-h-[520px] w-[58vw] min-w-[520px] rounded-full blur-3xl"
         style={{
-          opacity: isLight ? 0.42 : 0.58,
-          background: isLight
-            ? 'radial-gradient(circle, rgba(240,112,64,0.18), rgba(28,28,33,0.045) 42%, transparent 70%)'
-            : 'radial-gradient(circle, rgba(240,112,64,0.22), rgba(255,255,255,0.045) 42%, transparent 72%)',
+          opacity: backgroundTheme.rightAmbient.opacity,
+          background: backgroundTheme.rightAmbient.background,
         }}
       />
       <div
         data-login-motion-layer
         data-login-grid
-        className="absolute inset-0 [background-size:52px_52px]"
+        className="absolute inset-0"
         style={{
-          opacity: isLight ? 0.16 : 0.3,
-          backgroundImage: isLight
-            ? 'linear-gradient(rgba(0,0,0,0.045) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,0.045) 1px,transparent 1px)'
-            : 'linear-gradient(rgba(255,255,255,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.04) 1px,transparent 1px)',
+          opacity: backgroundTheme.gridOpacity,
+          backgroundImage: `${backgroundTheme.gridFineLine}, ${backgroundTheme.gridAccentLine}`,
+          backgroundSize: `${backgroundTheme.gridBackgroundSize}, ${backgroundTheme.gridBackgroundSize}, ${backgroundTheme.gridAccentBackgroundSize}, ${backgroundTheme.gridAccentBackgroundSize}`,
         }}
       />
 

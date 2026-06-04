@@ -17,6 +17,13 @@ assert.match(loginPageSource, /prefers-reduced-motion:\s*reduce/, 'LoginPage sho
 assert.match(loginPageSource, /gsap\.quickTo\(/, 'LoginPage should use quickTo for pointer-driven motion');
 assert.match(loginPageSource, /data-login-card-shell/, 'LoginPage should animate a card wrapper rather than the glass card');
 assert.match(loginPageSource, /data-login-motion-layer/, 'LoginPage should expose decorative motion layers');
+assert.match(loginPageSource, /type LoginBackgroundTheme = \{/, 'LoginPage should define a local background theme type');
+assert.match(loginPageSource, /const LOGIN_BACKGROUND_THEME/, 'LoginPage should centralize login background theme values');
+assert.match(loginPageSource, /backgroundTheme = LOGIN_BACKGROUND_THEME\[theme\]/, 'LoginPage should resolve background theme values by current theme');
+assert.match(loginPageSource, /gridBackgroundSize:\s*'48px 48px'/, 'login grid should use the tightened 48px background size');
+assert.match(loginPageSource, /gridOpacity:\s*0\.3/, 'light mode grid should be visibly stronger');
+assert.match(loginPageSource, /gridOpacity:\s*0\.4/, 'dark mode grid should be visibly stronger');
+assert.match(loginPageSource, /gridAccentLine/, 'login grid should include a sparse accent grid layer');
 assert.match(loginPageSource, /data-login-brand-halo-ring/, 'LoginPage should animate a separate brand halo ring');
 assert.doesNotMatch(loginPageSource, /data-login-pointer-glow/, 'LoginPage should not render a rectangular pointer glow layer');
 assert.doesNotMatch(loginPageSource, /\bpointerLight\b/, 'LoginPage should not keep pointer glow animation code');
@@ -25,6 +32,14 @@ assert.match(loginPageSource, /gsap\.to\(brandHaloRing,/, 'LoginPage should anim
 assert.doesNotMatch(loginPageSource, /gsap\.to\(brandHalo,/, 'LoginPage should not scale the brand icon container directly');
 assert.match(loginPageSource, /data-login-top-ambient/, 'LoginPage should expose an animated top-left ambient light');
 assert.match(loginPageSource, /data-login-right-ambient/, 'LoginPage should expose an animated right-bottom ambient light');
+assert.match(loginPageSource, /topAmbient:[\s\S]*baseAlpha:\s*0\.74/, 'light mode top ambient light should be brighter');
+assert.match(loginPageSource, /topAmbient:[\s\S]*baseAlpha:\s*0\.86/, 'dark mode top ambient light should be brighter');
+assert.match(loginPageSource, /rightAmbient:[\s\S]*baseAlpha:\s*0\.62/, 'light mode right ambient light should be brighter');
+assert.match(loginPageSource, /rightAmbient:[\s\S]*baseAlpha:\s*0\.72/, 'dark mode right ambient light should be brighter');
+assert.doesNotMatch(loginPageSource, /rgba\(70,150,255,/, 'ambient lights should not use the removed cool blue accent');
+assert.match(loginPageSource, /rightAmbient:[\s\S]*rgba\(240,112,64,0\.2/, 'right ambient light should stay in the warm orange family');
+assert.match(loginPageSource, /data-login-top-ambient[\s\S]*h-\[42vh\][\s\S]*min-h-\[320px\][\s\S]*w-\[42vw\][\s\S]*min-w-\[320px\]/, 'top ambient light should be the smaller concentrated warm source');
+assert.match(loginPageSource, /data-login-right-ambient[\s\S]*h-\[78vh\][\s\S]*min-h-\[520px\][\s\S]*w-\[58vw\][\s\S]*min-w-\[520px\]/, 'right ambient light should be the larger diffuse warm source');
 assert.doesNotMatch(loginPageSource, /data-login-scanline/, 'LoginPage should remove the left-to-right scan beam');
 assert.doesNotMatch(loginPageSource, /\bscanLine\b/, 'LoginPage should not keep scan beam animation code');
 assert.doesNotMatch(loginPageSource, /x:\s*'185vw'/, 'LoginPage should not keep the old scan beam travel');
