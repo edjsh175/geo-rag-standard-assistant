@@ -3,6 +3,7 @@
 """
 
 import logging
+import inspect
 import re
 import string
 from typing import List, Optional, Dict, Any
@@ -15,6 +16,11 @@ from sqlalchemy import text
 from app.models.search_models import (
     DocumentResult, FollowUpContext, MetadataFilter, SpatialFilter
 )
+from app.services.rag.filters import RagFilterEngine
+from app.services.rag.reranker import RagReranker
+from app.services.rag.retriever import RagRetriever
+from app.services.rag.search_logger import RagSearchLogger
+from app.services.rag.types import SearchContext
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +177,35 @@ class SearchService:
         self.vector_service = None  # 将在后面初始化
         self.spatial_service = None  # 将在后面初始化
         self.postgres_available = False
+        self.rag_filter_engine = RagFilterEngine()
+        self.rag_reranker = RagReranker()
+        self.rag_search_logger = RagSearchLogger()
 
         # 检查数据库连接状态
         self._check_database_status()
+
+    def _get_rag_filter_engine(self) -> RagFilterEngine:
+        if not hasattr(self, "rag_filter_engine"):
+            self.rag_filter_engine = RagFilterEngine()
+        return self.rag_filter_engine
+
+    def _get_rag_reranker(self) -> RagReranker:
+        if not hasattr(self, "rag_reranker"):
+            self.rag_reranker = RagReranker()
+        return self.rag_reranker
+
+    def _get_rag_search_logger(self) -> RagSearchLogger:
+        if not hasattr(self, "rag_search_logger"):
+            self.rag_search_logger = RagSearchLogger()
+        return self.rag_search_logger
+
+    def _get_rag_retriever(self) -> RagRetriever:
+        return RagRetriever(
+            get_query_embedding=self._get_query_embedding,
+            exact_standard_code_search=self._exact_standard_code_search,
+            keyword_search=self._keyword_search,
+            vector_search=self._vector_search,
+        )
 
     def _check_database_status(self):
         """检查数据库连接状态"""
@@ -198,7 +230,9 @@ class SearchService:
         top_k: int = 10,
         threshold: float = 0.7,
         spatial_filter: Optional[SpatialFilter] = None,
-        metadata_filter: Optional[MetadataFilter] = None
+        metadata_filter: Optional[MetadataFilter] = None,
+        search_mode: str = "hybrid",
+        use_rerank: bool = True,
     ) -> List[DocumentResult]:
         """
         智能检索文档
@@ -241,64 +275,60 @@ class SearchService:
                 # 绝对禁止执行向量检索，直接返回空结果
                 return []
 
-            # 1. 获取查询的向量嵌入
-            query_embedding = await self._get_query_embedding(query)
-            exact_standard_code_results = await self._exact_standard_code_search(
+            context = SearchContext(
                 query=query,
-                top_k=top_k * 2,
+                top_k=top_k,
+                threshold=threshold,
+                search_mode=search_mode,
+                use_rerank=use_rerank,
+                spatial_filter=spatial_filter,
+                metadata_filter=metadata_filter,
             )
 
-            # 2. 向量相似度搜索
-            vector_results = await self._vector_search(
-                query_embedding=query_embedding,
-                top_k=top_k * 2,  # 获取更多结果用于后续过滤
-                threshold=threshold
-            )
-
-            keyword_results = await self._keyword_search(
-                query=query,
-                top_k=top_k * 2,
-            )
-
-            keyword_results = self._merge_and_dedupe_results(
-                exact_standard_code_results,
-                keyword_results,
-                top_k=top_k * 3,
-            )
-
-            vector_results = self._merge_and_dedupe_results(
-                keyword_results,
-                vector_results,
-                top_k=top_k * 2,
-            )
+            retrieved = await self._get_rag_retriever().retrieve(context)
+            candidate_results = retrieved.results
 
             # 3. 应用空间过滤器
             if spatial_filter:
-                vector_results = await self._apply_spatial_filter(
-                    results=vector_results,
+                candidate_results = await self._apply_spatial_filter(
+                    results=candidate_results,
                     spatial_filter=spatial_filter
                 )
 
             # 4. 应用元数据过滤器
             if metadata_filter:
-                vector_results = await self._apply_metadata_filter(
-                    results=vector_results,
+                candidate_results = await self._apply_metadata_filter(
+                    results=candidate_results,
                     metadata_filter=metadata_filter
                 )
 
             # 5. 重排序和截断
-            final_results = await self._rerank_results(
-                query=query,
-                results=vector_results,
-                top_k=top_k
-            )
+            if use_rerank:
+                final_results = await self._rerank_results(
+                    query=query,
+                    results=candidate_results,
+                    top_k=top_k,
+                    metadata_filter=metadata_filter,
+                    spatial_filter=spatial_filter,
+                )
+            else:
+                final_results = candidate_results[:top_k]
 
             # 6. 记录搜索日志
-            await self._log_search(
+            log_result = self._log_search(
                 query=query,
                 results_count=len(final_results),
-                search_time=(datetime.now() - start_time).total_seconds()
+                search_time=(datetime.now() - start_time).total_seconds(),
+                search_mode=context.mode,
+                top_k=top_k,
+                threshold=threshold,
+                metadata_filter=metadata_filter,
+                spatial_filter=spatial_filter,
+                used_rerank=use_rerank,
+                embedding_available=retrieved.embedding_available,
             )
+            if inspect.isawaitable(log_result):
+                await log_result
 
             return final_results
 
@@ -324,11 +354,78 @@ class SearchService:
             if token and token not in QUERY_STOP_WORDS:
                 terms.append(token)
 
+        spaced_cleaned = query
+        for word in QUERY_STOP_WORDS:
+            spaced_cleaned = spaced_cleaned.replace(word, " ")
+
+        for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{2,}", spaced_cleaned):
+            if token and token not in QUERY_STOP_WORDS:
+                terms.append(token)
+
         deduped_terms: List[str] = []
         for term in terms:
             if term not in deduped_terms:
                 deduped_terms.append(term)
         return deduped_terms[:6]
+
+    def _infer_file_type(self, document_name: Optional[str]) -> str:
+        if not document_name or "." not in document_name:
+            return "unknown"
+        suffix = document_name.rsplit(".", 1)[-1].strip().lower()
+        return suffix or "unknown"
+
+    def _build_policy_chunk_result(
+        self,
+        row,
+        similarity: float,
+        match_type: str,
+        extra_metadata: Optional[Dict[str, Any]] = None,
+    ) -> DocumentResult:
+        document_name = row.document_name
+        metadata: Dict[str, Any] = {
+            "standard_code": row.standard_code,
+            "document_name": document_name,
+            "document_type": "标准规范",
+            "match_type": match_type,
+        }
+
+        for key in (
+            "category",
+            "keyword",
+            "chinese_name",
+            "english_name",
+            "release_date",
+            "implement_date",
+            "standard_status",
+            "release_unit",
+            "charge_unit",
+            "draft_unit",
+            "application_scope",
+        ):
+            value = getattr(row, key, None)
+            if value is not None:
+                metadata[key] = value
+
+        if metadata.get("keyword"):
+            metadata["keywords"] = metadata["keyword"]
+        if metadata.get("release_unit") and not metadata.get("source"):
+            metadata["source"] = metadata["release_unit"]
+        if extra_metadata:
+            metadata.update(extra_metadata)
+
+        file_type = self._infer_file_type(document_name)
+        return DocumentResult(
+            id=row.id,
+            title=document_name,
+            content=row.content[:500] if row.content else "",
+            similarity=float(similarity),
+            metadata=metadata,
+            spatial_info=None,
+            file_type=file_type,
+            file_size=0,
+            upload_time=datetime.now(),
+            source_url=None,
+        )
 
     async def _keyword_search(self, query: str, top_k: int) -> List[DocumentResult]:
         """关键词兜底检索，用于地区编号和明确主题词。"""
@@ -357,12 +454,20 @@ class SearchService:
                 WITH matched AS (
                     SELECT DISTINCT ON (document_name)
                         id, standard_code, document_name, content,
+                        category, keyword, chinese_name, english_name,
+                        release_date, implement_date, standard_status,
+                        release_unit, charge_unit, draft_unit, application_scope,
                         LEAST(0.95, 0.55 + ({' + '.join(score_parts)})) AS similarity
                     FROM policy_chunks
                     WHERE {' OR '.join(conditions)}
                     ORDER BY document_name, similarity DESC, id
                 )
-                SELECT id, standard_code, document_name, content, similarity
+                SELECT
+                    id, standard_code, document_name, content,
+                    category, keyword, chinese_name, english_name,
+                    release_date, implement_date, standard_status,
+                    release_unit, charge_unit, draft_unit, application_scope,
+                    similarity
                 FROM matched
                 ORDER BY similarity DESC, document_name
                 LIMIT :limit
@@ -374,22 +479,13 @@ class SearchService:
 
             keyword_results = []
             for row in rows:
-                keyword_results.append(DocumentResult(
-                    id=row.id,
-                    title=row.document_name,
-                    content=row.content[:500] if row.content else "",
-                    similarity=float(row.similarity),
-                    metadata={
-                        "standard_code": row.standard_code,
-                        "document_name": row.document_name,
-                        "match_type": "keyword",
-                    },
-                    spatial_info=None,
-                    file_type="unknown",
-                    file_size=0,
-                    upload_time=datetime.now(),
-                    source_url=None,
-                ))
+                keyword_results.append(
+                    self._build_policy_chunk_result(
+                        row,
+                        similarity=float(row.similarity),
+                        match_type="keyword",
+                    )
+                )
 
             logger.info("关键词检索命中 %s 条: query='%s', terms=%s", len(keyword_results), query, terms)
             return keyword_results
@@ -510,7 +606,18 @@ class SearchService:
                 id,
                 standard_code,
                 document_name,
-                content
+                content,
+                category,
+                keyword,
+                chinese_name,
+                english_name,
+                release_date,
+                implement_date,
+                standard_status,
+                release_unit,
+                charge_unit,
+                draft_unit,
+                application_scope
             FROM policy_chunks
             WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
             ORDER BY document_name, id
@@ -526,22 +633,11 @@ class SearchService:
             rows = result.fetchall()
 
         exact_results = [
-            DocumentResult(
-                id=row.id,
-                title=row.document_name,
-                content=row.content[:500] if row.content else "",
+            self._build_policy_chunk_result(
+                row,
                 similarity=1.0,
-                metadata={
-                    "standard_code": row.standard_code,
-                    "document_name": row.document_name,
-                    "match_type": "standard_code_exact",
-                    "standard_code_match_type": "exact",
-                },
-                spatial_info=None,
-                file_type="unknown",
-                file_size=0,
-                upload_time=datetime.now(),
-                source_url=None,
+                match_type="standard_code_exact",
+                extra_metadata={"standard_code_match_type": "exact"},
             )
             for row in rows
         ]
@@ -684,6 +780,9 @@ class SearchService:
                 sql = """
                     SELECT
                         id, standard_code, document_name, content,
+                        category, keyword, chinese_name, english_name,
+                        release_date, implement_date, standard_status,
+                        release_unit, charge_unit, draft_unit, application_scope,
                         1 - (embedding <=> CAST(:embedding_str AS vector)) AS similarity
                     FROM policy_chunks
                 """
@@ -720,26 +819,10 @@ class SearchService:
                         continue
 
 
-                    # 构建元数据
-                    metadata = {
-                        "standard_code": row.standard_code,
-                        "document_name": row.document_name
-                    }
-
-                    # 创建DocumentResult
-                    # 注意：policy_chunks表可能不包含所有字段，这里提供默认值
-                    # 实际项目中应根据表结构调整
-                    doc_result = DocumentResult(
-                        id=row.id,
-                        title=row.document_name,  # 使用文档名作为标题
-                        content=row.content[:500] if row.content else "",  # 截取前500字符作为摘要
-                        similarity=similarity,
-                        metadata=metadata,
-                        spatial_info=None,  # 需要从其他表获取
-                        file_type="unknown",  # 需要从其他表获取
-                        file_size=0,  # 需要从其他表获取
-                        upload_time=datetime.now(),  # 需要从其他表获取
-                        source_url=None  # 需要从其他表获取
+                    doc_result = self._build_policy_chunk_result(
+                        row,
+                        similarity=float(similarity),
+                        match_type="vector",
                     )
                     results.append(doc_result)
 
@@ -757,12 +840,13 @@ class SearchService:
     ) -> List[DocumentResult]:
         """应用空间过滤器"""
         try:
-            # TODO: 实现空间过滤逻辑
-            # 这里应该根据空间关系过滤结果
-            return results
+            return await self._get_rag_filter_engine().apply_spatial_filter(
+                results,
+                spatial_filter,
+            )
         except Exception as e:
             logger.error(f"空间过滤失败: {e}")
-            return results
+            return []
 
     async def _apply_metadata_filter(
         self,
@@ -771,15 +855,13 @@ class SearchService:
     ) -> List[DocumentResult]:
         """应用元数据过滤器"""
         try:
-            # TODO: 实现元数据过滤逻辑
-            filtered_results = []
-            for result in results:
-                if self._matches_metadata_filter(result.metadata, metadata_filter):
-                    filtered_results.append(result)
-            return filtered_results
+            return self._get_rag_filter_engine().apply_metadata_filter(
+                results,
+                metadata_filter,
+            )
         except Exception as e:
             logger.error(f"元数据过滤失败: {e}")
-            return results
+            return []
 
     def _matches_metadata_filter(
         self,
@@ -787,8 +869,7 @@ class SearchService:
         filter_: MetadataFilter
     ) -> bool:
         """检查文档是否匹配元数据过滤器"""
-        # TODO: 实现完整的元数据匹配逻辑
-        return True
+        return self._get_rag_filter_engine().matches_metadata_filter(metadata, filter_)
 
     async def _spatial_search(
         self,
@@ -797,10 +878,7 @@ class SearchService:
     ) -> List[DocumentResult]:
         """空间搜索"""
         try:
-            # TODO: 实现空间搜索逻辑
-            # 1. 地理编码（地址转坐标）
-            # 2. 空间查询（查找附近的文档）
-            return []
+            return await self._get_rag_filter_engine().spatial_search(spatial_query, top_k)
         except Exception as e:
             logger.error(f"空间搜索失败: {e}")
             return []
@@ -837,20 +915,23 @@ class SearchService:
         self,
         query: str,
         results: List[DocumentResult],
-        top_k: int
+        top_k: int,
+        metadata_filter: Optional[MetadataFilter] = None,
+        spatial_filter: Optional[SpatialFilter] = None,
     ) -> List[DocumentResult]:
         """使用大模型对结果进行重排序"""
         try:
             if not results:
                 return results
 
-            # TODO: 实现大模型重排序逻辑
-            # 可以使用交叉编码器或大模型进行相关性评估
-            prioritized_results = self._prioritize_exact_standard_code_matches(
+            prioritized_results = self._get_rag_reranker().rerank(
                 query,
                 results,
+                top_k=top_k,
+                metadata_filter=metadata_filter,
+                spatial_filter=spatial_filter,
             )
-            return prioritized_results[:top_k]
+            return prioritized_results
 
         except Exception as e:
             logger.error(f"重排序失败: {e}")
@@ -860,11 +941,33 @@ class SearchService:
         self,
         query: str,
         results_count: int,
-        search_time: float
+        search_time: float,
+        search_mode: str = "hybrid",
+        top_k: int = 10,
+        threshold: float = 0.7,
+        metadata_filter: Optional[MetadataFilter] = None,
+        spatial_filter: Optional[SpatialFilter] = None,
+        used_rerank: bool = True,
+        embedding_available: Optional[bool] = None,
     ):
         """记录搜索日志"""
         try:
-            # TODO: 实现搜索日志记录
+            context = SearchContext(
+                query=query,
+                top_k=top_k,
+                threshold=threshold,
+                search_mode=search_mode,
+                use_rerank=used_rerank,
+                metadata_filter=metadata_filter,
+                spatial_filter=spatial_filter,
+            )
+            await self._get_rag_search_logger().log_search(
+                context,
+                results_count=results_count,
+                duration_seconds=search_time,
+                used_rerank=used_rerank,
+                embedding_available=embedding_available,
+            )
             logger.info(
                 f"搜索日志 - 查询: {query}, 结果数: {results_count}, "
                 f"耗时: {search_time:.2f}秒"

@@ -52,3 +52,23 @@ CREATE INDEX IF NOT EXISTS idx_document_reindex_jobs_doc_id
 
 CREATE INDEX IF NOT EXISTS idx_document_reindex_jobs_status_created_at
     ON document_reindex_jobs (status, created_at);
+
+CREATE TABLE IF NOT EXISTS search_logs (
+    id BIGSERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    mode VARCHAR(32) NOT NULL,
+    top_k INTEGER NOT NULL,
+    threshold DOUBLE PRECISION NOT NULL,
+    filters JSONB NULL,
+    results_count INTEGER NOT NULL,
+    duration_seconds DOUBLE PRECISION NOT NULL,
+    used_rerank BOOLEAN NOT NULL,
+    embedding_available BOOLEAN NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_logs_created_at
+    ON search_logs (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_search_logs_mode_created_at
+    ON search_logs (mode, created_at DESC);
