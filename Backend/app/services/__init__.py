@@ -1,13 +1,9 @@
-"""
-GeoAI 服务层
-包含核心业务逻辑
-"""
+"""GeoAI service package.
 
-from .search_service import SearchService
-from .spatial_service import SpatialService
-from .document_service import DocumentService
-from .document_asset_service import DocumentAssetService
-from .vector_service import VectorService
+Service modules depend on Pydantic models, and some models import lightweight
+service-owned response types. Keep package initialization side-effect free so
+direct model imports do not eagerly import every service module.
+"""
 
 __all__ = [
     "SearchService",

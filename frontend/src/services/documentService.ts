@@ -1,5 +1,10 @@
-import { apiClient } from '../lib/api/config';
-import type { DocumentDetail } from '../types/api';
+import { apiDelete, apiGet, apiGetBlob, apiPatch, apiPost, apiPostForm } from '../lib/api/contractClient';
+import type { components } from '../lib/api/generated/schema';
+
+export type DocumentDetail = components['schemas']['DocumentDetailResponse'];
+type UploadResponse = components['schemas']['UploadResponse'];
+type DocumentBatchRequest = components['schemas']['DocumentBatchRequest'];
+type DocumentListResponse = { documents?: DocumentDetail[]; total?: number };
 
 export interface DownloadedDocument {
   blob: Blob;
@@ -27,11 +32,18 @@ const extractFilename = (contentDisposition?: string): string => {
   return 'document';
 };
 
+const headerToString = (value: unknown): string | undefined => {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.find((item): item is string => typeof item === 'string');
+  return undefined;
+};
+
 export const documentService = {
   async getDocumentById(id: string): Promise<DocumentDetail | null> {
     try {
-      const response = await apiClient.get<DocumentDetail>(`/documents/${id}`);
-      return response.data;
+      return await apiGet('/api/documents/{doc_id}', {
+        params: { path: { doc_id: id } },
+      });
     } catch (error) {
       console.error(`Failed to fetch document detail (ID: ${id}):`, error);
       return null;
@@ -41,22 +53,25 @@ export const documentService = {
   async getDocumentList(
     page: number = 1,
     pageSize: number = 20,
-    filters?: Record<string, any>
+    filters?: Record<string, unknown>
   ): Promise<{ documents: DocumentDetail[]; total: number }> {
     try {
-      const params = { page, page_size: pageSize, ...filters };
-      const response = await apiClient.get<{ documents: DocumentDetail[]; total: number }>(
-        '/documents/list',
-        { params }
-      );
-      return response.data;
+      const response = await apiGet('/api/documents/list', {
+        params: {
+          query: { page, page_size: pageSize, ...(filters ?? {}) },
+        },
+      }) as DocumentListResponse;
+      return {
+        documents: response.documents || [],
+        total: response.total || 0,
+      };
     } catch (error) {
       console.error('Failed to fetch document list:', error);
       return { documents: [], total: 0 };
     }
   },
 
-  async uploadDocument(file: File, metadata?: Record<string, any>): Promise<string> {
+  async uploadDocument(file: File, metadata?: Record<string, unknown>): Promise<string> {
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -64,16 +79,8 @@ export const documentService = {
         formData.append('metadata', JSON.stringify(metadata));
       }
 
-      const response = await apiClient.post<{ document_id: string }>(
-        '/documents/upload',
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-      return response.data.document_id;
+      const response: UploadResponse = await apiPostForm('/api/documents/upload', formData);
+      return response.document_id;
     } catch (error) {
       console.error('Failed to upload document:', error);
       throw error;
@@ -82,16 +89,20 @@ export const documentService = {
 
   async deleteDocument(id: string): Promise<void> {
     try {
-      await apiClient.delete(`/documents/${id}`);
+      await apiDelete('/api/documents/{doc_id}', {
+        params: { path: { doc_id: id } },
+      });
     } catch (error) {
       console.error(`Failed to delete document (ID: ${id}):`, error);
       throw error;
     }
   },
 
-  async updateDocumentMetadata(id: string, metadata: Record<string, any>): Promise<void> {
+  async updateDocumentMetadata(id: string, metadata: Record<string, unknown>): Promise<void> {
     try {
-      await apiClient.patch(`/documents/${id}`, { metadata });
+      await apiPatch('/api/documents/{doc_id}', { metadata }, {
+        params: { path: { doc_id: id } },
+      });
     } catch (error) {
       console.error(`Failed to update document metadata (ID: ${id}):`, error);
       throw error;
@@ -100,14 +111,15 @@ export const documentService = {
 
   async downloadDocument(id: string): Promise<DownloadedDocument> {
     try {
-      const response = await apiClient.get<Blob>(`/documents/${id}/download`, {
-        responseType: 'blob',
+      const response = await apiGetBlob('/api/documents/{doc_id}/download', {
+        params: { path: { doc_id: id } },
       });
-      const filename = extractFilename(response.headers['content-disposition']);
+      const filename = extractFilename(headerToString(response.headers['content-disposition']));
+      const contentType = headerToString(response.headers['content-type']);
       return {
-        blob: response.data,
+        blob: response.blob,
         filename,
-        contentType: response.headers['content-type'] || null,
+        contentType: contentType || null,
       };
     } catch (error) {
       console.error(`Failed to download document (ID: ${id}):`, error);
@@ -115,9 +127,9 @@ export const documentService = {
     }
   },
 
-  async batchOperation(operation: string, documentIds: string[]): Promise<void> {
+  async batchOperation(operation: DocumentBatchRequest['operation'], documentIds: string[]): Promise<void> {
     try {
-      await apiClient.post('/documents/batch', {
+      await apiPost('/api/documents/batch', {
         operation,
         document_ids: documentIds,
       });
@@ -127,4 +139,3 @@ export const documentService = {
     }
   },
 };
-

@@ -2,7 +2,7 @@
 文档数据模型
 """
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, validator
 from datetime import datetime
 import re
@@ -76,15 +76,41 @@ class UploadRequest(BaseModel):
 
 class DocumentUpdateRequest(BaseModel):
     """文档更新请求"""
-    metadata: Optional[DocumentMetadata] = Field(None, description="文档元数据")
-    spatial_metadata: Optional[SpatialMetadata] = Field(None, description="空间元数据")
+    metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="文档元数据局部更新",
+        json_schema_extra={"additionalProperties": True},
+    )
+    spatial_metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="空间元数据局部更新",
+        json_schema_extra={"additionalProperties": True},
+    )
     reindex: bool = Field(False, description="是否重新索引")
 
 
 class DocumentBatchRequest(BaseModel):
     """文档批量操作请求"""
     document_ids: List[str] = Field(..., description="文档ID列表")
-    operation: str = Field(..., description="操作类型: delete, reindex, export")
+    operation: Literal["delete", "reindex"] = Field(..., description="操作类型: delete, reindex")
+
+
+class DocumentBatchResult(BaseModel):
+    """单个文档批量操作结果"""
+    document_id: str = Field(..., description="文档ID")
+    success: bool = Field(..., description="是否成功")
+    status: str = Field(..., description="操作状态")
+    message: str = Field(..., description="结果说明")
+    job_id: Optional[str] = Field(None, description="异步任务ID")
+
+
+class DocumentBatchResponse(BaseModel):
+    """文档批量操作响应"""
+    operation: Literal["delete", "reindex"] = Field(..., description="操作类型")
+    total: int = Field(..., description="总数量")
+    success: int = Field(..., description="成功数量")
+    failed: int = Field(..., description="失败数量")
+    results: List[DocumentBatchResult] = Field(default_factory=list, description="逐项结果")
 
 
 class DocumentStatistics(BaseModel):

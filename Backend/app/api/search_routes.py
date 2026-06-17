@@ -15,9 +15,11 @@ from pydantic import BaseModel
 
 from app.core.auth import UserIdentity
 from app.core.security import require_authenticated_user
-from app.models.search_models import FollowUpContext, SearchRequest, SearchResponse
+from app.models.search_models import FeedbackRequest, FeedbackResponse, FollowUpContext, SearchRequest, SearchResponse
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
+from app.services.document_contract_service import DocumentContractService
 from app.services.document_asset_service import DocumentAssetService
+from app.services.search_feedback_service import SearchFeedbackService
 from app.services.search_service import SearchService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ async def search_documents(
     current_user: UserIdentity = Depends(require_authenticated_user),
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
     quota_service: DemoQuotaService = Depends(get_demo_quota_service),
 ):
     try:
@@ -108,7 +111,7 @@ async def search_documents(
                 return base_response
 
         if not generation_allowed:
-            results = await _retrieve_results(request, search_service, asset_service)
+            results = await _retrieve_results(request, search_service, asset_service, contract_service)
             return SearchResponse(
                 query=request.query,
                 results=results,
@@ -153,7 +156,7 @@ async def search_documents(
                 quota=_quota_status(quota_decision),
             )
 
-        results = await _retrieve_results(request, search_service, asset_service)
+        results = await _retrieve_results(request, search_service, asset_service, contract_service)
 
         base_response = SearchResponse(
             query=request.query,
@@ -167,21 +170,6 @@ async def search_documents(
 
         if not generation_allowed:
             return base_response
-
-        if getattr(request, "stream", False):
-            async def event_generator():
-                context_payload = json.dumps(base_response.model_dump(), ensure_ascii=False)
-                yield f"event: context\ndata: {context_payload}\n\n"
-
-                async for event_chunk in search_service.generate_stream_answer(
-                    query=request.query,
-                    results=results,
-                    top_context_docs=min(5, len(results)),
-                    history=request.history,
-                ):
-                    yield event_chunk
-
-            return StreamingResponse(event_generator(), media_type="text/event-stream")
 
         try:
             generated_answer, _ = await search_service.generate_answer(
@@ -200,6 +188,59 @@ async def search_documents(
         raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
 
 
+@router.post(
+    "/query/stream",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def stream_search_documents(
+    request: SearchRequest,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    search_service: SearchService = Depends(SearchService),
+    asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+    quota_service: DemoQuotaService = Depends(get_demo_quota_service),
+):
+    try:
+        start_time = datetime.now()
+        quota_decision = await _consume_visitor_generation_quota(
+            request,
+            current_user,
+            quota_service,
+        )
+        generation_allowed = request.use_generation and (
+            quota_decision is None or quota_decision.allowed
+        )
+        results = await _retrieve_results(request, search_service, asset_service, contract_service)
+        base_response = SearchResponse(
+            query=request.query,
+            results=results,
+            total_count=len(results),
+            search_time=(datetime.now() - start_time).total_seconds(),
+            search_mode=request.search_mode,
+            quota=_quota_status(quota_decision),
+        )
+
+        async def event_generator():
+            context_payload = json.dumps(base_response.model_dump(), ensure_ascii=False)
+            yield f"event: context\ndata: {context_payload}\n\n"
+
+            if not generation_allowed:
+                return
+
+            async for event_chunk in search_service.generate_stream_answer(
+                query=request.query,
+                results=results,
+                top_context_docs=min(5, len(results)),
+                history=request.history,
+            ):
+                yield event_chunk
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Stream search failed: {exc}") from exc
+
+
 @router.post("/hybrid", response_model=SearchResponse)
 async def hybrid_search(
     query: str = Query(..., description="Search query."),
@@ -207,6 +248,7 @@ async def hybrid_search(
     top_k: int = Query(10, description="Maximum number of results."),
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
     current_user: UserIdentity = Depends(require_authenticated_user),
 ):
     _ = current_user
@@ -217,6 +259,7 @@ async def hybrid_search(
             top_k=top_k,
         )
         results = await asset_service.enrich_search_results(results)
+        results = await contract_service.filter_deleted_results(results)
         return SearchResponse(
             query=f"text={query}; spatial={spatial_query}" if spatial_query else query,
             results=results,
@@ -242,12 +285,14 @@ async def find_similar_documents(
     top_k: int = Query(5, description="Maximum number of similar documents."),
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
     current_user: UserIdentity = Depends(require_authenticated_user),
 ):
     _ = current_user
     try:
         similar_docs = await search_service.find_similar_documents(doc_id=doc_id, top_k=top_k)
         similar_docs = await asset_service.enrich_search_results(similar_docs)
+        similar_docs = await contract_service.filter_deleted_results(similar_docs)
         return {
             "doc_id": doc_id,
             "similar_documents": similar_docs,
@@ -256,10 +301,23 @@ async def find_similar_documents(
         raise HTTPException(status_code=500, detail=f"Find similar documents failed: {exc}") from exc
 
 
+@router.post("/feedback", response_model=FeedbackResponse)
+async def submit_search_feedback(
+    feedback: FeedbackRequest,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    feedback_service: SearchFeedbackService = Depends(SearchFeedbackService),
+):
+    try:
+        return await feedback_service.submit_feedback(feedback, current_user)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Feedback submission failed: {exc}") from exc
+
+
 async def _retrieve_results(
     request: SearchRequest,
     search_service: SearchService,
     asset_service: DocumentAssetService,
+    contract_service: DocumentContractService | None = None,
 ):
     results = await search_service.search(
         query=request.query,
@@ -283,7 +341,10 @@ async def _retrieve_results(
             metadata_filter=request.metadata_filter,
         )
 
-    return await asset_service.enrich_search_results(results)
+    enriched_results = await asset_service.enrich_search_results(results)
+    if contract_service is None or not hasattr(contract_service, "filter_deleted_results"):
+        contract_service = DocumentContractService()
+    return await contract_service.filter_deleted_results(enriched_results)
 
 
 def _quota_status(quota_decision: DemoQuotaDecision | None):
