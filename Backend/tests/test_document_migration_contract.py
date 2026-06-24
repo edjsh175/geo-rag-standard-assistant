@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_document_lifecycle_migration_indexes_2048_vectors_with_halfvec_expression() -> None:
+    migration = (ROOT / "migrations" / "20260618_document_lifecycle.sql").read_text(encoding="utf-8")
+
+    assert "embedding vector(2048)" in migration
+    assert "CAST(embedding AS halfvec(2048))" in migration
+    assert "embedding vector_cosine_ops" not in migration
+
+
+def test_uploaded_document_vector_search_matches_halfvec_index_expression() -> None:
+    source = (ROOT / "app" / "services" / "search_service.py").read_text(encoding="utf-8")
+
+    assert "CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))" in source
+
+
+def test_compose_postgis_image_installs_pgvector() -> None:
+    compose = (ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8")
+    dockerfile = (ROOT.parent / "docker" / "postgis-pgvector" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "dockerfile: docker/postgis-pgvector/Dockerfile" in compose
+    assert "postgresql-16-pgvector" in dockerfile

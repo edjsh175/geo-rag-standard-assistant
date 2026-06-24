@@ -1096,7 +1096,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentListResponse"
+                }
               }
             }
           },
@@ -1298,6 +1300,48 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Get Document Job",
+        "operationId": "get_document_job_api_documents_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentJobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2317,6 +2361,271 @@
         ],
         "title": "DocumentFileInfo"
       },
+      "DocumentJobResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id",
+            "description": "任务ID"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id",
+            "description": "文档ID"
+          },
+          "version_id": {
+            "type": "string",
+            "title": "Version Id",
+            "description": "版本ID"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "任务状态"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts",
+            "description": "已尝试次数",
+            "default": 0
+          },
+          "max_attempts": {
+            "type": "integer",
+            "title": "Max Attempts",
+            "description": "最大尝试次数",
+            "default": 3
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage",
+            "description": "当前阶段"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "错误信息"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "创建时间"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At",
+            "description": "更新时间"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "开始时间"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "结束时间"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "document_id",
+          "version_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DocumentJobResponse",
+        "description": "索引任务状态"
+      },
+      "DocumentListItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "文档ID"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "标题"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "原始文件名"
+          },
+          "file_type": {
+            "type": "string",
+            "title": "File Type",
+            "description": "文件类型"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size",
+            "description": "文件大小"
+          },
+          "mime_type": {
+            "type": "string",
+            "title": "Mime Type",
+            "description": "MIME 类型"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "Sha256",
+            "description": "文件 SHA-256"
+          },
+          "index_status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "parsing",
+              "chunking",
+              "embedding",
+              "indexed",
+              "failed",
+              "deleted"
+            ],
+            "title": "Index Status",
+            "description": "索引状态"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error",
+            "description": "最近错误"
+          },
+          "chunk_count": {
+            "type": "integer",
+            "title": "Chunk Count",
+            "description": "切片数量",
+            "default": 0
+          },
+          "download_available": {
+            "type": "boolean",
+            "title": "Download Available",
+            "description": "是否可下载",
+            "default": true
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url",
+            "description": "下载地址"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "创建时间"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At",
+            "description": "更新时间"
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "description": "文档元数据"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "filename",
+          "file_type",
+          "file_size",
+          "mime_type",
+          "sha256",
+          "index_status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DocumentListItem",
+        "description": "文档列表项"
+      },
+      "DocumentListResponse": {
+        "properties": {
+          "page": {
+            "type": "integer",
+            "title": "Page",
+            "description": "页码"
+          },
+          "page_size": {
+            "type": "integer",
+            "title": "Page Size",
+            "description": "页大小"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "总数"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentListItem"
+            },
+            "type": "array",
+            "title": "Documents",
+            "description": "文档列表"
+          }
+        },
+        "type": "object",
+        "required": [
+          "page",
+          "page_size",
+          "total"
+        ],
+        "title": "DocumentListResponse",
+        "description": "文档分页列表"
+      },
       "DocumentResult": {
         "properties": {
           "id": {
@@ -3211,6 +3520,14 @@
             "type": "string",
             "title": "Document Id"
           },
+          "version_id": {
+            "type": "string",
+            "title": "Version Id"
+          },
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
           "filename": {
             "type": "string",
             "title": "Filename"
@@ -3218,6 +3535,10 @@
           "size": {
             "type": "integer",
             "title": "Size"
+          },
+          "index_status": {
+            "type": "string",
+            "title": "Index Status"
           },
           "message": {
             "type": "string",
@@ -3231,8 +3552,11 @@
         "type": "object",
         "required": [
           "document_id",
+          "version_id",
+          "job_id",
           "filename",
           "size",
+          "index_status",
           "message",
           "access_url"
         ],

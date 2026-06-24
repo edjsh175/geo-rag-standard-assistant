@@ -4,6 +4,7 @@
 
 import logging
 import inspect
+import json
 import re
 import string
 from typing import List, Optional, Dict, Any
@@ -427,6 +428,51 @@ class SearchService:
             source_url=None,
         )
 
+    def _build_uploaded_chunk_result(
+        self,
+        row,
+        similarity: float,
+        match_type: str,
+    ) -> DocumentResult:
+        metadata = self._coerce_json_dict(getattr(row, "metadata", None))
+        metadata.update(
+            {
+                "chunk_id": str(row.chunk_id),
+                "document_name": row.title or row.filename,
+                "original_filename": row.filename,
+                "document_type": "上传文档",
+                "match_type": match_type,
+            }
+        )
+        spatial_info = self._coerce_json_dict(getattr(row, "spatial_metadata", None)) or None
+        download_url = getattr(row, "download_url", None)
+        return DocumentResult(
+            id=str(row.document_id),
+            title=row.title or row.filename,
+            content=row.content[:500] if row.content else "",
+            similarity=float(similarity),
+            metadata=metadata,
+            spatial_info=spatial_info,
+            file_type=row.file_type or self._infer_file_type(row.filename),
+            file_size=int(row.file_size or 0),
+            upload_time=row.created_at or datetime.now(),
+            source_url=download_url,
+            download_available=bool(download_url),
+            download_url=download_url,
+        )
+
+    @staticmethod
+    def _coerce_json_dict(value: Any) -> Dict[str, Any]:
+        if isinstance(value, dict):
+            return dict(value)
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
     async def _keyword_search(self, query: str, top_k: int) -> List[DocumentResult]:
         """关键词兜底检索，用于地区编号和明确主题词。"""
         terms = self._extract_keyword_terms(query)
@@ -487,10 +533,83 @@ class SearchService:
                     )
                 )
 
-            logger.info("关键词检索命中 %s 条: query='%s', terms=%s", len(keyword_results), query, terms)
-            return keyword_results
+            uploaded_results = await self._uploaded_keyword_search(query, top_k, terms)
+            merged_results = self._merge_and_dedupe_results(keyword_results, uploaded_results, top_k)
+            logger.info("关键词检索命中 %s 条: query='%s', terms=%s", len(merged_results), query, terms)
+            return merged_results
         except Exception as e:
             logger.warning("关键词检索失败，回退到向量检索结果: %s", e, exc_info=True)
+            return []
+
+    async def _uploaded_keyword_search(
+        self,
+        query: str,
+        top_k: int,
+        terms: Optional[List[str]] = None,
+    ) -> List[DocumentResult]:
+        terms = terms if terms is not None else self._extract_keyword_terms(query)
+        if not terms or not db_manager.postgres_sessionmaker:
+            return []
+
+        try:
+            conditions = []
+            params: Dict[str, Any] = {"limit": top_k}
+            score_parts = []
+            for index, term in enumerate(terms):
+                param_name = f"uploaded_kw_{index}"
+                params[param_name] = f"%{term}%"
+                conditions.append(
+                    f"(d.title ILIKE :{param_name} OR d.filename ILIKE :{param_name} OR c.content ILIKE :{param_name})"
+                )
+                score_parts.append(
+                    f"(CASE WHEN d.title ILIKE :{param_name} THEN 0.18 ELSE 0 END)"
+                    f" + (CASE WHEN d.filename ILIKE :{param_name} THEN 0.12 ELSE 0 END)"
+                    f" + (CASE WHEN c.content ILIKE :{param_name} THEN 0.05 ELSE 0 END)"
+                )
+
+            sql = f"""
+                WITH matched AS (
+                    SELECT DISTINCT ON (d.id)
+                        c.id::text AS chunk_id,
+                        d.id::text AS document_id,
+                        d.title,
+                        d.filename,
+                        d.file_type,
+                        d.file_size,
+                        d.created_at,
+                        d.metadata,
+                        d.spatial_metadata,
+                        v.access_url AS download_url,
+                        c.content,
+                        LEAST(0.95, 0.52 + ({' + '.join(score_parts)})) AS similarity
+                    FROM document_chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    LEFT JOIN document_versions v ON v.id = d.current_version_id
+                    WHERE d.deleted_at IS NULL
+                      AND d.index_status = 'indexed'
+                      AND ({' OR '.join(conditions)})
+                    ORDER BY d.id, similarity DESC, c.chunk_index
+                )
+                SELECT *
+                FROM matched
+                ORDER BY similarity DESC, title
+                LIMIT :limit
+            """
+
+            async with db_manager.get_postgres_session() as session:
+                result = await session.execute(text(sql), params)
+                rows = result.fetchall()
+
+            return [
+                self._build_uploaded_chunk_result(
+                    row,
+                    similarity=float(row.similarity),
+                    match_type="uploaded_keyword",
+                )
+                for row in rows
+            ]
+        except Exception as exc:
+            logger.warning("上传文档关键词检索不可用: %s", exc)
             return []
 
     def _merge_and_dedupe_results(
@@ -826,11 +945,83 @@ class SearchService:
                     )
                     results.append(doc_result)
 
-                logger.debug(f"向量搜索返回 {len(results)} 条结果")
-                return results
+                uploaded_results = await self._uploaded_vector_search(
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                    threshold=threshold,
+                    exclude_doc_id=exclude_doc_id,
+                )
+                merged_results = self._merge_and_dedupe_results(results, uploaded_results, top_k)
+                logger.debug(f"向量搜索返回 {len(merged_results)} 条结果")
+                return merged_results
 
         except Exception as e:
             logger.error(f"向量搜索失败: {e}", exc_info=True)
+            return []
+
+    async def _uploaded_vector_search(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+        threshold: float = 0.7,
+        exclude_doc_id: Optional[str] = None,
+    ) -> List[DocumentResult]:
+        if not db_manager.postgres_sessionmaker or not query_embedding:
+            return []
+
+        embedding_str = str(query_embedding)
+        params: Dict[str, Any] = {"embedding_str": embedding_str, "limit": top_k}
+        exclude_clause = ""
+        if exclude_doc_id:
+            exclude_clause = "AND d.id::text != :exclude_doc_id"
+            params["exclude_doc_id"] = str(exclude_doc_id)
+
+        sql = f"""
+            SELECT
+                c.id::text AS chunk_id,
+                d.id::text AS document_id,
+                d.title,
+                d.filename,
+                d.file_type,
+                d.file_size,
+                d.created_at,
+                d.metadata,
+                d.spatial_metadata,
+                v.access_url AS download_url,
+                c.content,
+                1 - (
+                    CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))
+                ) AS similarity
+            FROM document_chunks c
+            JOIN documents d ON d.id = c.document_id
+            LEFT JOIN document_versions v ON v.id = d.current_version_id
+            WHERE d.deleted_at IS NULL
+              AND d.index_status = 'indexed'
+              AND c.embedding IS NOT NULL
+              {exclude_clause}
+            ORDER BY CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))
+            LIMIT :limit
+        """
+
+        try:
+            async with db_manager.get_postgres_session() as session:
+                result = await session.execute(text(sql), params)
+                rows = result.fetchall()
+
+            results: list[DocumentResult] = []
+            for row in rows:
+                if float(row.similarity) < threshold:
+                    continue
+                results.append(
+                    self._build_uploaded_chunk_result(
+                        row,
+                        similarity=float(row.similarity),
+                        match_type="uploaded_vector",
+                    )
+                )
+            return results
+        except Exception as exc:
+            logger.warning("上传文档向量检索不可用: %s", exc)
             return []
 
     async def _apply_spatial_filter(

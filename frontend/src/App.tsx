@@ -100,6 +100,44 @@ const metadataToDocumentMetadata = (
   };
 };
 
+const normalizeIndexingStatus = (value: unknown, fallback: Document['indexing_status'] = 'completed'): Document['indexing_status'] => {
+  const status = asString(value);
+  const supported: Document['indexing_status'][] = [
+    'pending',
+    'processing',
+    'completed',
+    'queued',
+    'parsing',
+    'chunking',
+    'embedding',
+    'indexed',
+    'failed',
+    'deleted',
+  ];
+  return supported.includes(status as Document['indexing_status'])
+    ? (status as Document['indexing_status'])
+    : fallback;
+};
+
+const isIndexedStatus = (status: Document['indexing_status']): boolean =>
+  status === 'completed' || status === 'indexed';
+
+const indexingStatusLabel = (status: Document['indexing_status']): string => {
+  const labels: Record<Document['indexing_status'], string> = {
+    pending: '待处理',
+    processing: '处理中',
+    completed: '已完成',
+    queued: '排队中',
+    parsing: '解析中',
+    chunking: '切分中',
+    embedding: '向量化',
+    indexed: '已完成',
+    failed: '失败',
+    deleted: '已删除',
+  };
+  return labels[status] ?? '待处理';
+};
+
 const toFrontendDocumentFromResult = (doc: ApiDocumentResult): Document => ({
   id: doc.id,
   filename: doc.title,
@@ -131,8 +169,10 @@ const toFrontendDocumentFromDetail = (documentDetail: ApiDocumentDetail): Docume
   metadata: metadataToDocumentMetadata(documentDetail.title, documentDetail.content, documentDetail.metadata),
   spatial_metadata: toSpatialMetadata(documentDetail.spatial_info),
   vector_embedding: undefined,
-  is_indexed: true,
-  indexing_status: 'completed',
+  is_indexed: isIndexedStatus(
+    normalizeIndexingStatus(asRecord(asRecord(documentDetail.metadata).custom_fields).index_status)
+  ),
+  indexing_status: normalizeIndexingStatus(asRecord(asRecord(documentDetail.metadata).custom_fields).index_status),
   storage_path: '',
   access_url: documentDetail.download_url,
   download_available: documentDetail.download_available,
@@ -1384,11 +1424,13 @@ export default function App() {
                    <div>
                     <p className="text-[12.5px] opacity-40 text-on-background uppercase font-bold tracking-widest mb-1">索引状态</p>
                     <span className={`px-2 py-0.5 rounded text-[12.5px] font-bold ${
-                      selectedDocument.indexing_status === 'completed'
+                      isIndexedStatus(selectedDocument.indexing_status)
                         ? 'bg-emerald-500/15 text-emerald-500'
+                        : selectedDocument.indexing_status === 'failed'
+                        ? 'bg-red-500/15 text-red-500'
                         : 'bg-yellow-500/15 text-yellow-500'
                     }`}>
-                      {selectedDocument.indexing_status === 'completed' ? '已完成' : '待处理'}
+                      {indexingStatusLabel(selectedDocument.indexing_status)}
                     </span>
                   </div>
                 </div>

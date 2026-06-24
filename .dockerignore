@@ -16,7 +16,11 @@ frontend/.env.*
 # Python virtual environments and caches
 venv/
 .venv/
+Backend/.venv/
+**/.venv/
 __pycache__/
+.pytest_cache/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -24,6 +28,8 @@ __pycache__/
 # Node/build artifacts
 node_modules/
 frontend/node_modules/
+**/node_modules/
+frontend/tests/
 frontend/dist/
 dist/
 
@@ -34,5 +40,6 @@ logs/
 
 # Local data and temp assets
 data/
+.codex_tmp/
 tmp/
 temp/
