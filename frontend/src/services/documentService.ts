@@ -2,9 +2,11 @@ import { apiDelete, apiGet, apiGetBlob, apiPatch, apiPost, apiPostForm } from '.
 import type { components } from '../lib/api/generated/schema';
 
 export type DocumentDetail = components['schemas']['DocumentDetailResponse'];
-type UploadResponse = components['schemas']['UploadResponse'];
+export type DocumentUploadResponse = components['schemas']['UploadResponse'];
+export type DocumentListItem = components['schemas']['DocumentListItem'];
+export type DocumentJob = components['schemas']['DocumentJobResponse'];
 type DocumentBatchRequest = components['schemas']['DocumentBatchRequest'];
-type DocumentListResponse = { documents?: DocumentDetail[]; total?: number };
+type DocumentListResponse = components['schemas']['DocumentListResponse'];
 
 export interface DownloadedDocument {
   blob: Blob;
@@ -54,7 +56,7 @@ export const documentService = {
     page: number = 1,
     pageSize: number = 20,
     filters?: Record<string, unknown>
-  ): Promise<{ documents: DocumentDetail[]; total: number }> {
+  ): Promise<{ documents: DocumentListItem[]; total: number }> {
     try {
       const response = await apiGet('/api/documents/list', {
         params: {
@@ -71,7 +73,7 @@ export const documentService = {
     }
   },
 
-  async uploadDocument(file: File, metadata?: Record<string, unknown>): Promise<string> {
+  async uploadDocument(file: File, metadata?: Record<string, unknown>): Promise<DocumentUploadResponse> {
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -79,11 +81,21 @@ export const documentService = {
         formData.append('metadata', JSON.stringify(metadata));
       }
 
-      const response: UploadResponse = await apiPostForm('/api/documents/upload', formData);
-      return response.document_id;
+      return await apiPostForm('/api/documents/upload', formData);
     } catch (error) {
       console.error('Failed to upload document:', error);
       throw error;
+    }
+  },
+
+  async getDocumentJob(jobId: string): Promise<DocumentJob | null> {
+    try {
+      return await apiGet('/api/documents/jobs/{job_id}', {
+        params: { path: { job_id: jobId } },
+      });
+    } catch (error) {
+      console.error(`Failed to fetch document index job (ID: ${jobId}):`, error);
+      return null;
     }
   },
 

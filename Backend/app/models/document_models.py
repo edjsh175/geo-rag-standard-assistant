@@ -50,6 +50,8 @@ class Document(BaseModel):
     storage_path: str = Field(..., description="存储路径")
     access_url: Optional[str] = Field(None, description="访问URL")
     version: int = Field(1, description="版本号")
+    current_version_id: Optional[str] = Field(None, description="当前版本ID")
+    job_id: Optional[str] = Field(None, description="最近一次索引任务ID")
 
 
 class UploadRequest(BaseModel):
@@ -111,6 +113,60 @@ class DocumentBatchResponse(BaseModel):
     success: int = Field(..., description="成功数量")
     failed: int = Field(..., description="失败数量")
     results: List[DocumentBatchResult] = Field(default_factory=list, description="逐项结果")
+
+
+DocumentIndexStatus = Literal[
+    "queued",
+    "parsing",
+    "chunking",
+    "embedding",
+    "indexed",
+    "failed",
+    "deleted",
+]
+
+
+class DocumentListItem(BaseModel):
+    """文档列表项"""
+    id: str = Field(..., description="文档ID")
+    title: str = Field(..., description="标题")
+    filename: str = Field(..., description="原始文件名")
+    file_type: str = Field(..., description="文件类型")
+    file_size: int = Field(..., description="文件大小")
+    mime_type: str = Field(..., description="MIME 类型")
+    sha256: str = Field(..., description="文件 SHA-256")
+    index_status: DocumentIndexStatus = Field(..., description="索引状态")
+    last_error: Optional[str] = Field(None, description="最近错误")
+    chunk_count: int = Field(0, description="切片数量")
+    download_available: bool = Field(True, description="是否可下载")
+    download_url: Optional[str] = Field(None, description="下载地址")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="文档元数据")
+
+
+class DocumentListResponse(BaseModel):
+    """文档分页列表"""
+    page: int = Field(..., description="页码")
+    page_size: int = Field(..., description="页大小")
+    total: int = Field(..., description="总数")
+    documents: List[DocumentListItem] = Field(default_factory=list, description="文档列表")
+
+
+class DocumentJobResponse(BaseModel):
+    """索引任务状态"""
+    job_id: str = Field(..., description="任务ID")
+    document_id: str = Field(..., description="文档ID")
+    version_id: str = Field(..., description="版本ID")
+    status: str = Field(..., description="任务状态")
+    attempts: int = Field(0, description="已尝试次数")
+    max_attempts: int = Field(3, description="最大尝试次数")
+    stage: Optional[str] = Field(None, description="当前阶段")
+    error: Optional[str] = Field(None, description="错误信息")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
+    started_at: Optional[datetime] = Field(None, description="开始时间")
+    finished_at: Optional[datetime] = Field(None, description="结束时间")
 
 
 class DocumentStatistics(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,6 +35,43 @@ def make_result(
 
 def build_service() -> SearchService:
     return SearchService.__new__(SearchService)
+
+
+def test_extract_keyword_terms_preserves_spaced_chinese_terms() -> None:
+    service = build_service()
+
+    terms = service._extract_keyword_terms("\u6ed1\u5761\u9632\u6cbb \u76d1\u6d4b")
+
+    assert "\u6ed1\u5761\u9632\u6cbb" in terms
+    assert "\u76d1\u6d4b" in terms
+
+
+def test_policy_chunk_result_carries_filterable_metadata() -> None:
+    service = build_service()
+    row = SimpleNamespace(
+        id=1,
+        standard_code="DB50_T 1846-2025",
+        document_name="DB50_T 1846-2025 \u964d\u96e8\u8bf1\u53d1\u6ed1\u5761\u98ce\u9669\u9884\u8b66\u89c4\u8303.zip",
+        content="\u6ed1\u5761\u76d1\u6d4b",
+        category="\u5730\u65b9\u6807\u51c6",
+        keyword="\u6ed1\u5761 \u76d1\u6d4b",
+        chinese_name="\u964d\u96e8\u8bf1\u53d1\u6ed1\u5761\u98ce\u9669\u9884\u8b66\u89c4\u8303",
+        english_name=None,
+        release_date="2025-03-01",
+        implement_date="2025-06-01",
+        standard_status="\u73b0\u884c",
+        release_unit="\u91cd\u5e86\u5e02\u5e02\u573a\u76d1\u7763\u7ba1\u7406\u5c40",
+        charge_unit=None,
+        draft_unit=None,
+        application_scope=None,
+    )
+
+    result = service._build_policy_chunk_result(row, similarity=0.9, match_type="keyword")
+
+    assert result.file_type == "zip"
+    assert result.metadata["document_type"] == "\u6807\u51c6\u89c4\u8303"
+    assert result.metadata["release_date"] == "2025-03-01"
+    assert result.metadata["source"] == "\u91cd\u5e86\u5e02\u5e02\u573a\u76d1\u7763\u7ba1\u7406\u5c40"
 
 
 @pytest.mark.asyncio

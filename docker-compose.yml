@@ -1,6 +1,9 @@
 services:
   postgis:
-    image: postgis/postgis:16-3.4
+    build:
+      context: .
+      dockerfile: docker/postgis-pgvector/Dockerfile
+    image: geoai-postgis-pgvector:16-3.4
     container_name: geoai-postgis
     environment:
       POSTGRES_DB: ${GEOAI_POSTGRES_DB:-geoai_db}
@@ -63,10 +66,17 @@ services:
       MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/disaster_knowledge}
       GEOSERVER_URL: ${GEOAI_GEOSERVER_URL:-http://geoserver:8080/geoserver}
       REDIS_URL: ${GEOAI_REDIS_URL:-redis://:change_me_redis@redis:6379/0}
-      MINIO_ENDPOINT: ${GEOAI_MINIO_ENDPOINT:-minio:9000}
+      MINIO_URL: ${GEOAI_MINIO_URL:-minio:9000}
       MINIO_ACCESS_KEY: ${GEOAI_MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${GEOAI_MINIO_SECRET_KEY:-change_me_minio}
       MINIO_BUCKET: ${GEOAI_MINIO_BUCKET:-geoai-assets}
+      CELERY_BROKER_URL: ${GEOAI_CELERY_BROKER_URL:-redis://:change_me_redis@redis:6379/1}
+      CELERY_RESULT_BACKEND: ${GEOAI_CELERY_RESULT_BACKEND:-redis://:change_me_redis@redis:6379/2}
+      DOCUMENT_CHUNK_SIZE: ${GEOAI_DOCUMENT_CHUNK_SIZE:-500}
+      DOCUMENT_CHUNK_OVERLAP: ${GEOAI_DOCUMENT_CHUNK_OVERLAP:-50}
+      DOCUMENT_EMBED_BATCH_SIZE: ${GEOAI_DOCUMENT_EMBED_BATCH_SIZE:-32}
+      DOCUMENT_INDEX_MAX_RETRIES: ${GEOAI_DOCUMENT_INDEX_MAX_RETRIES:-3}
+      PYTHONPATH: /app/Backend
       ZHIPU_API_KEY: ${GEOAI_ZHIPU_API_KEY:-}
       OPENAI_API_KEY: ${GEOAI_OPENAI_API_KEY:-}
       DEEPSEEK_API_KEY: ${GEOAI_DEEPSEEK_API_KEY:-}
@@ -86,8 +96,51 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
     restart: unless-stopped
     command: uvicorn Backend.main:app --host 0.0.0.0 --port 8000
+
+  document-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: backend
+    container_name: geoai-document-worker
+    environment:
+      DATABASE_URL: ${GEOAI_DATABASE_URL:-postgresql+asyncpg://postgres:change_me_postgres@postgis:5432/geoai_db}
+      MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/disaster_knowledge}
+      REDIS_URL: ${GEOAI_REDIS_URL:-redis://:change_me_redis@redis:6379/0}
+      MINIO_URL: ${GEOAI_MINIO_URL:-minio:9000}
+      MINIO_ACCESS_KEY: ${GEOAI_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${GEOAI_MINIO_SECRET_KEY:-change_me_minio}
+      MINIO_BUCKET: ${GEOAI_MINIO_BUCKET:-geoai-assets}
+      CELERY_BROKER_URL: ${GEOAI_CELERY_BROKER_URL:-redis://:change_me_redis@redis:6379/1}
+      CELERY_RESULT_BACKEND: ${GEOAI_CELERY_RESULT_BACKEND:-redis://:change_me_redis@redis:6379/2}
+      DOCUMENT_CHUNK_SIZE: ${GEOAI_DOCUMENT_CHUNK_SIZE:-500}
+      DOCUMENT_CHUNK_OVERLAP: ${GEOAI_DOCUMENT_CHUNK_OVERLAP:-50}
+      DOCUMENT_EMBED_BATCH_SIZE: ${GEOAI_DOCUMENT_EMBED_BATCH_SIZE:-32}
+      DOCUMENT_INDEX_MAX_RETRIES: ${GEOAI_DOCUMENT_INDEX_MAX_RETRIES:-3}
+      PYTHONPATH: /app/Backend
+      ZHIPU_API_KEY: ${GEOAI_ZHIPU_API_KEY:-}
+      OPENAI_API_KEY: ${GEOAI_OPENAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${GEOAI_DEEPSEEK_API_KEY:-}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --queues=documents
 
   frontend:
     build:
@@ -140,5 +193,3 @@ volumes:
 networks:
   default:
     name: geoai-network
-
-

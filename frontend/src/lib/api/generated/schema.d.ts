@@ -555,6 +555,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/documents/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Document Job */
+        get: operations["get_document_job_api_documents_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/{doc_id}": {
         parameters: {
             query?: never;
@@ -938,6 +955,188 @@ export interface components {
             filename?: string | null;
             /** Mime Type */
             mime_type?: string | null;
+        };
+        /**
+         * DocumentJobResponse
+         * @description 索引任务状态
+         */
+        DocumentJobResponse: {
+            /**
+             * Job Id
+             * @description 任务ID
+             */
+            job_id: string;
+            /**
+             * Document Id
+             * @description 文档ID
+             */
+            document_id: string;
+            /**
+             * Version Id
+             * @description 版本ID
+             */
+            version_id: string;
+            /**
+             * Status
+             * @description 任务状态
+             */
+            status: string;
+            /**
+             * Attempts
+             * @description 已尝试次数
+             * @default 0
+             */
+            attempts?: number;
+            /**
+             * Max Attempts
+             * @description 最大尝试次数
+             * @default 3
+             */
+            max_attempts?: number;
+            /**
+             * Stage
+             * @description 当前阶段
+             */
+            stage?: string | null;
+            /**
+             * Error
+             * @description 错误信息
+             */
+            error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 创建时间
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 更新时间
+             */
+            updated_at: string;
+            /**
+             * Started At
+             * @description 开始时间
+             */
+            started_at?: string | null;
+            /**
+             * Finished At
+             * @description 结束时间
+             */
+            finished_at?: string | null;
+        };
+        /**
+         * DocumentListItem
+         * @description 文档列表项
+         */
+        DocumentListItem: {
+            /**
+             * Id
+             * @description 文档ID
+             */
+            id: string;
+            /**
+             * Title
+             * @description 标题
+             */
+            title: string;
+            /**
+             * Filename
+             * @description 原始文件名
+             */
+            filename: string;
+            /**
+             * File Type
+             * @description 文件类型
+             */
+            file_type: string;
+            /**
+             * File Size
+             * @description 文件大小
+             */
+            file_size: number;
+            /**
+             * Mime Type
+             * @description MIME 类型
+             */
+            mime_type: string;
+            /**
+             * Sha256
+             * @description 文件 SHA-256
+             */
+            sha256: string;
+            /**
+             * Index Status
+             * @description 索引状态
+             * @enum {string}
+             */
+            index_status: "queued" | "parsing" | "chunking" | "embedding" | "indexed" | "failed" | "deleted";
+            /**
+             * Last Error
+             * @description 最近错误
+             */
+            last_error?: string | null;
+            /**
+             * Chunk Count
+             * @description 切片数量
+             * @default 0
+             */
+            chunk_count?: number;
+            /**
+             * Download Available
+             * @description 是否可下载
+             * @default true
+             */
+            download_available?: boolean;
+            /**
+             * Download Url
+             * @description 下载地址
+             */
+            download_url?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description 创建时间
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description 更新时间
+             */
+            updated_at: string;
+            /**
+             * Metadata
+             * @description 文档元数据
+             */
+            metadata?: Record<string, unknown>;
+        };
+        /**
+         * DocumentListResponse
+         * @description 文档分页列表
+         */
+        DocumentListResponse: {
+            /**
+             * Page
+             * @description 页码
+             */
+            page: number;
+            /**
+             * Page Size
+             * @description 页大小
+             */
+            page_size: number;
+            /**
+             * Total
+             * @description 总数
+             */
+            total: number;
+            /**
+             * Documents
+             * @description 文档列表
+             */
+            documents?: components["schemas"]["DocumentListItem"][];
         };
         /**
          * DocumentResult
@@ -1373,10 +1572,16 @@ export interface components {
         UploadResponse: {
             /** Document Id */
             document_id: string;
+            /** Version Id */
+            version_id: string;
+            /** Job Id */
+            job_id: string;
             /** Filename */
             filename: string;
             /** Size */
             size: number;
+            /** Index Status */
+            index_status: string;
             /** Message */
             message: string;
             /** Access Url */
@@ -2132,7 +2337,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DocumentListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2265,6 +2470,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_document_job_api_documents_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

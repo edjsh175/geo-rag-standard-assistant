@@ -41,7 +41,17 @@ export interface Document {
   spatial_metadata?: SpatialMetadata;
   vector_embedding?: number[];
   is_indexed: boolean;
-  indexing_status: 'pending' | 'processing' | 'completed' | 'failed';
+  indexing_status:
+    | 'pending'
+    | 'processing'
+    | 'completed'
+    | 'queued'
+    | 'parsing'
+    | 'chunking'
+    | 'embedding'
+    | 'indexed'
+    | 'failed'
+    | 'deleted';
   storage_path: string;
   access_url?: string;
   download_available?: boolean;

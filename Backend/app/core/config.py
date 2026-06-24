@@ -58,6 +58,13 @@ class Settings(BaseSettings):
 
     UPLOAD_DIR: Path = Path("uploads")
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024
+    DOCUMENT_UPLOAD_ENABLED: bool = False
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
+    DOCUMENT_CHUNK_SIZE: int = 500
+    DOCUMENT_CHUNK_OVERLAP: int = 50
+    DOCUMENT_EMBED_BATCH_SIZE: int = 32
+    DOCUMENT_INDEX_MAX_RETRIES: int = 3
 
     SECRET_KEY: str = "dev-only-secret-key-set-SECRET_KEY-in-env"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30

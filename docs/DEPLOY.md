@@ -39,7 +39,10 @@ http://SERVER_PUBLIC_IP
 - PostgreSQL + pgvector：必需，用于 `policy_chunks` 向量检索数据。
 - PostGIS：必需，用于 `spatial_regions` 空间查询数据。
 - MySQL：必需，使用 `disaster_knowledge.geoai_metadata` 存储标准元数据。
-- MinIO：当前竞赛主流程不需要。它只是后续文档对象存储能力的预留，例如 AI 引用文档后点击下载源文件。
+- Redis：必需，用于访客配额；启用文档上传索引闭环时也作为 Celery broker/result backend。
+- MinIO：启用文档上传、下载、索引闭环时必需，用于保存原始上传文件。只做标准库检索演示时可暂不启用。
+
+非 Docker 部署时，请在宿主机 PostgreSQL 实例中直接安装并启用 `vector` 和 `postgis` 扩展。不要为了本部署路径去构建项目内的 Docker 镜像。
 
 ## 安装基础软件
 
@@ -131,6 +134,13 @@ SQL
 
 向量检索路径要求 `policy_chunks` 存在并已导入标准文档切片及 embedding。启用地图区域查询时，空间检索还要求 `spatial_regions` 存在并已导入生产空间数据。公网验收前必须先完成这些数据导入。
 
+如果启用文档上传到检索闭环，还需要应用文档生命周期 migration：
+
+```bash
+cd /srv/geoai/app
+sudo -u postgres psql -d geoai_db -f Backend/migrations/20260618_document_lifecycle.sql
+```
+
 创建 MySQL 元数据数据库。按当前服务器截图口径，数据库名为 `disaster_knowledge`，元数据表名为 `geoai_metadata`。
 
 ```bash
@@ -168,9 +178,22 @@ REDIS_URL=redis://127.0.0.1:6379/0
 
 PUBLIC_API_BASE_URL=http://SERVER_PUBLIC_IP
 CORS_ORIGINS=["http://SERVER_PUBLIC_IP"]
+
+# 启用文档上传索引闭环时配置
+DOCUMENT_UPLOAD_ENABLED=False
+MINIO_URL=127.0.0.1:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=replace_with_strong_password
+MINIO_BUCKET=geoai-assets
+CELERY_BROKER_URL=redis://127.0.0.1:6379/1
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/2
+DOCUMENT_CHUNK_SIZE=500
+DOCUMENT_CHUNK_OVERLAP=50
+DOCUMENT_EMBED_BATCH_SIZE=32
+DOCUMENT_INDEX_MAX_RETRIES=3
 ```
 
-除非要部署可选的文档对象存储和下载流程，否则不要添加 MinIO 相关变量。后续如果启用 MinIO，也必须保持 MinIO 内网访问、bucket 私有，并且不要对公网开放 `9000` 或 `9001`。
+如果启用 MinIO，必须保持 MinIO 内网访问、bucket 私有，并且不要对公网开放 `9000` 或 `9001`。
 
 ## 后端服务
 
@@ -206,6 +229,33 @@ WantedBy=multi-user.target
 systemctl daemon-reload
 systemctl enable --now geoai-backend
 systemctl status geoai-backend
+```
+
+启用文档索引闭环时，还需要启动 Celery worker。创建 `/etc/systemd/system/geoai-document-worker.service`：
+
+```ini
+[Unit]
+Description=GeoAI document indexing worker
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/geoai/app/Backend
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/srv/geoai/venv/bin/celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --queues=documents
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启动 worker：
+
+```bash
+systemctl daemon-reload
+systemctl enable --now geoai-document-worker
+systemctl status geoai-document-worker
 ```
 
 ## 前端构建
@@ -311,7 +361,7 @@ http://SERVER_PUBLIC_IP
 - MySQL 已导入 `disaster_knowledge.geoai_metadata`
 - PostgreSQL 已导入并填充 `policy_chunks`
 - 如果演示包含空间检索，PostgreSQL 已导入并填充 `spatial_regions`
-- 除非启用可选文档下载流程，否则不要安装或暴露 MinIO
+- 如启用文档上传索引闭环，MinIO 已内网部署，`geoai-document-worker` 已运行
 - Nginx 已设置上传体积限制 `client_max_body_size 100m`
 - 后端服务已由 systemd 管理，并配置自动重启
 

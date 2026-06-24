@@ -13,6 +13,7 @@ import mimetypes
 import os
 from pathlib import Path
 import re
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 import uuid
 
@@ -25,6 +26,7 @@ from app.models.document_models import (
     DocumentUpdateRequest,
     SpatialMetadata,
 )
+from app.services.document_lifecycle_service import DocumentLifecycleService
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +53,31 @@ INVALID_OBJECT_NAME_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 class DocumentService:
     """Document and object storage management."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        storage: Any | None = None,
+        lifecycle_service: DocumentLifecycleService | None = None,
+        ensure_bucket: bool = True,
+    ):
         self.upload_dir = settings.UPLOAD_DIR
         self.bucket_name = settings.MINIO_BUCKET
         self.bucket_private_ready = False
-        self.minio_client = Minio(
-            settings.MINIO_URL,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_SECURE,
-        )
-        self._ensure_bucket()
+        self.storage = storage or self
+        self.lifecycle_service = lifecycle_service or DocumentLifecycleService()
+        self.minio_client = None
+        if storage is None:
+            self.minio_client = Minio(
+                settings.MINIO_URL,
+                access_key=settings.MINIO_ACCESS_KEY,
+                secret_key=settings.MINIO_SECRET_KEY,
+                secure=settings.MINIO_SECURE,
+            )
+            if ensure_bucket:
+                self._ensure_bucket()
+            else:
+                self.bucket_private_ready = True
+        else:
+            self.bucket_private_ready = True
 
     def _ensure_bucket(self) -> None:
         """Ensure the bucket exists and remains private."""
@@ -180,23 +196,38 @@ class DocumentService:
         content_type: str,
         metadata: DocumentMetadata,
         spatial_metadata: Optional[SpatialMetadata] = None,
+        requested_by: Optional[str] = None,
     ) -> Document:
         self._require_private_bucket()
         normalized_filename = self._validate_upload_request(filename, content_type, len(file_content))
         file_extension = Path(normalized_filename).suffix.lower()
         document_id = str(uuid.uuid4())
-        object_name = f"{document_id}{file_extension}"
-
-        self.minio_client.put_object(
-            self.bucket_name,
-            object_name,
-            io.BytesIO(file_content),
-            length=len(file_content),
+        stored_object = await self.storage.put_upload(
+            document_id=document_id,
+            filename=normalized_filename,
             content_type=content_type,
+            content=file_content,
         )
 
-        content_hash = hashlib.md5(file_content).hexdigest()
+        content_hash = hashlib.sha256(file_content).hexdigest()
         now = datetime.now()
+        metadata_payload = metadata.model_dump(mode="json")
+        spatial_payload = spatial_metadata.model_dump(mode="json") if spatial_metadata else None
+        lifecycle_ids = await self.lifecycle_service.register_uploaded_document(
+            document_id=document_id,
+            filename=normalized_filename,
+            title=metadata.title,
+            file_type=file_extension.lstrip("."),
+            file_size=len(file_content),
+            mime_type=content_type,
+            sha256=content_hash,
+            storage_bucket=getattr(stored_object, "bucket"),
+            storage_key=getattr(stored_object, "object_name"),
+            access_url=getattr(stored_object, "access_url", None),
+            metadata=metadata_payload,
+            spatial_metadata=spatial_payload,
+            requested_by=requested_by,
+        )
         return Document(
             id=document_id,
             filename=normalized_filename,
@@ -209,10 +240,40 @@ class DocumentService:
             spatial_metadata=spatial_metadata,
             vector_embedding=None,
             is_indexed=False,
-            indexing_status="pending",
-            storage_path=object_name,
-            access_url=self._build_download_url(object_name),
+            indexing_status="queued",
+            storage_path=getattr(stored_object, "object_name"),
+            access_url=getattr(stored_object, "access_url", None),
             version=1,
+            current_version_id=lifecycle_ids["version_id"],
+            job_id=lifecycle_ids["job_id"],
+        )
+
+    async def put_upload(
+        self,
+        *,
+        document_id: str,
+        filename: str,
+        content_type: str,
+        content: bytes,
+    ):
+        self._require_private_bucket()
+        if self.minio_client is None:
+            raise RuntimeError("MinIO client is not initialized.")
+        file_extension = Path(filename).suffix.lower()
+        object_name = f"uploads/{document_id}/{filename or f'document{file_extension}'}"
+
+        self.minio_client.put_object(
+            self.bucket_name,
+            object_name,
+            io.BytesIO(content),
+            length=len(content),
+            content_type=content_type,
+        )
+
+        return SimpleNamespace(
+            bucket=self.bucket_name,
+            object_name=object_name,
+            access_url=self._build_download_url(object_name),
         )
 
     def get_download_stream(self, object_name: str):

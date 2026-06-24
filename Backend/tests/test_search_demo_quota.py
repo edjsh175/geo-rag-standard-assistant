@@ -41,7 +41,16 @@ class SearchServiceStub:
         self.detected = True
         return "search"
 
-    async def search(self, query, top_k, threshold, spatial_filter=None, metadata_filter=None):
+    async def search(
+        self,
+        query,
+        top_k,
+        threshold,
+        spatial_filter=None,
+        metadata_filter=None,
+        search_mode="hybrid",
+        use_rerank=True,
+    ):
         return [make_result()]
 
     async def generate_answer(self, query, results, top_context_docs=5, history=None):

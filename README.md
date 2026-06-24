@@ -85,6 +85,10 @@ geo-rag-planning-assistant/
 
 ## 快速开始 / Quick Start
 
+### Non-Docker local development
+
+Docker is not required for the default local workflow. Run PostgreSQL with pgvector/PostGIS, MySQL, and optional Redis as native services, then start the backend and frontend directly from the repository.
+
 ### 后端 / Backend
 
 启动后端前，请在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于向量和空间检索数据，MySQL 用于标准元数据；任一核心数据库不可用时后端会启动失败。
@@ -112,11 +116,9 @@ npm install
 npm run dev
 ```
 
-### Docker
+### Optional Docker Compose
 
-如果本地已经准备好所需环境变量，可以使用 Docker Compose 启动完整服务。
-
-If the required environment variables are configured, Docker Compose can start the full service stack.
+Docker Compose is retained as an optional full-stack entrypoint, but it is not the recommended path for low-memory local development.
 
 ```bash
 docker compose up -d

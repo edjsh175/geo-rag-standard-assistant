@@ -325,6 +325,8 @@ async def _retrieve_results(
         threshold=request.threshold,
         spatial_filter=request.spatial_filter,
         metadata_filter=request.metadata_filter,
+        search_mode=request.search_mode,
+        use_rerank=request.use_rerank,
     )
 
     if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
@@ -339,6 +341,8 @@ async def _retrieve_results(
             threshold=RELAXED_VECTOR_THRESHOLD,
             spatial_filter=request.spatial_filter,
             metadata_filter=request.metadata_filter,
+            search_mode=request.search_mode,
+            use_rerank=request.use_rerank,
         )
 
     enriched_results = await asset_service.enrich_search_results(results)

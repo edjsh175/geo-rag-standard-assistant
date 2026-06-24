@@ -151,7 +151,16 @@ async def test_search_documents_falls_back_to_regular_search_when_follow_up_targ
         async def detect_intent(self, query: str) -> str:
             return "search"
 
-        async def search(self, query, top_k, threshold, spatial_filter=None, metadata_filter=None):
+        async def search(
+            self,
+            query,
+            top_k,
+            threshold,
+            spatial_filter=None,
+            metadata_filter=None,
+            search_mode="hybrid",
+            use_rerank=True,
+        ):
             self.search_called = True
             return [regular_result]
 
