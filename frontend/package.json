@@ -10,7 +10,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "node ./scripts/check-text-encoding.mjs && tsc --noEmit"
+    "api:export": "node ./scripts/export-openapi.mjs",
+    "api:generate": "npm run api:export && openapi-typescript ./src/lib/api/generated/openapi.json -o ./src/lib/api/generated/schema.d.ts --default-non-nullable false --empty-objects-unknown",
+    "contract:check": "node ./scripts/check-api-contract-usage.mjs",
+    "lint": "node ./scripts/check-text-encoding.mjs && npm run contract:check && tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -39,6 +42,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

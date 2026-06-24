@@ -75,6 +75,13 @@ class FollowUpContext(BaseModel):
     )
 
 
+class ChatHistoryMessage(BaseModel):
+    """Client-provided conversation history allowed in search requests."""
+
+    role: Literal["user", "assistant"] = Field(..., description="Conversation role allowed from clients.")
+    content: str = Field(..., min_length=1, max_length=4000, description="Message content.")
+
+
 class SearchRequest(BaseModel):
     """Search request payload."""
 
@@ -86,8 +93,7 @@ class SearchRequest(BaseModel):
     use_rerank: bool = Field(True, description="Whether to rerank results.")
     search_mode: str = Field("hybrid", description="semantic, keyword, or hybrid")
     use_generation: bool = Field(False, description="Whether to generate a natural-language answer.")
-    stream: bool = Field(False, description="Whether to stream the generated answer with SSE.")
-    history: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="Conversation history.")
+    history: Optional[List[ChatHistoryMessage]] = Field(default_factory=list, description="Conversation history.")
     follow_up_context: Optional[FollowUpContext] = Field(
         None,
         description="Optional document follow-up context resolved on the client.",
@@ -133,6 +139,16 @@ class FeedbackRequest(BaseModel):
 
     query: str = Field(..., description="Original query.")
     result_id: str = Field(..., description="Selected result identifier.")
-    feedback_type: str = Field(..., description="relevant, irrelevant, helpful, or not_helpful")
+    feedback_type: Literal["relevant", "irrelevant", "helpful", "not_helpful"] = Field(
+        ...,
+        description="relevant, irrelevant, helpful, or not_helpful",
+    )
     comment: Optional[str] = Field(None, description="Optional feedback comment.")
     rating: Optional[int] = Field(None, ge=1, le=5, description="Optional rating score.")
+
+
+class FeedbackResponse(BaseModel):
+    """Response returned after feedback has been persisted."""
+
+    feedback_id: str = Field(..., description="Persisted feedback identifier.")
+    message: str = Field(..., description="Human-readable status message.")

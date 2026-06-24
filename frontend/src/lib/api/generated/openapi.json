@@ -1,0 +1,3276 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GeoAI API",
+    "description": "Backend API for GeoAI spatial search and visualization.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "Login",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/demo": {
+      "post": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "Demo Login",
+        "operationId": "demo_login_api_auth_demo_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoLoginResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "Logout",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Logout Api Auth Logout Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "认证"
+        ],
+        "summary": "Me",
+        "operationId": "me_api_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthUserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/health": {
+      "get": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Health Check",
+        "operationId": "health_check_api_search_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthCheckResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/query": {
+      "post": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Search Documents",
+        "operationId": "search_documents_api_search_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/query/stream": {
+      "post": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Stream Search Documents",
+        "operationId": "stream_search_documents_api_search_query_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/hybrid": {
+      "post": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Hybrid Search",
+        "operationId": "hybrid_search_api_search_hybrid_post",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Search query.",
+              "title": "Query"
+            },
+            "description": "Search query."
+          },
+          {
+            "name": "spatial_query",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Spatial filter query.",
+              "title": "Spatial Query"
+            },
+            "description": "Spatial filter query."
+          },
+          {
+            "name": "top_k",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of results.",
+              "default": 10,
+              "title": "Top K"
+            },
+            "description": "Maximum number of results."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/suggest": {
+      "get": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Get Suggestions",
+        "operationId": "get_suggestions_api_search_suggest_get",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Input prefix.",
+              "title": "Prefix"
+            },
+            "description": "Input prefix."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Number of suggestions.",
+              "default": 5,
+              "title": "Limit"
+            },
+            "description": "Number of suggestions."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/similar/{doc_id}": {
+      "get": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Find Similar Documents",
+        "operationId": "find_similar_documents_api_search_similar__doc_id__get",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "top_k",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Maximum number of similar documents.",
+              "default": 5,
+              "title": "Top K"
+            },
+            "description": "Maximum number of similar documents."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/feedback": {
+      "post": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Submit Search Feedback",
+        "operationId": "submit_search_feedback_api_search_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/query": {
+      "post": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Spatial Query",
+        "description": "空间查询\n\nArgs:\n    query: 空间查询参数\n\nReturns:\n    空间查询结果",
+        "operationId": "spatial_query_api_spatial_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpatialQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/geocode": {
+      "post": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Geocode Address",
+        "description": "地理编码（地址转坐标）\n\nArgs:\n    address: 地址\n    city: 城市\n\nReturns:\n    地理编码结果",
+        "operationId": "geocode_address_api_spatial_geocode_post",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "地址字符串",
+              "title": "Address"
+            },
+            "description": "地址字符串"
+          },
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "城市",
+              "title": "City"
+            },
+            "description": "城市"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/reverse-geocode": {
+      "post": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Reverse Geocode",
+        "description": "逆地理编码（坐标转地址）\n\nArgs:\n    lon: 经度\n    lat: 纬度\n\nReturns:\n    逆地理编码结果",
+        "operationId": "reverse_geocode_api_spatial_reverse_geocode_post",
+        "parameters": [
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "经度",
+              "title": "Lon"
+            },
+            "description": "经度"
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "纬度",
+              "title": "Lat"
+            },
+            "description": "纬度"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/buffer": {
+      "get": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Create Buffer",
+        "description": "创建缓冲区\n\nArgs:\n    lon: 经度\n    lat: 纬度\n    distance: 缓冲距离（米）\n\nReturns:\n    缓冲区几何对象（GeoJSON）",
+        "operationId": "create_buffer_api_spatial_buffer_get",
+        "parameters": [
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "经度",
+              "title": "Lon"
+            },
+            "description": "经度"
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "纬度",
+              "title": "Lat"
+            },
+            "description": "纬度"
+          },
+          {
+            "name": "distance",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "description": "缓冲距离（米）",
+              "default": 1000,
+              "title": "Distance"
+            },
+            "description": "缓冲距离（米）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/intersection": {
+      "post": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Calculate Intersection",
+        "description": "计算几何对象交集\n\nArgs:\n    geometry1: 第一个几何对象（GeoJSON）\n    geometry2: 第二个几何对象（GeoJSON）\n\nReturns:\n    交集几何对象（GeoJSON）",
+        "operationId": "calculate_intersection_api_spatial_intersection_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_calculate_intersection_api_spatial_intersection_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/distance": {
+      "get": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Calculate Distance",
+        "description": "计算两点间距离\n\nArgs:\n    lon1, lat1: 第一个点坐标\n    lon2, lat2: 第二个点坐标\n\nReturns:\n    距离（米）",
+        "operationId": "calculate_distance_api_spatial_distance_get",
+        "parameters": [
+          {
+            "name": "lon1",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "第一个点经度",
+              "title": "Lon1"
+            },
+            "description": "第一个点经度"
+          },
+          {
+            "name": "lat1",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "第一个点纬度",
+              "title": "Lat1"
+            },
+            "description": "第一个点纬度"
+          },
+          {
+            "name": "lon2",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "第二个点经度",
+              "title": "Lon2"
+            },
+            "description": "第二个点经度"
+          },
+          {
+            "name": "lat2",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "description": "第二个点纬度",
+              "title": "Lat2"
+            },
+            "description": "第二个点纬度"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/provinces-test": {
+      "get": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Get Provinces Test",
+        "description": "测试端点：验证路由注册",
+        "operationId": "get_provinces_test_api_spatial_provinces_test_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/spatial/provinces": {
+      "get": {
+        "tags": [
+          "空间分析"
+        ],
+        "summary": "Get Provinces",
+        "description": "获取所有省级行政区划数据（GeoJSON FeatureCollection格式）\n\n使用PostGIS的ST_AsGeoJSON和ST_Simplify函数查询spatial_regions表\n返回符合GeoJSON标准的FeatureCollection，前端可直接解析\n\nArgs:\n    simplify: 简化容差，单位为度（经纬度）。例如0.001约等于100米。默认0.001以提升前端性能。\n\nReturns:\n    GeoJSON FeatureCollection",
+        "operationId": "get_provinces_api_spatial_provinces_get",
+        "parameters": [
+          {
+            "name": "simplify",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "几何简化容差（度），0表示不简化",
+              "default": 0.001,
+              "title": "Simplify"
+            },
+            "description": "几何简化容差（度），0表示不简化"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/presigned-url": {
+      "post": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Generate Presigned Url",
+        "operationId": "generate_presigned_url_api_documents_presigned_url_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresignedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresignedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/upload": {
+      "post": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Upload Document",
+        "operationId": "upload_document_api_documents_upload_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_document_api_documents_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/download/{object_name}": {
+      "get": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Download Document Object",
+        "operationId": "download_document_object_api_documents_download__object_name__get",
+        "parameters": [
+          {
+            "name": "object_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Object Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{doc_id}/download": {
+      "get": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Download Document By Id",
+        "operationId": "download_document_by_id_api_documents__doc_id__download_get",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/list": {
+      "get": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "List Documents",
+        "operationId": "list_documents_api_documents_list_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Page number.",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number."
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "description": "Page size.",
+              "default": 20,
+              "title": "Page Size"
+            },
+            "description": "Page size."
+          },
+          {
+            "name": "file_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "File type filter.",
+              "title": "File Type"
+            },
+            "description": "File type filter."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/batch-upload": {
+      "post": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Batch Upload Documents",
+        "operationId": "batch_upload_documents_api_documents_batch_upload_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_batch_upload_documents_api_documents_batch_upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/reindex/{doc_id}": {
+      "post": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Reindex Document",
+        "operationId": "reindex_document_api_documents_reindex__doc_id__post",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/batch": {
+      "post": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Batch Document Operation",
+        "operationId": "batch_document_operation_api_documents_batch_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/statistics": {
+      "get": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Get Document Statistics",
+        "operationId": "get_document_statistics_api_documents_statistics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/documents/{doc_id}": {
+      "get": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Get Document Info",
+        "operationId": "get_document_info_api_documents__doc_id__get",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Update Document Info",
+        "operationId": "update_document_info_api_documents__doc_id__patch",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "文档管理"
+        ],
+        "summary": "Delete Document",
+        "operationId": "delete_document_api_documents__doc_id__delete",
+        "parameters": [
+          {
+            "name": "doc_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Doc Id"
+            }
+          },
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/info": {
+      "get": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Get System Info",
+        "operationId": "get_system_info_api_system_info_get",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/health": {
+      "get": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Get Health Status",
+        "operationId": "get_health_status_api_system_health_get",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/config": {
+      "get": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Get Configuration",
+        "operationId": "get_configuration_api_system_config_get",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/logs": {
+      "get": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Get Logs",
+        "operationId": "get_logs_api_system_logs_get",
+        "parameters": [
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Lines"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "INFO",
+              "title": "Level"
+            }
+          },
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/clear-cache": {
+      "post": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Clear Cache",
+        "operationId": "clear_cache_api_system_clear_cache_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          },
+          {
+            "name": "X-Confirm-Action",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Confirm-Action"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/metrics": {
+      "get": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Get Metrics",
+        "operationId": "get_metrics_api_system_metrics_get",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/restart": {
+      "post": {
+        "tags": [
+          "系统管理"
+        ],
+        "summary": "Restart Service",
+        "operationId": "restart_service_api_system_restart_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthUserResponse": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "quota": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoQuotaStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "role"
+        ],
+        "title": "AuthUserResponse"
+      },
+      "Body_batch_upload_documents_api_documents_batch_upload_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "Documents to upload."
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_batch_upload_documents_api_documents_batch_upload_post"
+      },
+      "Body_calculate_intersection_api_spatial_intersection_post": {
+        "properties": {
+          "geometry1": {
+            "type": "object",
+            "title": "Geometry1"
+          },
+          "geometry2": {
+            "type": "object",
+            "title": "Geometry2"
+          }
+        },
+        "type": "object",
+        "required": [
+          "geometry1",
+          "geometry2"
+        ],
+        "title": "Body_calculate_intersection_api_spatial_intersection_post"
+      },
+      "Body_upload_document_api_documents_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Document to upload."
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Document title."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "JSON metadata."
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_document_api_documents_upload_post"
+      },
+      "ChatHistoryMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "description": "Conversation role allowed from clients."
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Content",
+            "description": "Message content."
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatHistoryMessage",
+        "description": "Client-provided conversation history allowed in search requests."
+      },
+      "DatabaseStatus": {
+        "properties": {
+          "postgresql": {
+            "type": "string",
+            "title": "Postgresql"
+          },
+          "mysql": {
+            "type": "string",
+            "title": "Mysql"
+          },
+          "redis": {
+            "type": "string",
+            "title": "Redis"
+          }
+        },
+        "type": "object",
+        "required": [
+          "postgresql",
+          "mysql",
+          "redis"
+        ],
+        "title": "DatabaseStatus"
+      },
+      "DemoLoginResponse": {
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/AuthUserResponse"
+          },
+          "quota": {
+            "$ref": "#/components/schemas/DemoQuotaStatus"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "quota",
+          "message"
+        ],
+        "title": "DemoLoginResponse"
+      },
+      "DemoQuotaStatus": {
+        "properties": {
+          "remaining": {
+            "type": "integer",
+            "title": "Remaining"
+          },
+          "daily_limit": {
+            "type": "integer",
+            "title": "Daily Limit"
+          },
+          "global_remaining": {
+            "type": "integer",
+            "title": "Global Remaining"
+          },
+          "reset_at": {
+            "type": "string",
+            "title": "Reset At"
+          },
+          "exhausted": {
+            "type": "boolean",
+            "title": "Exhausted"
+          },
+          "contact_text": {
+            "type": "string",
+            "title": "Contact Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "remaining",
+          "daily_limit",
+          "global_remaining",
+          "reset_at",
+          "exhausted",
+          "contact_text"
+        ],
+        "title": "DemoQuotaStatus"
+      },
+      "DocumentBatchRequest": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids",
+            "description": "文档ID列表"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "delete",
+              "reindex"
+            ],
+            "title": "Operation",
+            "description": "操作类型: delete, reindex"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_ids",
+          "operation"
+        ],
+        "title": "DocumentBatchRequest",
+        "description": "文档批量操作请求"
+      },
+      "DocumentBatchResponse": {
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "delete",
+              "reindex"
+            ],
+            "title": "Operation",
+            "description": "操作类型"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "总数量"
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success",
+            "description": "成功数量"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "失败数量"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentBatchResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "逐项结果"
+          }
+        },
+        "type": "object",
+        "required": [
+          "operation",
+          "total",
+          "success",
+          "failed"
+        ],
+        "title": "DocumentBatchResponse",
+        "description": "文档批量操作响应"
+      },
+      "DocumentBatchResult": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id",
+            "description": "文档ID"
+          },
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "是否成功"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "操作状态"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "结果说明"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id",
+            "description": "异步任务ID"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "success",
+          "status",
+          "message"
+        ],
+        "title": "DocumentBatchResult",
+        "description": "单个文档批量操作结果"
+      },
+      "DocumentDetailResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata"
+          },
+          "spatial_info": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spatial Info"
+          },
+          "file_info": {
+            "$ref": "#/components/schemas/DocumentFileInfo"
+          },
+          "standard_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StandardInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "download_available": {
+            "type": "boolean",
+            "title": "Download Available",
+            "default": false
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "content",
+          "metadata",
+          "file_info"
+        ],
+        "title": "DocumentDetailResponse"
+      },
+      "DocumentFileInfo": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "upload_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Upload Time"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "size",
+          "upload_time"
+        ],
+        "title": "DocumentFileInfo"
+      },
+      "DocumentResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Document identifier."
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Document title."
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Snippet or summary content."
+          },
+          "similarity": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Similarity",
+            "description": "Similarity score."
+          },
+          "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "description": "Metadata payload."
+          },
+          "spatial_info": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spatial Info",
+            "description": "Optional spatial metadata."
+          },
+          "file_type": {
+            "type": "string",
+            "title": "File Type",
+            "description": "File extension or logical type."
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size",
+            "description": "File size in bytes."
+          },
+          "upload_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Upload Time",
+            "description": "Upload or import timestamp."
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url",
+            "description": "Legacy source URL field."
+          },
+          "download_available": {
+            "type": "boolean",
+            "title": "Download Available",
+            "description": "Whether the original file can be downloaded.",
+            "default": false
+          },
+          "download_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Url",
+            "description": "Authenticated download URL."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "content",
+          "similarity",
+          "file_type",
+          "file_size",
+          "upload_time"
+        ],
+        "title": "DocumentResult",
+        "description": "A single search result document."
+      },
+      "DocumentUpdateRequest": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "additionalProperties": true,
+            "title": "Metadata",
+            "description": "文档元数据局部更新"
+          },
+          "spatial_metadata": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "additionalProperties": true,
+            "title": "Spatial Metadata",
+            "description": "空间元数据局部更新"
+          },
+          "reindex": {
+            "type": "boolean",
+            "title": "Reindex",
+            "description": "是否重新索引",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "DocumentUpdateRequest",
+        "description": "文档更新请求"
+      },
+      "FeedbackRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Original query."
+          },
+          "result_id": {
+            "type": "string",
+            "title": "Result Id",
+            "description": "Selected result identifier."
+          },
+          "feedback_type": {
+            "type": "string",
+            "enum": [
+              "relevant",
+              "irrelevant",
+              "helpful",
+              "not_helpful"
+            ],
+            "title": "Feedback Type",
+            "description": "relevant, irrelevant, helpful, or not_helpful"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Optional feedback comment."
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 5.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating",
+            "description": "Optional rating score."
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "result_id",
+          "feedback_type"
+        ],
+        "title": "FeedbackRequest",
+        "description": "Feedback payload for a search result."
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "title": "Feedback Id",
+            "description": "Persisted feedback identifier."
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable status message."
+          }
+        },
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "message"
+        ],
+        "title": "FeedbackResponse",
+        "description": "Response returned after feedback has been persisted."
+      },
+      "FollowUpCandidateDocument": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Document identifier shown to the user."
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Document title shown to the user."
+          },
+          "rank": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Rank",
+            "description": "1-based rank from the previous assistant reply."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "rank"
+        ],
+        "title": "FollowUpCandidateDocument",
+        "description": "A candidate document that can be referenced by a follow-up question."
+      },
+      "FollowUpContext": {
+        "properties": {
+          "target_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Document Id",
+            "description": "Resolved follow-up target document id."
+          },
+          "candidate_documents": {
+            "items": {
+              "$ref": "#/components/schemas/FollowUpCandidateDocument"
+            },
+            "type": "array",
+            "title": "Candidate Documents",
+            "description": "Candidate documents from the previous assistant response."
+          },
+          "resolution_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "explicit_text",
+                  "ordinal",
+                  "selected_document"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Source",
+            "description": "How the client resolved the follow-up target."
+          }
+        },
+        "type": "object",
+        "title": "FollowUpContext",
+        "description": "Client-provided context for document-specific follow-up questions."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthCheckResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "service"
+        ],
+        "title": "HealthCheckResponse"
+      },
+      "HealthStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "system": {
+            "$ref": "#/components/schemas/SystemInfo"
+          },
+          "database": {
+            "$ref": "#/components/schemas/DatabaseStatus"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "timestamp",
+          "system",
+          "database"
+        ],
+        "title": "HealthStatus"
+      },
+      "LoginRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest"
+      },
+      "LoginResponse": {
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/AuthUserResponse"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "message"
+        ],
+        "title": "LoginResponse"
+      },
+      "MetadataFilter": {
+        "properties": {
+          "document_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Type"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "custom_filters": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Filters"
+          }
+        },
+        "type": "object",
+        "title": "MetadataFilter",
+        "description": "Metadata filtering for search results."
+      },
+      "PresignedRequest": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "file_size": {
+            "type": "integer",
+            "title": "File Size"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "content_type",
+          "file_size"
+        ],
+        "title": "PresignedRequest"
+      },
+      "PresignedResponse": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "upload_url": {
+            "type": "string",
+            "title": "Upload Url"
+          },
+          "object_name": {
+            "type": "string",
+            "title": "Object Name"
+          },
+          "access_url": {
+            "type": "string",
+            "title": "Access Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "upload_url",
+          "object_name",
+          "access_url"
+        ],
+        "title": "PresignedResponse"
+      },
+      "SearchRequest": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Query",
+            "description": "Search query."
+          },
+          "top_k": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "description": "Maximum number of results.",
+            "default": 10
+          },
+          "threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Threshold",
+            "description": "Similarity threshold.",
+            "default": 0.7
+          },
+          "spatial_filter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpatialFilter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional spatial filter."
+          },
+          "metadata_filter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MetadataFilter"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional metadata filter."
+          },
+          "use_rerank": {
+            "type": "boolean",
+            "title": "Use Rerank",
+            "description": "Whether to rerank results.",
+            "default": true
+          },
+          "search_mode": {
+            "type": "string",
+            "title": "Search Mode",
+            "description": "semantic, keyword, or hybrid",
+            "default": "hybrid"
+          },
+          "use_generation": {
+            "type": "boolean",
+            "title": "Use Generation",
+            "description": "Whether to generate a natural-language answer.",
+            "default": false
+          },
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChatHistoryMessage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History",
+            "description": "Conversation history."
+          },
+          "follow_up_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FollowUpContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional document follow-up context resolved on the client."
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest",
+        "description": "Search request payload."
+      },
+      "SearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query",
+            "description": "Original query."
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentResult"
+            },
+            "type": "array",
+            "title": "Results",
+            "description": "Matched results."
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count",
+            "description": "Total number of results.",
+            "default": 0
+          },
+          "search_time": {
+            "type": "number",
+            "title": "Search Time",
+            "description": "Search duration in seconds.",
+            "default": 0.0
+          },
+          "search_mode": {
+            "type": "string",
+            "title": "Search Mode",
+            "description": "Search mode used.",
+            "default": "hybrid"
+          },
+          "suggestions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestions",
+            "description": "Suggested related queries."
+          },
+          "generated_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated Answer",
+            "description": "Generated answer, if requested."
+          },
+          "generation_time": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Time",
+            "description": "Generation duration in seconds."
+          },
+          "quota": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoQuotaStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Visitor demo quota status."
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchResponse",
+        "description": "Search response payload."
+      },
+      "SpatialFilter": {
+        "properties": {
+          "geometry": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry"
+          },
+          "distance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance",
+            "description": "Distance in meters."
+          },
+          "spatial_relation": {
+            "type": "string",
+            "title": "Spatial Relation",
+            "description": "within, intersects, or near",
+            "default": "within"
+          }
+        },
+        "type": "object",
+        "title": "SpatialFilter",
+        "description": "Spatial filtering for search results."
+      },
+      "SpatialQuery": {
+        "properties": {
+          "geometry": {
+            "type": "object",
+            "title": "Geometry"
+          },
+          "distance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Distance",
+            "default": 1000
+          },
+          "spatial_relation": {
+            "type": "string",
+            "title": "Spatial Relation",
+            "default": "within"
+          }
+        },
+        "type": "object",
+        "required": [
+          "geometry"
+        ],
+        "title": "SpatialQuery",
+        "description": "空间查询请求"
+      },
+      "StandardInfo": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "release_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Date"
+          },
+          "implement_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Implement Date"
+          },
+          "draft_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Unit"
+          },
+          "keyword": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "StandardInfo"
+      },
+      "SystemInfo": {
+        "properties": {
+          "app_name": {
+            "type": "string",
+            "title": "App Name"
+          },
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "python_version": {
+            "type": "string",
+            "title": "Python Version"
+          },
+          "platform": {
+            "type": "string",
+            "title": "Platform"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "cpu_count": {
+            "type": "integer",
+            "title": "Cpu Count"
+          },
+          "memory_total": {
+            "type": "string",
+            "title": "Memory Total"
+          },
+          "memory_used": {
+            "type": "string",
+            "title": "Memory Used"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_name",
+          "app_version",
+          "python_version",
+          "platform",
+          "hostname",
+          "cpu_count",
+          "memory_total",
+          "memory_used"
+        ],
+        "title": "SystemInfo"
+      },
+      "UploadResponse": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "access_url": {
+            "type": "string",
+            "title": "Access Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "filename",
+          "size",
+          "message",
+          "access_url"
+        ],
+        "title": "UploadResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

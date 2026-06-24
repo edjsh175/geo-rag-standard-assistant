@@ -1,12 +1,33 @@
-import { apiClient } from '../lib/api/config';
-import type {
-  ChatMessage,
-  ChatRequest,
-  ChatResponse,
-  DocumentResult,
-  FollowUpContext,
-  SearchResponse,
-} from '../types/api';
+import { apiPost } from '../lib/api/contractClient';
+import type { components } from '../lib/api/generated/schema';
+
+export type ChatHistoryMessage = components['schemas']['ChatHistoryMessage'];
+export type DocumentResult = components['schemas']['DocumentResult'];
+export type FollowUpContext = components['schemas']['FollowUpContext'];
+export type SearchResponse = components['schemas']['SearchResponse'];
+export type DemoQuotaStatus = components['schemas']['DemoQuotaStatus'];
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  references?: DocumentResult[];
+  timestamp?: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  conversation_id?: string;
+  use_context?: boolean;
+  max_tokens?: number;
+}
+
+export interface ChatResponse {
+  message: string;
+  conversation_id: string;
+  references?: DocumentResult[];
+  timestamp: string;
+  quota?: DemoQuotaStatus;
+}
 
 /**
  * 聊天服务
@@ -19,52 +40,41 @@ export const chatService = {
   async sendMessage(
     message: string,
     conversationId?: string,
-    history: Array<{ role: string; content: string }> = [],
+    history: ChatHistoryMessage[] = [],
     signal?: AbortSignal,
     followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
-      // 方法1: 如果后端有专门的聊天端点
-      // const request: ChatRequest = { message, conversation_id: conversationId };
-      // const response = await apiClient.post<ChatResponse>('/chat/query', request);
-      // return response;
-
-      // 方法2: 使用搜索服务的生成答案功能（当前实现）
-      const searchRequest = {
+      const searchRequest: components['schemas']['SearchRequest'] = {
         query: message,
         top_k: 5,
         use_generation: true,
-        search_mode: 'semantic' as const,
-        history: history,
+        search_mode: 'semantic',
+        history,
         follow_up_context: followUpContext,
       };
 
-      const response = await apiClient.post<SearchResponse>('/search/query', searchRequest, {
-        signal,
+      const searchResponse: SearchResponse = await apiPost('/api/search/query', searchRequest, {
+        config: { signal },
       });
-      const searchResponse = response.data;
       const quota = searchResponse.quota;
 
-      // 转换搜索响应为聊天响应
       const fallbackMessage = quota?.exhausted
         ? `${quota.contact_text}\n\n您仍可继续查看检索结果、引用文档和地图联动内容。`
         : (searchResponse.results?.length ?? 0) > 0
         ? '已检索到相关标准，请查看下方参考文档。'
         : '未在库中检索到相关标准规定。';
 
-      const chatResponse: ChatResponse = {
+      return {
         message: searchResponse.generated_answer || fallbackMessage,
         conversation_id: conversationId || `conv_${Date.now()}`,
         references: searchResponse.results || [],
         timestamp: new Date().toISOString(),
         quota,
       };
-
-      return chatResponse;
     } catch (error) {
       console.error('发送聊天消息失败:', error);
 
-      // 返回错误响应
       return {
         message: '抱歉，服务暂时不可用，请稍后重试。',
         conversation_id: conversationId || `conv_${Date.now()}`,
@@ -79,7 +89,7 @@ export const chatService = {
    */
   async getConversationHistory(conversationId: string): Promise<ChatMessage[]> {
     try {
-      // TODO: 后端需要实现对话历史端点
+      void conversationId;
       return [];
     } catch (error) {
       console.error(`获取对话历史失败 (ID: ${conversationId}):`, error);
@@ -99,7 +109,6 @@ export const chatService = {
    */
   async deleteConversation(conversationId: string): Promise<void> {
     try {
-      // TODO: 后端需要实现对话删除端点
       console.log(`删除对话: ${conversationId}`);
     } catch (error) {
       console.error(`删除对话失败 (ID: ${conversationId}):`, error);
@@ -113,12 +122,11 @@ export const chatService = {
     message: string,
     conversationId?: string,
     onChunk?: (chunk: string) => void,
-    history: Array<{ role: string; content: string }> = [],
+    history: ChatHistoryMessage[] = [],
     followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
-      // TODO: 实现WebSocket或SSE流式响应
-      // 目前使用普通请求
+      void onChunk;
       return await this.sendMessage(message, conversationId, history, undefined, followUpContext);
     } catch (error) {
       console.error('流式聊天失败:', error);

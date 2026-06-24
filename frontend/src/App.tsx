@@ -32,7 +32,7 @@ import { useAuth } from './auth/AuthProvider';
 import { ensureBackendHealth, loadProvinceCollection, resetBootstrapCache } from './lib/bootstrap';
 import { cn } from './lib/utils';
 import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
-import { searchService } from './services/searchService';
+import { searchService, type DocumentResult as ApiDocumentResult } from './services/searchService';
 import { chatService } from './services/chatService';
 import { documentService } from './services/documentService';
 import type {
@@ -47,6 +47,98 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
+
+type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined;
+
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+const asBoundingBox = (value: unknown): [number, number, number, number] | undefined =>
+  Array.isArray(value) &&
+  value.length === 4 &&
+  value.every((item) => typeof item === 'number')
+    ? [value[0], value[1], value[2], value[3]]
+    : undefined;
+
+const toSpatialMetadata = (value: unknown): Document['spatial_metadata'] => {
+  const spatial = asRecord(value);
+  if (Object.keys(spatial).length === 0) return undefined;
+  return {
+    geometry: asRecord(spatial.geometry),
+    bounding_box: asBoundingBox(spatial.bounding_box),
+    address: asString(spatial.address),
+    city: asString(spatial.city),
+    province: asString(spatial.province),
+    country: asString(spatial.country),
+    coordinate_system: 'EPSG:4326',
+  };
+};
+
+const metadataToDocumentMetadata = (
+  title: string,
+  description: string,
+  metadataValue: unknown
+): Document['metadata'] => {
+  const metadata = asRecord(metadataValue);
+  return {
+    title,
+    author: asString(metadata.author),
+    description,
+    keywords: asStringArray(metadata.keywords),
+    publish_date: asString(metadata.publish_date),
+    source: asString(metadata.source),
+    language: 'zh',
+    category: asString(metadata.category),
+    tags: asStringArray(metadata.tags),
+    custom_fields: asRecord(metadata.custom_fields),
+  };
+};
+
+const toFrontendDocumentFromResult = (doc: ApiDocumentResult): Document => ({
+  id: doc.id,
+  filename: doc.title,
+  file_type: doc.file_type,
+  file_size: doc.file_size,
+  content_hash: '',
+  upload_time: doc.upload_time,
+  last_modified: doc.upload_time,
+  metadata: metadataToDocumentMetadata(doc.title, doc.content, doc.metadata),
+  spatial_metadata: toSpatialMetadata(doc.spatial_info),
+  vector_embedding: undefined,
+  is_indexed: true,
+  indexing_status: 'completed',
+  storage_path: '',
+  access_url: doc.source_url,
+  download_available: doc.download_available,
+  download_url: doc.download_url,
+  version: 1,
+});
+
+const toFrontendDocumentFromDetail = (documentDetail: ApiDocumentDetail): Document => ({
+  id: documentDetail.id,
+  filename: documentDetail.title,
+  file_type: documentDetail.file_info.type,
+  file_size: documentDetail.file_info.size,
+  content_hash: '',
+  upload_time: documentDetail.file_info.upload_time,
+  last_modified: documentDetail.file_info.upload_time,
+  metadata: metadataToDocumentMetadata(documentDetail.title, documentDetail.content, documentDetail.metadata),
+  spatial_metadata: toSpatialMetadata(documentDetail.spatial_info),
+  vector_embedding: undefined,
+  is_indexed: true,
+  indexing_status: 'completed',
+  storage_path: '',
+  access_url: documentDetail.download_url,
+  download_available: documentDetail.download_available,
+  download_url: documentDetail.download_url,
+  version: 1,
+});
 
 const PROVINCE_MAP: Record<string, string> = {
   '110000': '北京市',
@@ -522,44 +614,7 @@ export default function App() {
       const results: SearchResult[] = documentResults.map(doc => ({
         id: doc.id,
         score: doc.similarity,
-        document: {
-          id: doc.id,
-          filename: doc.title,
-          file_type: doc.file_type,
-          file_size: doc.file_size,
-          content_hash: '',
-          upload_time: doc.upload_time,
-          last_modified: doc.upload_time,
-          metadata: {
-            title: doc.title,
-            author: doc.metadata.author,
-            description: doc.content,
-            keywords: doc.metadata.keywords || [],
-            publish_date: doc.metadata.publish_date,
-            source: doc.metadata.source,
-            language: 'zh',
-            category: doc.metadata.category,
-            tags: doc.metadata.tags || [],
-            custom_fields: doc.metadata.custom_fields || {}
-          },
-          spatial_metadata: doc.spatial_info ? {
-            geometry: doc.spatial_info.geometry,
-            bounding_box: doc.spatial_info.bounding_box,
-            address: doc.spatial_info.address,
-            city: doc.spatial_info.city,
-            province: doc.spatial_info.province,
-            country: doc.spatial_info.country,
-            coordinate_system: 'EPSG:4326'
-          } : undefined,
-          vector_embedding: undefined,
-          is_indexed: true,
-          indexing_status: 'completed',
-          storage_path: '',
-          access_url: doc.source_url,
-          download_available: doc.download_available,
-          download_url: doc.download_url,
-          version: 1
-        },
+        document: toFrontendDocumentFromResult(doc),
         highlights: {},
         explanation: `相似度: ${(doc.similarity * 100).toFixed(1)}%`,
         vector_distance: 1 - doc.similarity
@@ -665,11 +720,15 @@ export default function App() {
       setActiveRegion(regionFromQuery);
     }
 
-    // 构建历史记录：将当前消息列表转换为API格式
-    const history = messages.map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
+    // 构建历史记录：后端只接受 user/assistant，系统提示词只能由后端构建。
+    const history = messages
+      .filter((msg): msg is ChatMessageType & { role: 'user' | 'assistant' } =>
+        msg.role === 'user' || msg.role === 'assistant'
+      )
+      .map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
 
     // 添加用户消息
     const userMessage: ChatMessageType = {
@@ -708,19 +767,10 @@ export default function App() {
     try {
       // 发送到聊天API，传递signal
       const queryForBackend = buildRegionAwareQuery(content, regionContext);
-      const contextualHistory = regionContext
-        ? [
-            {
-              role: 'system',
-              content: `当前地图选中区域：${regionContext.name}，ADCODE：${regionContext.adcode}。当用户提到“该地区”“当前区域”“这里”“当地”等指代时，均指这个区域。`
-            },
-            ...history
-          ]
-        : history;
       const response = await chatService.sendMessage(
         queryForBackend,
         undefined,
-        contextualHistory,
+        history,
         abortController.signal,
         followUpContext
       );
@@ -742,44 +792,7 @@ export default function App() {
       }));
 
       // 转换references为文档
-      const documents = (response.references || []).map(ref => ({
-        id: ref.id,
-        filename: ref.title,
-        file_type: ref.file_type,
-        file_size: ref.file_size,
-        content_hash: '',
-        upload_time: ref.upload_time,
-        last_modified: ref.upload_time,
-        metadata: {
-          title: ref.title,
-          author: ref.metadata?.author,
-          description: ref.content,
-          keywords: ref.metadata?.keywords || [],
-          publish_date: ref.metadata?.publish_date,
-          source: ref.metadata?.source,
-          language: 'zh',
-          category: ref.metadata?.category,
-          tags: ref.metadata?.tags || [],
-          custom_fields: ref.metadata?.custom_fields || {}
-        },
-        spatial_metadata: ref.spatial_info ? {
-          geometry: ref.spatial_info.geometry,
-          bounding_box: ref.spatial_info.bounding_box,
-          address: ref.spatial_info.address,
-          city: ref.spatial_info.city,
-          province: ref.spatial_info.province,
-          country: ref.spatial_info.country,
-          coordinate_system: 'EPSG:4326'
-        } : undefined,
-        vector_embedding: undefined,
-        is_indexed: true,
-        indexing_status: 'completed',
-        storage_path: '',
-        access_url: ref.source_url,
-        download_available: ref.download_available,
-        download_url: ref.download_url,
-        version: 1
-      }));
+      const documents = (response.references || []).map(toFrontendDocumentFromResult);
 
       // 提取ADCODE并净化消息内容
       const { purifiedContent, adcode, name } = extractAdcodeAndPurify(response.message);
@@ -868,45 +881,7 @@ export default function App() {
       const documentDetail = await documentService.getDocumentById(documentId);
       if (!documentDetail) return null;
 
-      // 将DocumentDetail转换为Document
-      const document: Document = {
-        id: documentDetail.id,
-        filename: documentDetail.title,
-        file_type: documentDetail.file_info.type,
-        file_size: documentDetail.file_info.size,
-        content_hash: '',
-        upload_time: documentDetail.file_info.upload_time,
-        last_modified: documentDetail.file_info.upload_time,
-        metadata: {
-          title: documentDetail.title,
-          author: documentDetail.metadata.author,
-          description: documentDetail.content,
-          keywords: documentDetail.metadata.keywords || [],
-          publish_date: documentDetail.metadata.publish_date,
-          source: documentDetail.metadata.source,
-          language: 'zh',
-          category: documentDetail.metadata.category,
-          tags: documentDetail.metadata.tags || [],
-          custom_fields: documentDetail.metadata.custom_fields || {}
-        },
-        spatial_metadata: documentDetail.spatial_info ? {
-          geometry: documentDetail.spatial_info.geometry,
-          bounding_box: documentDetail.spatial_info.bounding_box,
-          address: documentDetail.spatial_info.address,
-          city: documentDetail.spatial_info.city,
-          province: documentDetail.spatial_info.province,
-          country: documentDetail.spatial_info.country,
-          coordinate_system: 'EPSG:4326'
-        } : undefined,
-        vector_embedding: undefined,
-        is_indexed: true,
-        indexing_status: 'completed',
-        storage_path: '',
-        access_url: documentDetail.download_url,
-        download_available: documentDetail.download_available,
-        download_url: documentDetail.download_url,
-        version: 1
-      };
+      const document = toFrontendDocumentFromDetail(documentDetail);
 
       return document;
     } catch (error) {

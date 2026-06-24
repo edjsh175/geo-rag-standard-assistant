@@ -16,7 +16,13 @@ from starlette.background import BackgroundTask
 
 from app.core.config import settings
 from app.core.security import require_admin_or_system_api_key, require_authenticated_admin, require_authenticated_user
-from app.models.document_models import DocumentMetadata
+from app.models.document_models import (
+    DocumentBatchRequest,
+    DocumentBatchResponse,
+    DocumentMetadata,
+    DocumentUpdateRequest,
+)
+from app.services.document_contract_service import DocumentContractService
 from app.services.document_asset_service import DocumentAssetService
 from app.services.document_service import DocumentService
 
@@ -213,8 +219,12 @@ async def download_document_by_id(
     doc_id: str,
     document_service: DocumentService = Depends(DocumentService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
     _current_user=Depends(require_authenticated_user),
 ):
+    if await contract_service.is_document_deleted(doc_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
     download_target = await asset_service.get_download_target(doc_id)
     if not download_target:
         raise HTTPException(
@@ -297,15 +307,29 @@ async def batch_upload_documents(
     }
 
 
-@router.post(
-    "/reindex/{doc_id}",
-    dependencies=[Depends(require_admin_or_system_api_key)],
-)
-async def reindex_document(doc_id: str):
+@router.post("/reindex/{doc_id}")
+async def reindex_document(
+    doc_id: str,
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+    actor=Depends(require_admin_or_system_api_key),
+):
     return {
         "document_id": doc_id,
+        "job_id": await contract_service.queue_reindex_job(doc_id, str(actor)),
         "message": "Document reindex queued.",
     }
+
+
+@router.post(
+    "/batch",
+    response_model=DocumentBatchResponse,
+)
+async def batch_document_operation(
+    request: DocumentBatchRequest,
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+    actor=Depends(require_admin_or_system_api_key),
+):
+    return await contract_service.batch_operation(request, requested_by=str(actor))
 
 
 @router.get("/statistics")
@@ -326,20 +350,57 @@ async def get_document_statistics(_current_admin=Depends(require_authenticated_a
 async def get_document_info(
     doc_id: str,
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
     _current_user=Depends(require_authenticated_user),
 ):
+    if await contract_service.is_document_deleted(doc_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
     detail = await asset_service.get_document_detail_payload(doc_id)
     if not detail:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
-    return DocumentDetailResponse(**detail)
+    merged_detail = await contract_service.apply_document_overrides(doc_id, detail)
+    if not merged_detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    return DocumentDetailResponse(**merged_detail)
 
 
-@router.delete(
+@router.patch(
     "/{doc_id}",
-    dependencies=[Depends(require_admin_or_system_api_key)],
+    response_model=DocumentDetailResponse,
 )
-async def delete_document(doc_id: str):
+async def update_document_info(
+    doc_id: str,
+    update_request: DocumentUpdateRequest,
+    asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+    actor=Depends(require_admin_or_system_api_key),
+):
+    if await contract_service.is_document_deleted(doc_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    detail = await asset_service.get_document_detail_payload(doc_id)
+    if not detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    merged_detail = await contract_service.update_document_metadata(
+        doc_id=doc_id,
+        current_detail=detail,
+        update_request=update_request,
+        requested_by=str(actor),
+    )
+    if not merged_detail:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    return DocumentDetailResponse(**merged_detail)
+
+
+@router.delete("/{doc_id}")
+async def delete_document(
+    doc_id: str,
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+    actor=Depends(require_admin_or_system_api_key),
+):
+    await contract_service.soft_delete_document(doc_id, str(actor))
     return {
         "document_id": doc_id,
-        "message": "Document deleted successfully.",
+        "message": "Document soft-deleted successfully.",
     }

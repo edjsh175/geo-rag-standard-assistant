@@ -1,0 +1,931 @@
+# Shared Memory
+
+## 当前项目状态
+
+### 本窗口最新状态：公开访客演示、GitHub README 收口与共享记忆维护（本次补录）
+- GeoRAG 主仓库当前远端：`git@github.com:edjsh175/geo-rag-planning-assistant.git`。
+- 当前本地检出分支：`main`，并跟踪 `origin/main`；本次维护核对时本地与远端 `main` 同步。
+- 当前本地 / 远端 `main` 头部：`8f3eb44`（`Update README.md`）；说明此前公开访客演示与 README 双语收口记录中的提交之后，主线又继续有 README / 截图相关演进。
+- 当前主线最近提交包括：
+  - `8f3eb44`：README 更新。
+  - `e2e8dc5`：合并 `feature/frontend-animation-upgrade`。
+  - `39c0da6`：为 README 增加产品截图。
+- GitHub 仓库 Homepage 仍为 `https://8.156.85.7/`，用于从 GitHub 项目页跳转到线上演示。
+- 当前根 README 已是中文优先、英文紧跟的双语介绍，并已包含 `在线演示 / Live Demo` 和产品截图区；本次维护仅记录状态，不继续修改 README。
+- 公开访客演示方案已在此前窗口完成并上线验证：登录页有 `访客体验` 入口，访客无需注册即可进入；访客 AI 额度按 Redis 计数控制，检索、引用、地图等低成本能力在额度耗尽后仍可用。
+- 已记录的远端部署路径仍为 `/srv/geoai/app`；生产运行方式为宿主机 Nginx 静态托管 `frontend/dist`，后端由 `geoai-backend.service` 运行在 `127.0.0.1:8000`。
+- 本次共享记忆维护没有重新部署或重新做线上健康检查；后续窗口如果要声称“当前线上运行版本”或“线上健康正常”，仍应重新执行线上 smoke test。
+- 当前工作区状态：除共享记忆文件 `docs/memory_share.md` 仍未纳入版本控制外，本次维护未发现其他未提交工作区变更。
+
+### 本窗口最新状态：GeoAI 前端动效、README 截图、分支收口与服务器部署
+- GeoRAG 主仓库当前远端：`git@github.com:edjsh175/geo-rag-planning-assistant.git`。
+- 当前本地检出分支：`main`，并跟踪 `origin/main`；当前本地与远端 `main` 已同步。
+- 当前本地 / 远端 `main` 头部：`8f3eb44`（`Update README.md`）；说明此前记录中的上线提交不等于当前仓库头部状态。
+- 当前主线最近提交包括：
+  - `8f3eb44`：README 更新。
+  - `e2e8dc5`：合并 `feature/frontend-animation-upgrade`。
+  - `39c0da6`：为 README 增加产品截图。
+- 本窗口已完成登录页 GSAP 动效升级与多轮修复，并提交到主线：`6dacec0`（`feat(frontend): upgrade login page motion`）。主要内容包括登录页入场动画、鼠标 tilt/parallax、品牌光晕修复、环境光椭圆轨道和 reduced-motion 保护。
+- 本窗口已完成详情抽屉标准标题亮色主题修复，并提交到主线：`6eb9b70`（`fix(frontend): use theme color for document detail title`）。标题从硬编码 `text-[#f0f0f0]` 改为主题色 `text-on-background/90`，并新增 `frontend/tests/documentDetailTheme.test.ts` 静态回归测试。
+- 本窗口已把登录页动效与详情标题修复部署到服务器；当时线上 `build-meta.json` 核验到的部署提交为 `6eb9b70`，`/health` 与 `/login` 验证正常。部署过程中服务器 Node 从 v18.19.1 升级到 v22.22.2，以满足 Vite / Tailwind / Cesium 对 Node 20.19+ 的要求。
+- 本窗口已完成 README 截图预览优化，并提交到主线：`39c0da6`（`docs: add README product screenshots`）。截图已整理到 `docs/screenshots/`，包括 `login-light.png`、`workspace-2d-map.png`、`workspace-3d-globe.png`。
+- README 截图属于文档资产变更，提交后已推送并并入 `main`；该文档变更没有重新部署服务器，因为线上站点不依赖 README 内容。
+- 本窗口已将 5 个本地 / 远端分支全部并入主线后推送 `origin/main`，并按用户要求只保留 `feature/frontend-animation-upgrade` 分支。
+- 当前本地可见分支仅剩：`main` 与 `feature/frontend-animation-upgrade`；当前远端可见分支仅剩：`origin/main` 与 `origin/feature/frontend-animation-upgrade`（另有 `origin/HEAD -> origin/main`）。
+- 已删除的已合并分支包括：`codex/project-metadata-encoding-guard`、`docs/bilingual-readme-polish`、`feat/public-demo-visitor-quota`。`git branch --all --no-merged main` 当前为空。
+- GitHub 仓库 Homepage 仍为 `https://8.156.85.7/`，用于从 GitHub 项目页跳转到线上演示。
+- 当前根 README 已是中文优先、英文紧跟的双语介绍，并已包含 `在线演示 / Live Demo` 和产品截图区；后续若继续打磨 README，应继续关注文案重复和截图展示顺序。
+- 公开访客演示方案已在此前窗口完成并上线验证：登录页有 `访客体验` 入口，访客无需注册即可进入；访客 AI 额度按 Redis 计数控制，检索、引用、地图等低成本能力在额度耗尽后仍可用。
+- 已记录的远端部署路径仍为 `/srv/geoai/app`；生产运行方式为宿主机 Nginx 静态托管 `frontend/dist`，后端由 `geoai-backend.service` 运行在 `127.0.0.1:8000`。本窗口部署过 `6eb9b70`，但 README 截图文档提交没有重新部署。
+- 当前工作区状态：除共享记忆文件 `docs/memory_share.md` 仍未纳入版本控制外，本次维护未发现其他未提交工作区变更。
+- 后续窗口如果要声称“当前线上运行版本”或“线上健康正常”，仍应重新执行线上 smoke test；不要只依据本共享记忆中的历史验证结论。
+
+### 本窗口新增状态：国标爬虫 / std-worker
+- 国标爬虫仓库位置：`D:\work\Project\国标爬虫`，远端为 `https://github.com/edjsh175/cn-standard-downloader.git`。
+- 国标爬虫当前本地检出分支：`codex/scrapling-parser-pilot`，并跟踪 `origin/codex/scrapling-parser-pilot`；当前本地与远端头部为 `f59389b`（`feat: add AI worker contract`）。
+- 国标爬虫远端默认分支仍为 `main`；当前远端可见业务分支包括 `codex/web-console-worker` 与 `codex/scrapling-parser-pilot`。`origin/codex/web-console-worker` 当前为 `116cf48`，本地同名分支仍停在 `73bd9db`，已落后远端 3 个提交。
+- 国标爬虫生产部署目录记录为 `/srv/std-worker/app`，生产服务为 `std-worker-prod`，通过 Docker Compose 运行；生产网页入口为 `https://8.156.85.7/crawler/`。
+- `std-worker` 当前生产入口已收回到受控路径：worker 本体监听本机回环地址，`/crawler/` 由 Nginx 反代进入，不再把裸 `8765` 作为公网入口。
+- `/crawler/` 当前已加 Basic Auth，已记录的账号为 `shlshen`，密码曾被用户改为 `10231023`；后续如再次调整凭据，应直接修改服务器 Nginx htpasswd 文件并验证 401 / 200 行为。
+- 生产部署目前仍使用服务器专用 `docker-compose.server.override.yml` 与 `Dockerfile.server`；由于宿主机 MySQL 只监听 `127.0.0.1:3306`，服务器 override 使用 `host network` 让容器访问宿主机 MySQL。这是当前可用解，不是长期最理想的容器网络形态。
+- `prod/test` 共存已经落地：生产端口记录为 `127.0.0.1:8765`，测试端口记录为 `127.0.0.1:8766`；测试实例按需启动，不默认常驻。
+- `crawler` 网页已支持挂载在 `/crawler/` 子路径下，Vite 生产构建必须使用 `VITE_APP_BASE_PATH=/crawler/` 与 `VITE_API_BASE_PATH=/crawler/api`，否则会复发 `/assets/*.js` / `/assets/*.css` 404。
+- 为避免 Docker Hub 拉取 Node 镜像不稳定，国标爬虫服务器生产发布脚本已改为：先在服务器宿主机执行 `web` 构建，再由 `Dockerfile.server` 复制 `web/dist` 进容器。正式脚本为 `scripts/deploy_server_prod.sh`。
+- 国标爬虫网页已经增加：
+  - 目标表名显式下拉与新表名输入
+  - 搜索预览结果默认全选、单条勾选、全选 / 全不选
+  - 继续抓取时只提交勾选项
+  - 任务结果区“下载全部 PDF”按钮
+- 国标爬虫业务表策略已经收敛：默认写独立表 `gb_standards`，不再默认写 GeoAI 历史表 `geoai_metadata`；结构不兼容的表会被拒绝。
+- 失败入库逻辑已经修正：只有单条标准真正拿到 PDF 且该条没有失败记录时，才写入 `gb_standards`；下载失败、验证码失败、上游不可达、页面结构不匹配时只保留任务日志和任务明细，不写业务表。
+- 当前最重要的外部阻塞仍是 `c.gb688.cn`：服务器到该国标 PDF 下载端点 TCP 可连，但 HTTP 请求会被对端直接断开，表现为 `ERR_EMPTY_RESPONSE` / `RemoteDisconnected`。这不能证明一定是“爬取频繁被封 IP”，更准确应表述为“当前阿里云服务器出口访问该上游不可用或被策略性丢弃”。
+- 本地电脑开 VPN 不会自动改变服务器出口。若要恢复这类国标 PDF 下载，需要网络层方案，例如服务器代理、另一台可达该上游的下载节点，或将国标 PDF 下载拆到独立出口环境。
+- URL 批量抓取的元数据展示问题已经修复：粘贴详情页 URL 时，即使下载失败，任务明细也会从解析出的 `meta_payload` 回填 `code/name/keyword`，不再显示为 `未知编号` 或 `-`。
+- 对国标详情页“查看文本”入口的识别已经收紧：国标页面只把带 `openpdf` 类的元素当作真实文本入口，避免误点页面“目录”区域后报笼统 `element timeout`。
+- 国标名称抽取已经补充“当前标准”卡片解析，避免把页面标题 `目录` 误当作标准名称；已复测样例 `GB/T 8491-2026` 能解析为 `高硅耐蚀铸铁件`。
+- 本次共享记忆维护没有重新连接服务器核验 `std-worker-prod` 的此刻健康状态；最近一次已记录的服务器部署与验证来自 2026-05-21，对应生产分支 `origin/codex/web-console-worker@116cf48`，当时 `std-worker-prod` 为 `healthy`。
+
+### 项目当前定位和目标
+- 项目定位：GeoAI 空间规划 / 标准规范智能检索与问答系统，核心链路包括地图选区问答、标准检索、文档追问、引用查看、原文下载和线上部署运维。
+- 当前目标：在“项目已上线并已较完善”的前提下，持续修正线上体验细节，优先保证检索问答链路、证据展示、缓存行为、登录态体验和部署可追溯性稳定。
+- 当前默认按生产系统处理需求，优先考虑兼容性、回滚成本、线上行为一致性和增量优化，不再把项目当作待部署原型。
+
+### 当前线上 / 本地部署状态
+- 线上站点仍记录为：`https://8.156.85.7/`
+- 本窗口在 2026-05-11 曾实际连过生产服务器并完成过一次前端静态目录替换；当时确认到的生产前端托管方式是 Nginx 直接读取 `/srv/geoai/app/frontend/dist`，而不是在服务器上实时构建前端。
+- 本次共享记忆维护阶段未重新访问线上接口；因此当前可直接确认的是仓库、分支和代码现状，线上“此刻”的健康和版本仍需重新复核。
+- 当前仓库远端：`git@github.com:edjsh175/geo-rag-planning-assistant.git`
+- 当前仓库默认分支 / 主线：`main`（`origin/HEAD -> origin/main`）
+- 当前本地检出分支：`main`，并跟踪 `origin/main`
+- 当前远端仍存在附加功能分支：`feature/frontend-animation-upgrade`；该分支已确认并入 `main`，但按用户要求暂时保留。
+- 当前本地 `HEAD`：`8f3eb44`（README 更新）；说明 2026-06-03 记录之后主线仍有继续演进，旧记录中的上线提交不等于当前仓库头部状态。
+- 当前工作区状态：除共享记忆文件 `docs/memory_share.md` 仍未纳入版本控制外，本窗口未发现其他未提交工作区变更。
+- 最近一次已记录的线上前端构建提交（来自 2026-06-03 记录）：`39f6690`
+- 最近一次已记录的关键上线提交（来自 2026-06-03 记录）：
+  - `ec4f044`：将助手正文中的 `依据1 / 依据2 / 依据3` 统一标准化为 Markdown `blockquote`，并增加前端引用样式。
+  - `fb588c9`：修复前端入口页与静态资源缓存策略，避免浏览器继续引用旧 `index.html` 和失效资源 hash。
+  - `39f6690`：修复亮色主题下依据引用块对比度不足、几乎不可见的问题。
+- 最近一次已记录的线上健康核验结果（来自 2026-06-03 记录）：
+  - `/health` 正常
+  - `/api/search/health` 正常
+  - `/api/chat/health` 正常
+- 最近一次已记录的线上静态资源缓存行为（来自 2026-06-03 记录）：
+  - `/`：`Cache-Control: no-store, no-cache, must-revalidate`
+  - `/assets/*`：`Cache-Control: public, max-age=31536000, immutable`
+
+### 当前已完成的关键能力
+- 登录态下的文档详情与原文下载链路已打通。
+- 搜索结果和引用结果已返回 `download_available` 与 `download_url`。
+- 私有 MinIO 已部署在云服务器，仅通过应用后端间接访问，不直接暴露公网对象下载地址。
+- 仓库默认 LLM 配置当前为：
+  - `LLM_PROVIDER=deepseek`
+  - `DEEPSEEK_MODEL=deepseek-chat`
+  - `EMBEDDING_MODEL=embedding-3`
+- 标准号精确搜索排序已修复：
+  - 增加标准号查询识别
+  - 增加标准号精确召回
+  - 增加精确标准号命中置顶
+  - 返回结果 `metadata` 可附带 `standard_code_match_type`
+- 当前仓库中的聊天问答前端仍通过 `/api/search/query` 的生成能力工作，支持 `history` 与 `follow_up_context`；独立的 `Backend/app/api/chat_routes.py` 与 `Backend/app/services/chat_service.py` 当前不存在。
+- 单文档追问链路已经支持：
+  - 按显式文档编号追问
+  - 基于上一轮返回文档继续追问
+  - 基于当前选中文档继续追问
+- 助手正文中的“依据段落”已经改为引用块呈现，并在亮色 / 暗色主题下做了单独样式适配。
+- 聊天输入框发送后保焦点修复仍在当前仓库中：
+  - `frontend/src/components/Chat.tsx` 发送后通过 `requestAnimationFrame(...focus())` 保留焦点
+  - 输入框本身不再因为 `isLoading` 被禁用，只阻止重复发送
+- 围绕比赛答辩材料，已完成：
+  - 基于项目真实能力重写“自主研发应用”视角的参赛 PPT 结构
+  - 生成主答辩 PPT：`D:\work\Project\ragAI知识库 (2)\参赛相关\GeoAI空间规划标准智能检索与可视化系统 四川高校技术创新大会参赛版.pptx`
+  - 生成 React Canvas 代码转出的可编辑 PPT：`D:\work\Project\ragAI知识库 (2)\参赛相关\GeoAI-Canvas代码转PPT版.pptx`
+  - 保留两套 PPT 的导出脚本与预览图，便于后续继续替换真实截图、姓名、单位和答辩信息
+- 仓库主线已明确回到 `main`；`prod-hardening` 不再是当前可见远端主分支状态。
+
+### 当前未完成事项
+- 本窗口未重新核验线上站点、健康检查、`build-meta.json` 与实际静态资源 hash；如果后续要声称“当前线上仍是某个特定提交”，需要重新验证。
+- 远端仍保留 `feature/frontend-animation-upgrade` 分支；该分支已确认并入 `main`，但按用户要求暂时不删除。
+- 当前仓库并未保留独立 `/api/chat/query` 实现；如果后续还要恢复专用聊天路由，需要同步改动前端 `chatService`、后端 API 和部署验证链路。
+- 仍需继续观察用户在真实浏览器环境下对白天 / 夜间两套依据引用样式的主观感受，确认是否还需要进一步调整字号、背景或边框强度。
+- 当前聊天 / 检索链路在真实登录态下的长会话、过期会话、刷新页面后的用户感知仍需继续验证。
+- 通用语义搜索质量并未系统性重做；已解决的是标准号精确命中、文档追问和部分聊天编排，不等于整体搜索排序问题已经完全解决。
+- 仍有 219 条记录因缺少源文件而不可下载。
+- 如果后续继续推进微信小程序接入，需要区分两条路线：
+  - 快速上线：小程序 `web-view` 包现有 H5
+  - 长期维护：新建小程序前端并对地图、路由、授权等能力做分端适配
+- 共享记忆文件当前仍未纳入版本控制；若希望多窗口长期稳定协作，后续仍建议纳入 Git。
+
+### 当前风险、限制、待验证点
+- 顶部状态中关于线上健康、前端构建提交和缓存行为的结论主要来自 2026-05-11 与 2026-06-03 的已记录事实；本次共享记忆维护阶段没有重新打到线上验证，因此这些信息在后续继续使用前应重新核对。
+- 当前仓库仍不是“只有 `main` 一个分支”的绝对收敛状态；远端还存在 `feature/frontend-animation-upgrade`，该分支已并入 `main`，只是按用户要求保留。
+- 当前仓库中的聊天实现与旧记录里部分表述存在偏差：前端现在走 `/api/search/query`，而不是专用 `chat_routes.py`。后续窗口引用聊天链路前，必须先核对实际文件是否存在。
+- 用户如果持有旧浏览器缓存或旧会话，仍可能表现为：
+  - 页面继续引用旧 hash 的前端资源
+  - 历史缓存页面继续请求旧的 `/api/chat/query`
+  - 当前登录态请求因会话失效被拒绝
+  这不一定代表新代码未上线，而可能是“旧入口页缓存 + 旧前端代码 + 鉴权状态失效”叠加造成。
+- 当前对线上前端是否正确生效的判断，不能只看浏览器控制台；应优先对照：
+  - `frontend/dist/build-meta.json`
+  - 线上 `frontend/dist/index.html` 中实际返回的 js/css hash
+  - 浏览器报错里引用的资源 hash 是否一致
+- 仓库中的 Docker 前端模板仍是“容器内构建后复制到 `/usr/share/nginx/html`”，但本窗口在 2026-05-11 直接确认过的生产站点是宿主机 Nginx 读取 `/srv/geoai/app/frontend/dist`。后续部署前必须先核对生产实际拓扑，不能只按仓库 Dockerfile 推断。
+- 共享记忆文件此前已经出现编码损坏；本次顶部状态与新增记录按 UTF-8 维护，但后续写入必须继续统一为 UTF-8。
+- 对用户提供的 PDF / PPT 的部分点评仍受限于本机缺少完整 PDF 渲染与文本提取工具链；已有判断主要基于页数、结构、局部预览和可解析内容，不等于逐像素核查。
+- 比赛 / 答辩材料仍未完全终稿：
+  - 生成的 PPT 中仍保留多处占位信息
+  - 多个页面仍是“插入截图”占位框，尚未全部替换为真实系统截图
+  - React Canvas 转 PPT 版本主要保证结构和可编辑性，不是最终精修版
+
+### 当前重要路径或关键文件位置
+- 共享记忆文件：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\docs\memory_share.md`
+- 项目主仓库：`D:\work\Project\ragAI知识库 (2)\ragAI知识库`
+- 当前仓库默认分支：`main`
+- 当前额外远端功能分支：`feature/frontend-animation-upgrade`
+- 后端文档追问与依据格式化：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\Backend\app\services\search_service.py`
+- 当前搜索接口：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\Backend\app\api\search_routes.py`
+- 当前前端聊天服务：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\frontend\src\services\chatService.ts`
+- 前端聊天输入与发送体验：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\frontend\src\components\Chat.tsx`
+- 前端聊天正文与依据样式：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\frontend\src\index.css`
+- 线上静态资源缓存模板：`D:\work\Project\ragAI知识库 (2)\ragAI知识库\docker\nginx.conf`
+- GeoAI 服务器 SSH / 远端执行入口：`C:\Users\shl\.codex\skills\geoai-server-ssh\scripts\invoke_geoai_server.ps1`
+- 主答辩 PPT 工作区：`D:\work\Project\ragAI知识库 (2)\参赛相关\geoai-sichuan-contest`
+- Canvas 代码转 PPT 脚本：`D:\work\Project\ragAI知识库 (2)\参赛相关\canvas-react-ppt\src\build_canvas_ppt.mjs`
+
+### 当前多窗口协作约定
+- 任何窗口结束前都要先读取本文件，再更新顶部“当前项目状态”，最后在底部追加一条完整工作记录。
+- 顶部状态写“当前真相”，允许覆盖更新；底部历史区只追加，不删除其他窗口记录。
+- 涉及产品事实、部署状态、技术能力、未完成事项时，优先以仓库代码、线上核验结果和本文件最近共识为准，不凭记忆猜测。
+- 每条工作记录必须同时写明“时间”和“对话窗口名”；两者都是必填字段。
+- 如果历史补录时无法追溯真实对话窗口名，必须明确写“未记录”或“当前窗口名未提供”，不能省略该字段。
+- 涉及分支、远端、主线状态时，优先以当前仓库 `git branch -vv`、`git branch -r`、`git remote show origin` 的实时结果为准，不沿用旧记录里的分支名。
+- 线上问题排查时，先核对真实部署版本与浏览器实际命中的资源 hash，再决定是代码问题、缓存问题还是鉴权问题。
+- 如果声称“已上线 / 已修复”，尽量附上可核验事实，例如提交号、`build-meta.json`、健康检查结果、关键资源 hash。
+- 如果提到聊天链路，先核对 `frontend/src/services/chatService.ts`、`Backend/app/api/search_routes.py` 以及独立 `chat_routes.py` / `chat_service.py` 是否实际存在，不要沿用旧记忆中的接口名。
+- 涉及比赛材料时，必须区分三类产物：
+  - 项目真实能力与可证明事实
+  - 答辩叙事建议 / 大纲 / 文案
+  - 可编辑 PPT 资产与导出脚本
+
+## 工作记录
+
+### 2026-06-03 共享记忆初始化与首轮沉淀
+- 时间：2026-06-03 Asia/Shanghai
+- 对话窗口名：未记录
+- 窗口主题：建立并规范维护跨窗口共享记忆
+- 用户需求 / 问题：
+  - 用户要求把当前线程中关于项目状态、需求演化、问题、动作、结果和阻塞沉淀到 `docs/memory_share.md`。
+  - 用户要求该文件成为后续所有窗口共享维护的统一入口。
+- 我做了什么：
+  - 确认 `docs/memory_share.md` 存在但初始为空，且未纳入版本控制。
+  - 设计固定结构：顶部状态快照，底部时间线记录。
+  - 根据线程内容整理项目背景、下载链路、搜索排序修复、阻塞与交接规则。
+  - 将共享记忆维护策略固定为“顶部覆盖，底部追加”。
+- 验证结果：
+  - 文件从空白状态变为结构化共享记忆。
+  - 理论上新窗口只需阅读本文件即可恢复项目核心上下文。
+- 遇到的问题 / 阻塞：
+  - 单窗口无法自动读取其他窗口历史，必须依赖本文件持续维护。
+- 关键决策：
+  - 文件采用结构化累积模式。
+  - 记录粒度采用详细记录，而不是只保留结论。
+  - 先保持单文件入口，不按专题拆分。
+- 后续交接：
+  - 任何窗口完成实质工作后，都应先更新顶部状态快照，再追加一条完整工作记录。
+
+### 2026-06-03 AI 引用文档下载链路与标准号排序修复
+- 时间：2026-06-03 Asia/Shanghai
+- 对话窗口名：未记录
+- 窗口主题：AI 引用文档下载链路 + 标准号精确排序修复
+- 用户需求 / 问题：
+  - 用户希望完成 AI 引用文档的真实下载能力。
+  - 用户确认使用私有 MinIO。
+  - 用户提供本地标准文档目录，希望批量导入云端使用。
+  - 后续用户单独提出“修复标准号精确命中排序”。
+- 我做了什么：
+  - 设计并实现后端真实下载接口和详情接口。
+  - 新增文档资产映射服务与批量导入脚本。
+  - 在云服务器部署私有 MinIO，并配置后端 `MINIO_*` 环境变量。
+  - 将本地标准文档批量导入 MinIO，并回写 MySQL 资产状态。
+  - 改造前端统一消费 `download_available` / `download_url`。
+  - 修复 `PUBLIC_API_BASE_URL` 为 HTTPS，保证登录态下载。
+  - 删除服务器临时导入副本，仅保留 MinIO 对象数据。
+  - 修复标准号检索排序：加入标准号识别、精确召回、精确命中置顶，并补充测试覆盖。
+- 验证结果：
+  - 线上文档详情接口和下载接口已验证通过。
+  - 588 条元数据中，369 条已成功导入并可下载，219 条因缺少源文件不可下载。
+  - 线上搜索 `DB50_T 1846-2025` 时，第一条已验证为目标标准。
+- 遇到的问题 / 阻塞：
+  - 初期服务器未安装 MinIO，也未配置相关环境变量。
+  - Windows 本地 SSH 私钥读取权限和字符编码问题导致远端操作链路不稳。
+  - 导入脚本曾误用 `Path.sep`，导致路径解析报错。
+  - MinIO 对象名带目录后，原下载接口对象名校验过严，需要放宽到 path。
+  - `policy_chunks.standard_code` 与 `geoai_metadata.standard_code` 格式不一致，导致初期精确匹配失败。
+  - 仅做最终重排不够，因为线上目标标准未进入前 10，后续补了精确标准号召回。
+- 关键决策：
+  - 服务器不保留第二份原始导入目录，只保留 MinIO 对象数据。
+  - 下载链路仅面向已登录用户，不暴露 MinIO 公网直链。
+  - 标准号排序修复优先在应用层完成，不引入新表、索引或外部 reranker。
+- 后续交接：
+  - 若补齐缺失源文件，可复用现有导入脚本补充 219 条不可下载记录。
+  - 若继续优化搜索质量，应单独立项处理非标准号自然语言查询的排序问题。
+
+### 2026-06-03 共享记忆规范重写与生产状态确认
+- 时间：2026-06-03 Asia/Shanghai
+- 对话窗口名：未记录
+- 窗口主题：修复共享记忆编码并更新当前共识
+- 用户需求 / 问题：
+  - 用户明确要求建立并维护 `docs/memory_share.md` 共享记忆。
+  - 用户补充说明项目已经上线，而且已经到了较完善的状态，希望后续统一按这一前提处理。
+  - 用户进一步询问是否能快捷接入微信小程序使用。
+- 我做了什么：
+  - 检查现有 `docs/memory_share.md`，确认文件已写入内容但出现编码损坏，不适合继续追加。
+  - 按锁定结构重写整份共享记忆文件，恢复为可读的 UTF-8 内容。
+  - 将“项目已上线且较完善”写入顶部状态快照。
+  - 将微信小程序接入的两条路线沉淀为当前待办背景：`web-view` 快速接入与原生双端改造。
+  - 确认该文件仍未纳入版本控制，保留给后续窗口继续跟进。
+- 验证结果：
+  - 文件恢复为规范可读文本。
+  - 顶部状态快照已能反映最新共识：项目已上线、处于较完善状态、后续按生产系统处理。
+- 遇到的问题 / 阻塞：
+  - 原文件存在明显乱码，说明此前写入编码不一致。
+  - 当时仅能基于线程内已知事实更新，无法自动验证线上服务最新运行数据。
+- 关键决策：
+  - 直接整体重写共享记忆，而不是在乱码内容上继续修补。
+  - 将“微信小程序接入”先作为产品方向记录，不写成已执行工作。
+- 后续交接：
+  - 后续窗口如实际推进微信小程序，应在顶部补充“双端状态”，并在底部追加详细实施记录。
+  - 仍建议尽快将本文件纳入版本控制，避免共享记忆只存在于本地工作区。
+
+### 2026-06-03 竞赛答辩材料规划、PPT 生成与评审建议
+- 时间：2026-06-03 22:52:37 +08:00
+- 对话窗口名：未记录
+- 窗口主题：四川高校技术创新大会答辩材料梳理、PPT 导出与现有稿评审
+- 用户需求 / 问题：
+  - 用户提供“四川高校技术创新作品征集暨高校数字思政技术创新大会”通知内容，希望基于当前项目真实能力整理可参赛的 PPT 大纲。
+  - 用户强调项目最核心的亮点不是泛 AI，而是“地图点选省份后直接提问该地区相关标准”“对标准继续深问”“可点击下载原文”，希望答辩结构围绕这三点重写。
+  - 用户进一步询问是否有必要把关键功能的技术实现流程写进主 PPT，以判断是否有助于比赛加分。
+  - 随后用户要求直接生成一份风格与系统高度一致、带朴实高级感的参赛 PPT，输出到 `D:\work\Project\ragAI知识库 (2)\参赛相关`。
+  - 之后用户改为上传自己做的 PPT / PDF，希望从“架构师 / 指导老师”角度点评不足，判断是否内容太少，并给出更适合比赛答辩的详细大纲。
+  - 最后用户给出一份 Gemini Canvas 生成的 React 演示代码，希望直接转成真正的 `.pptx`。
+- 我做了什么：
+  - 先回到项目代码和文档本身确认真实能力，结合仓库中的 README、requirement、前后端搜索接口、地图组件、文档下载接口等内容，重新定义本项目在比赛中的准确定位：
+    - 面向国土空间规划 / 地理信息标准文档的专业知识服务系统
+    - 核心能力是地图选区式问答、标准深度交互、引用追溯和原文下载
+    - 不夸大为空间分析平台
+  - 基于这一定位，多轮和用户讨论并重写了答辩逻辑，明确建议主 PPT 以“地图选区问答 -> 标准深问 -> 引用下载闭环”为主线，技术实现控制在 1-2 页，其余细节放附录。
+  - 使用 Presentations 运行时单独建立工作区 `参赛相关/geoai-sichuan-contest`，编写导出脚本并生成一份主答辩 PPT；在生成过程中检查 PNG 预览，修正封面与功能页示意组件拥挤、标注重叠等版式问题，最终导出：
+    - `参赛相关/GeoAI空间规划标准智能检索与可视化系统 四川高校技术创新大会参赛版.pptx`
+  - 对用户后续提供的 `.pptx` 进行结构化审查。由于本机对该文件的直接图片化 / 文本提取能力有限，我退而求其次，用 XML 方式抽取页数、页标题、每页文本元素和图片元素数量，判断它存在“同一套内容讲了两遍”“主线像产品介绍而不够像比赛答辩”“页数偏长、证据页偏弱”等问题，并据此重新给出一份 `14-15` 页的详细大纲。
+  - 对用户提供的答辩 PDF 做了页数和结构层面的判断，确认是 `17` 页，并明确告诉用户“不是内容太少，而是已经够用，风险在于证据感和重点收束不够”，建议通过加强真实演示截图、删弱页而不是继续加页来优化。
+  - 针对用户给出的 React Canvas 代码，单独建立工作区 `参赛相关/canvas-react-ppt`，将网页式演示结构手工映射为可编辑 PPT：保留其主题色、页面顺序、功能模块、答辩章节和占位框思路，并编写脚本：
+    - `参赛相关/canvas-react-ppt/src/build_canvas_ppt.mjs`
+  - 在导出 React 代码转 PPT 的过程中，解决了运行时 API 差异问题：
+    - 不能使用 `new Presentation(...)`
+    - 需要改成 `Presentation.create({ slideSize: ... })`
+    - `slides` 集合也不能用 `get()`，而要使用 `slides.items[index]`
+  - 最终成功导出 Canvas 代码版 PPT，并复制成用户可直接使用的成品：
+    - `参赛相关/GeoAI-Canvas代码转PPT版.pptx`
+  - 还为两个 PPT 工作区都生成了局部 PNG 预览，用来人工检查封面页、功能页、技术架构页等关键页面的排版情况。
+- 验证结果：
+  - 主答辩稿 `GeoAI空间规划标准智能检索与可视化系统 四川高校技术创新大会参赛版.pptx` 已成功导出，并且关键页 PNG 预览可正常渲染；封面、功能一、技术架构等页均做过人工查看。
+  - Canvas 代码转 PPT 稿 `GeoAI-Canvas代码转PPT版.pptx` 已成功导出，预览图已成功生成并人工检查至少以下页面：
+    - `slide-01.png`
+    - `slide-07.png`
+    - `slide-12.png`
+  - 用户提供的答辩 PDF 被确认为 `17` 页，因此“不存在明显内容过少”的问题；更准确的结论是“内容足够，但要控制节奏、强化证据页和比赛说服力”。
+- 遇到的问题 / 阻塞：
+  - 本机 `node_repl` 因 Node 版本门槛问题无法直接使用，必须切换到显式运行时路径和脚本文件方式执行。
+  - `artifact-tool` 在当前环境下的实例化方式与直觉不一致；直接 `new Presentation(...)` 会触发内部构造错误，必须与已有成功脚本保持同一种 API 用法。
+  - 本机缺少 `unzip`，导致 PPT 质量脚本无法完成完整包级检查，因此对 PPT 只能以导出成功 + PNG 预览人工核查作为主要验证方式。
+  - 用户提供的现有 PPT / PDF 在本地缺少完整图片化和文本提取工具链的情况下，无法做到逐页逐像素复原检查；部分点评只能基于结构、页数、XML 文本抽取和可见页面预览来完成。
+  - Canvas 代码转 PPT 版本保留了大量“插入截图”“学校 / 团队 / 指导老师 / 账号密码”等占位内容，因此它是“可编辑中间稿”，不是最终提交版。
+- 关键决策：
+  - 所有比赛相关建议都以“项目真实能力优先”为原则，不为了答辩好看而虚构未完成功能，尤其避免把占位的空间分析能力讲成已成熟能力。
+  - 明确把用户当前的竞赛材料拆成三类资产处理：
+    - 主答辩 PPT 终稿方向
+    - 用户自制 PPT / PDF 的评审建议
+    - React Canvas 代码转出的可编辑 PPT
+  - 对用户“内容是不是太少”的疑问，给出的判断不是简单加页，而是强调“删重复、补证据、强化真实演示闭环”。
+  - 对 React 代码转 PPT 的需求，选择“尽量忠实于原网页结构和配色做可编辑迁移”，而不是借机完全重做设计，以便用户后续继续沿用自己的页面内容。
+- 后续交接：
+  - 如果后续窗口继续推进比赛材料，优先处理以下高收益事项：
+    - 把所有 PPT 中的占位符替换成真实比赛名、学校、团队、汇报人、指导老师
+    - 把“插入截图”占位框替换成真实系统截图，尤其是地图选区、AI 问答、引用详情、原文下载四类证据图
+    - 从主答辩稿里继续压缩低价值说明页，保持 `12-15` 页节奏
+  - 如果要继续维护 React 代码转 PPT 版，应直接在 `参赛相关/canvas-react-ppt/src/build_canvas_ppt.mjs` 上修改，而不是手动从零再导出。
+  - 如果要复盘用户自制 PDF / PPT 的问题，应记住核心结论：它们不是“内容太少”，而是“证据感和比赛说服力还不够”，应优先加强真实演示闭环页。
+
+### 2026-06-03 聊天证据引用样式、线上缓存修复与亮色主题可读性修复
+- 时间：2026-06-03 23:07:20 +08:00
+- 窗口主题：聊天证据段落样式优化、线上缓存排查 / 修复、亮色主题引用可读性修复
+- 用户需求 / 问题：
+  - 用户先要求把助手正文里的“依据1 / 依据2”从普通正文改成更像引用的小字样式，使其比正文小 1-2 个字号、颜色更弱、层级更低。
+  - 用户随后要求直接上线。
+  - 上线后，用户在浏览器控制台看到：
+    - `/api/chat/query` 返回 401
+    - 页面仍引用旧的 `index-Cg57aXfp.js` 与 `index-8ToD7a23.css`
+    - 旧 CSS 请求返回 HTML，浏览器拒绝按样式表应用
+    - 页面里“依据”仍和正文一样，没有呈现新样式
+  - 在此基础上，用户要求继续排查。
+  - 之后用户又反馈：依据卡片在黑夜模式下可读性还行，但白天模式几乎透明、不可见，要求保持整体风格和谐的前提下修复并上线。
+- 我做了什么：
+  - 先实现“依据段落引用样式”本身：
+    - 修改 `Backend/app/services/search_service.py`
+    - 新增 `_normalize_evidence_blockquotes()`，把 `依据1 / 依据2 / 依据3` 统一标准化为 Markdown `blockquote`
+    - 让单文档追问的 deterministic fallback 与 LLM 输出都经过这层标准化
+    - 给文档追问提示词额外加了一条格式规则，要求 evidence line 使用 `> 依据1：……`
+    - 修改 `frontend/src/index.css`，给 `.prose blockquote` 增加更小字号、淡色、左侧细边线和轻背景
+    - 新增测试 `Backend/tests/test_search_evidence_formatting.py`
+    - 更新 `Backend/tests/test_search_follow_up.py`
+  - 本地验证并发布第一版样式修复：
+    - 后端测试通过 `20 passed`
+    - 前端 `npm.cmd run lint` 与 `npm.cmd run build` 通过
+    - 提交 `ec4f044`
+    - 推送并部署到 `prod-hardening`
+  - 用户反馈“线上没生效”后，排查不是功能没发，而是浏览器拿到了旧入口页：
+    - 线上实际 `frontend/dist/index.html` 已经返回新资源：
+      - js：`/assets/index-C4HworrR.js`
+      - css：`/assets/index-B8BFDDPg.css`
+    - 用户浏览器报错仍引用旧的：
+      - js：`/assets/index-Cg57aXfp.js`
+      - css：`/assets/index-8ToD7a23.css`
+    - 我用远端命令确认旧 css 路径在服务器上是 `404`，当前新 css 路径是 `200`
+    - 同时确认 `/api/chat/query` 本身是鉴权接口，未登录或旧会话失效时返回 401 是符合设计的
+  - 针对“旧入口页缓存导致前端仍加载旧资源”的问题，直接修复线上 Nginx 缓存策略：
+    - 先热修远端 Nginx 站点配置
+    - 再把同样修改补回仓库 `docker/nginx.conf`
+    - 为 `/assets/*` 增加长期 immutable 缓存
+    - 为 SPA 根路径 `/` 增加 `no-store, no-cache, must-revalidate`
+    - 验证时带上正确 `Host` 头确认缓存头在真实公开 vhost 上生效
+    - 提交 `fb588c9`
+    - 推送到 `prod-hardening`
+  - 最后处理亮色主题“依据引用块几乎透明”的问题：
+    - 修改 `frontend/src/index.css`
+    - 新增主题变量 `--quote-bg` / `--quote-text` / `--quote-border`
+    - 暗色主题保留低饱和、偏克制的暖橙边线和轻背景
+    - 亮色主题提高背景和文字对比度，避免继续用几乎看不见的半透明冷灰
+    - 让 `.prose blockquote` 改为使用主题变量，而不是写死一套适合暗色主题的 rgba
+    - 前端再次通过 `lint` 与 `build`
+    - 提交 `39f6690`
+    - 推送并重新部署线上前端
+- 验证结果：
+  - 第一阶段样式修复验证：
+    - 后端测试：`20 passed`
+    - 前端 `lint`：通过
+    - 前端 `build`：通过
+    - 线上部署完成，`build-meta.json` 指向 `ec4f044`
+  - 第二阶段缓存修复验证：
+    - 远端 `frontend/dist/index.html` 实际引用：
+      - js：`index-C4HworrR.js`
+      - css：`index-B8BFDDPg.css`
+    - 旧 css `index-8ToD7a23.css` 在线上返回 `404`
+    - 使用正确 `Host` 头验证后，线上缓存头符合预期：
+      - `/` 返回 `Cache-Control: no-store, no-cache, must-revalidate`
+      - `/assets/index-B8BFDDPg.css` 返回 `Cache-Control: public, max-age=31536000, immutable`
+  - 第三阶段亮色主题修复验证：
+    - 本地前端 `lint`：通过
+    - 本地前端 `build`：通过
+    - 线上重新构建后，`build-meta.json` 指向 `39f6690`
+    - 线上 `frontend/dist/index.html` 当前返回：
+      - js：`/assets/index-CqR8gYLJ.js`
+      - css：`/assets/index-lioWCf3z.css`
+    - 本窗口再次核验：
+      - `/health` 正常
+      - `/api/search/health` 正常
+      - `/api/chat/health` 正常
+- 遇到的问题 / 阻塞：
+  - 共享记忆之外，这个窗口最关键的返工点是：最初用户看到的“没生效”并不是功能代码没有部署，而是浏览器仍在使用旧入口页缓存，导致前端继续请求已经不存在的旧资源。
+  - 远端 SSH 脚本首次调用时因为未显式传 `-WorkspaceRoot` 失败，之后补上工作区根路径才正常执行。
+  - 远端输出曾因 `run_remote.py` 用本地 `gbk` 控制台写出 `✓` 字符而报 `UnicodeEncodeError`，通过为命令设置 `PYTHONIOENCODING=utf-8` 解决。
+  - 远端 Nginx 热修时，最初直接内联复杂替换命令导致 PowerShell / 参数转义失败，后续改为整份配置覆盖与 base64 方式写入，才稳定完成。
+  - `/api/chat/query` 的 401 与证据样式问题是两类问题：前者属于鉴权或旧会话，后者属于旧入口页缓存与前端资源 hash 错配。排查时必须分开看，不能把 401 误判成样式没上线的原因。
+- 关键决策：
+  - 不在前端用正则去“猜测”哪一段是依据，而是在后端统一把 evidence line 结构化成 Markdown `blockquote`，让渲染链稳定可控。
+  - 当用户反馈“线上没生效”时，先核对真实线上 `index.html`、`build-meta.json` 和浏览器控制台里的资源 hash，而不是先假设代码没有部署成功。
+  - 缓存问题不只热修服务器，还把 Nginx 模板 `docker/nginx.conf` 同步回仓库，避免下次重建 / 重配 Nginx 又回到旧行为。
+  - 亮色主题不复用暗色主题的半透明配色，单独给出更高对比度的变量，但保留暖橙边线和轻背景的整体语言，避免风格割裂。
+- 后续交接：
+  - 如果后续窗口再收到“线上样式没有更新 / 页面仍是旧版”的反馈，第一步先对照：
+    - 浏览器报错里的 js/css hash
+    - 线上 `frontend/dist/index.html`
+    - `frontend/dist/build-meta.json`
+    再决定是缓存、部署还是代码问题。
+  - 如果用户反馈聊天报 401，不要直接当作后端异常；先确认：
+    - 当前是否为登录态
+    - Cookie 是否过期
+    - 页面是否仍然来自旧入口缓存
+  - 如果还要继续微调依据引用样式，首选继续修改 `frontend/src/index.css` 中的主题变量和 `.prose blockquote`，不要回退到把“依据段落”当普通正文渲染。
+
+### 2026-06-03 仓库主线状态复核与共享记忆维护
+- 时间：2026-06-03 23:16:19 +08:00
+- 对话窗口名：未记录
+- 窗口主题：复核当前 Git 主线状态，并把本窗口确认到的仓库事实沉淀到共享记忆
+- 用户需求 / 问题：
+  - 用户要求在本窗口结束前维护 `D:\work\Project\ragAI知识库 (2)\ragAI知识库\docs\memory_share.md`。
+  - 用户明确要求：先读取文件当前内容，再更新顶部“当前项目状态”，并在底部“工作记录”追加一条完整记录。
+  - 用户强调记录必须包含本窗口真实发生的需求、分析、验证、问题、决策与交接信息，不能编造其他窗口历史。
+- 我做了什么：
+  - 先读取 `docs/memory_share.md`，确认文件已有较完整的项目状态和多条历史记录。
+  - 发现第一次直接在当前终端查看时出现乱码，于是显式使用 UTF-8 输出编码重新读取，确认文件实际内容是正常中文，不是文件本体再次损坏。
+  - 结合本窗口实际操作，核对当前仓库状态：
+    - 执行 `git status --short --branch`
+    - 执行 `git branch -vv`
+    - 执行 `git branch -r`
+    - 执行 `git remote show origin`
+    - 查看最近提交 `git log --oneline -n 5`
+  - 基于核对结果，更新了顶部“当前项目状态”里的过期项，重点修正：
+    - 不再把 `prod-hardening` 写成当前仓库活跃主线
+    - 明确当前仓库默认分支是 `main`
+    - 明确当前远端还保留 `feature/frontend-animation-upgrade`
+    - 明确本窗口没有重新验证线上健康状态，顶部保留的线上结论仅能视为 2026-06-03 已记录事实，而不是本窗口新验证结果
+    - 明确共享记忆文件 `docs/memory_share.md` 目前仍未纳入版本控制
+  - 在多窗口协作约定里补充了一条：涉及分支与主线状态时，应优先相信当前仓库的实时 Git 结果，而不是沿用旧记录里的分支名。
+- 验证结果：
+  - 共享记忆文件可以用 UTF-8 正常读取，说明本次终端里的乱码是显示编码问题，不是文件再次损坏。
+  - 当前本地分支状态已确认：
+    - 本地当前分支：`main`
+    - 当前跟踪远端：`origin/main`
+  - 当前远端分支状态已确认：
+    - `origin/HEAD -> origin/main`
+    - `origin/main`
+    - `origin/feature/frontend-animation-upgrade`
+  - 当前远端仓库地址已确认：`git@github.com:edjsh175/geo-rag-planning-assistant.git`
+  - 当前工作区状态已确认：除 `docs/memory_share.md` 为未跟踪文件外，本窗口未看到其他新的工作区脏改动。
+- 遇到的问题 / 阻塞：
+  - 共享记忆文件在默认终端输出下再次表现为乱码，容易误判成文件本体损坏；必须显式按 UTF-8 读取后才能确认真实情况。
+  - 顶部状态里原先保留了“当前活跃部署分支：`prod-hardening`”之类的旧结论，但本窗口实际看到的仓库事实已经变化，必须做最小但明确的修正，否则后续窗口会继续被误导。
+  - 本窗口没有重新登录线上服务，也没有重新打健康检查或 `build-meta.json`，因此不能把旧记录中的线上结论冒充成本窗口新验证结果。
+- 关键决策：
+  - 顶部状态继续保留仍然有效的产品和功能共识，但对仓库主线、远端分支、工作区状态这类已经发生变化的事实立即覆盖更新。
+  - 对线上健康、前端构建提交、缓存行为等未在本窗口重新验证的内容，不删除历史，但明确加上“来自 2026-06-03 已记录事实”的边界说明。
+  - 把“共享记忆文件当前仍未纳入版本控制”继续保留在顶部未完成事项和风险里，因为这仍然是当前真实问题。
+- 后续交接：
+  - 如果后续窗口要继续处理分支治理、合并或清理，先从当前事实出发：主线是 `main`，远端额外分支是 `feature/frontend-animation-upgrade`，不要再按 `prod-hardening` 作为当前仓库主线操作。
+  - 如果后续窗口需要声明“线上当前运行的是哪个提交”“线上健康是否正常”，请重新实际访问线上或读取服务器产物，不要只沿用本文件里 2026-06-03 的历史核验结果。
+  - 如果后续窗口继续维护本文件，务必继续使用 UTF-8 读写，先判断是终端显示乱码还是文件本体损坏，再决定是否修复编码。
+
+### 2026-06-03 本窗口补录：DeepSeek 切换、聊天链路回退、生产静态发布与共享记忆纠偏
+- 时间：2026-06-03 Asia/Shanghai
+- 对话窗口名：未记录
+- 窗口主题：补录本窗口从 2026-05-11 起实际发生的 AI 配置核对、聊天链路回退、生产发布与记忆维护事实
+- 用户需求 / 问题：
+  - 用户先追问当前 AI 问答到底使用什么接口和模型，是不是 DeepSeek、是不是 embedding 在直接回答，以及当前 embedding 用的是什么模型。
+  - 用户随后要求把“基于检索结果组织答案”的模型切换成 DeepSeek，并同步到 git 与服务器。
+  - 紧接着用户提出两个体验问题：
+    - 聊天输入框回车发送后会丢焦点，必须再点一次输入框
+    - 非检索闲聊式改造后，像“地裂缝监测预警”这类本该进入检索的输入反而被模板话拦住
+  - 在比较“泛化修路由”与“直接回退到修改前逻辑”之后，用户明确选择：回退聊天编排，优先恢复原来“至少设计功能没问题”的知识库行为。
+  - 在完成回退后，用户继续要求把残余发布补齐，但强调不能再因为发布动作把服务器负载打高。
+  - 本轮最后，用户要求统一执行共享记忆维护计划：先读取 `docs/memory_share.md`，再把本窗口真实发生的全过程沉淀进去。
+- 我做了什么：
+  - 先在仓库内核对 AI 配置与调用链：
+    - 确认问答生成不是 embedding 直接回答，而是检索后再交给大模型组织答案。
+    - 确认 embedding 模型是 `embedding-3`。
+    - 确认当时默认 provider 仍是 OpenAI 兼容链路，随后按用户要求切换为 DeepSeek。
+  - 将默认模型提供方切到 DeepSeek，并同步到仓库与生产：
+    - 修改 `Backend/app/core/config.py`，将默认 `LLM_PROVIDER` 调整为 `deepseek`
+    - 修改 `Backend/.env.example`
+    - 生产环境切到 `DEEPSEEK_MODEL=deepseek-chat`，embedding 仍保留 `embedding-3`
+    - 当时提交并推送了 `2eec635`
+  - 修复聊天输入框体验问题：
+    - 修改 `frontend/src/components/Chat.tsx`
+    - 让发送后通过 `requestAnimationFrame(() => inputRef.current?.focus())` 立即恢复焦点
+    - 输入框不再因为 `isLoading` 被禁用，只阻止重复发送
+    - 本地 `npm run lint` 与 `npm run build` 通过
+    - 当时提交并推送了 `efb9a80`
+  - 尝试改良“非检索闲聊 / 产品问答”链路：
+    - 当时改动了 `Backend/app/services/chat_service.py`
+    - 增加了若干面向“你是谁 / 用什么模型 / 能做什么”的直答逻辑与测试
+    - 当时提交并推送了 `9ee9bab`
+  - 用户确认该改动破坏了检索优先级后，没有继续堆关键词补丁，而是按用户要求回退聊天编排：
+    - 识别出真正应该回退的是引入 tool-called chat orchestration 的 `fdb4014`
+    - 通过 `git revert --no-commit fdb4014` 进行回退
+    - 处理了 `Backend/app/services/chat_service.py`、`Backend/tests/test_chat_service.py` 等冲突
+    - 生成回退提交 `84997831b33f34ccc1e640c282970684890e811c`
+    - 保留了与此无关但用户确认要保留的两项修复：
+      - DeepSeek 默认 provider
+      - 输入框焦点修复
+  - 完成了生产后端切换和初步验证：
+    - 将生产服务器工作树从旧的 `prod-hardening` 切到 `main`
+    - 拉到回退提交 `84997831b33f34ccc1e640c282970684890e811c`
+    - 重启 `geoai-backend`
+    - 核验 `/health` 返回 `healthy`
+  - 补前端发布时，最初错误地在生产机上直接触发了 `npm run build`，随后遇到严重副作用：
+    - 服务器 CPU 峰值与云盘 IOPS 告警
+    - SSH 持续报 `Error reading SSH protocol banner`
+    - 用户提供了 ECS 自诊断截图后，我结合时间线判断：高负载最可能来自生产机前端构建，而不是 `git pull` 或后端重启
+  - 在 SSH 恢复后，改成“本地构建 + 轻量上传”的安全发布路径，而不是继续在服务器编译：
+    - 本地执行 `frontend/npm.cmd run build`
+    - 确认生产 Nginx 实际读取的是宿主机目录 `/srv/geoai/app/frontend/dist`
+    - 将本地 `frontend/dist` 打成 `frontend-dist-20260511-183801.tar.gz`
+    - 由于 `scp` 会卡在口令交互、而且中文路径会让 Python 入口出现编码问题，我改用 `paramiko` SFTP 上传，并先把包复制到纯 ASCII 的本地临时路径
+    - 远端把压缩包解到新目录后，原子替换 `/srv/geoai/app/frontend/dist`
+    - 保留备份目录 `/srv/geoai/app/frontend/dist.backup-20260511-183801`
+    - 最后再次核验首页 HTML 与后端 `/health`
+  - 本次共享记忆维护阶段又做了一轮事实纠偏：
+    - 先按 UTF-8 重新读取 `docs/memory_share.md`，确认之前在默认终端看到的乱码是显示编码问题，不是文件本体再次损坏
+    - 重新核对当前仓库 `git status --short --branch`、`git log --oneline -5`、`git branch -r`、`git remote show origin`
+    - 进一步核对当前代码，发现旧顶部状态里关于聊天链路的表述已经过期：
+      - 当前仓库里没有 `Backend/app/api/chat_routes.py`
+      - 当前仓库里没有 `Backend/app/services/chat_service.py`
+      - 当前前端 `frontend/src/services/chatService.ts` 仍然调用 `/api/search/query`
+    - 因此这次显式把顶部“当前项目状态”修正为当前仓库真相，而不是延续旧窗口留下的 `/api/chat/query` 说法
+- 验证结果：
+  - 模型配置核对结果：
+    - 当时已确认默认生成模型切到 `deepseek-chat`
+    - embedding 仍为 `embedding-3`
+  - 输入框体验修复结果：
+    - `frontend/src/components/Chat.tsx` 当前仍保留 `requestAnimationFrame(...focus())`
+    - 输入框当前仅 `disabled={disabled}`，发送按钮仍会阻止 `isLoading` 时重复提交
+  - 聊天编排回退结果：
+    - 本地前端 `npm run build` 通过
+    - 本地后端 `import main` 通过
+    - 生产后端在切到 `main@8499783` 后，`/health` 返回 `healthy`
+  - 轻量前端发布结果：
+    - 生产首页可直接返回新的 `index.html`
+    - 后端健康检查再次返回 `healthy`
+    - 这次发布没有再在服务器上执行前端编译
+  - 当前仓库事实复核结果：
+    - 当前本地分支：`main`
+    - 当前跟踪远端：`origin/main`
+    - 当前远端仍存在：`origin/feature/frontend-animation-upgrade`
+    - 当前本地 `HEAD`：`8f3eb44`
+    - 当前共享记忆文件仍未纳入版本控制
+    - 当前仓库中的聊天前端服务确实还是走 `/api/search/query`
+- 遇到的问题 / 阻塞：
+  - 生产机前端 `npm run build` 直接把 CPU 和云盘 IOPS 打高，进而引发 SSH 握手异常，导致远程继续操作被卡住。
+  - `scp` 因私钥口令交互超时，不适合直接拿来做自动上传。
+  - 带中文路径的本地发布包在某些 Python 入口下会被错误编码，必须先复制到 ASCII 临时路径再做 SFTP 上传。
+  - `docs/memory_share.md` 在默认终端输出下再次表现为乱码，容易误判为文件损坏；必须显式按 UTF-8 读取后才能确认真实情况。
+  - 顶部旧状态里保留了“聊天链路已经独立为 `/api/chat/query`”这类过期事实，如果不纠偏，会直接误导下一窗口去找不存在的文件。
+- 关键决策：
+  - 在“泛化意图路由”与“回退到稳定知识库行为”之间，遵从用户判断，选择回退 `fdb4014` 之前的聊天逻辑，而不是继续堆关键词或规则。
+  - 保留 DeepSeek 默认 provider 与输入框焦点修复，不让聊天链路回退把这两项独立改进一起带走。
+  - 之后所有前端生产发布优先采用“本地构建 `frontend/dist` -> 上传压缩包 -> 远端原子替换静态目录”的路径，避免再次在业务机现编译。
+  - 维护共享记忆时，顶部只写当前仓库和本窗口可确认的真相；像 `/api/chat/query` 这类已经不符合当前代码的旧结论必须覆盖修正，不能因为它出现在旧记录里就继续沿用。
+- 后续交接：
+  - 如果后续窗口还要发布前端，优先复用这条安全路径：
+    - 本地构建 `frontend/dist`
+    - 上传压缩包到服务器
+    - 在 `/srv/geoai/app/frontend` 下原子替换 `dist`
+    - 避免再次在生产机执行 `npm run build`
+  - 如果后续窗口要判断“当前聊天到底走哪条接口”，先看：
+    - `frontend/src/services/chatService.ts`
+    - `Backend/app/api/search_routes.py`
+    - `Backend/app/api/chat_routes.py` 是否存在
+    不要先信旧记忆。
+  - 如果后续窗口要宣称“当前线上运行的是哪个提交”或“线上当前健康正常”，请重新实际连接服务器或访问接口，不要把本条记录里的 2026-05-11 历史验证结果直接当作今天的线上现状。
+  - 如果后续窗口继续维护本文件，务必继续用 UTF-8 读写，并区分“终端显示乱码”和“文件本体损坏”。
+
+### 2026-06-03 共享记忆规则微调：增加对话窗口名
+- 时间：2026-06-03 Asia/Shanghai
+- 对话窗口名：当前窗口名未提供
+- 窗口主题：共享记忆记录字段补充
+- 用户需求 / 问题：
+  - 用户要求统一命令微调：记录共享记忆时，不仅要记录时间，还要记录是哪个对话，即对话窗口名。
+- 我做了什么：
+  - 更新“当前多窗口协作约定”，把“时间”和“对话窗口名”都明确为工作记录必填字段。
+  - 为当前文件中的历史工作记录补齐“对话窗口名”字段。
+  - 对无法从现有上下文追溯真实窗口名的历史记录，统一标记为“未记录”。
+- 验证结果：
+  - 当前文件内已有工作记录均已包含“对话窗口名”字段。
+  - 顶部协作规则与底部工作记录格式已一致。
+- 遇到的问题 / 阻塞：
+  - 当前上下文没有提供历史对话的真实窗口名，因此无法精确回填旧记录的窗口名。
+- 关键决策：
+  - 历史不可追溯的窗口名不做猜测，显式写“未记录”。
+  - 从本次规则更新开始，“时间 + 对话窗口名”视为硬性必填项。
+- 后续交接：
+  - 后续窗口追加新记录时，必须显式写入真实对话窗口名；如果客户端没有展示窗口名，也要明确写“当前窗口名未提供”，不能省略。
+
+### 2026-06-03 国标爬虫部署、网页接入、任务链路修复与共享记忆维护
+- 时间：2026-06-03 23:43:15 +08:00
+- 对话窗口名：当前窗口名未提供
+- 窗口主题：国标爬虫服务器部署、`/crawler/` 网页接入、任务失败链路修复、前端体验增强与共享记忆维护
+- 用户需求 / 问题：
+  - 用户先确认是否能读取当前工作区同级目录 `D:\work\Project\国标爬虫`，并授权读取。
+  - 用户要求测试并优化 `geoai-server-ssh` skill，减少 SSH 私钥 ACL、PowerShell 参数解析、复杂远程命令和长任务执行时的阻塞。
+  - 用户要求把国标爬虫项目部署到阿里云服务器 `8.156.85.7`，用 Docker 运行，并检查服务器是否已安装 Docker。
+  - 用户要求把无鉴权的裸 `8765` 入口收回到 Nginx 反代后面，后续希望网站 AI 可以调用该工具，同时未来可能扩展专门网站。
+  - 用户要求支持同机 `prod/test` 共存，并明确当前服务器 `.env` 作为正式生产配置来源。
+  - 用户新增了国标爬虫 Web 页面，希望在现有 `https://8.156.85.7/` 的 GeoAI 站点下通过 `/crawler/` 后缀访问，并在 GeoAI 导航中跳转。
+  - 用户先要求 `/crawler/` 暂不加鉴权，随后补 Basic Auth，再把密码改为 `10231023`。
+  - 用户多次提交网页任务后反馈失败，包括 headless 浏览器启动失败、目标表结构错误、`geoai_metadata` 主键不兼容、验证码平台无可用题分、`c.gb688.cn` 上游不可达、失败仍写库、URL 批量抓取元数据展示为空等问题。
+  - 用户要求新增“预览勾选抓取”和“下载全部 PDF”能力，避免大量结果需要逐个点击。
+  - 用户反馈 `/crawler/` 静态资源报 `index-*.js` / `index-*.css` 404，要求继续修复并避免复发。
+  - 用户最后要求执行共享记忆维护：先读取 `docs/memory_share.md`，更新顶部“当前项目状态”，在工作记录末尾追加本窗口完整记录，并且记录必须包含时间和对话窗口名。
+- 我做了什么：
+  - 读取并验证 `geoai-server-ssh` skill，确认可以通过缓存 ASCII 路径私钥连接 `8.156.85.7`，用户为该服务器提供了可接管凭据，另一个未给密码的服务器不接管。
+  - 优化 `geoai-server-ssh` skill：
+    - 复用 `%LOCALAPPDATA%\CodexSshKeys\temp_server_key`，避免每次撞源私钥 ACL。
+    - 增加 `-Command`、`-ScriptPath`、`-ScriptText`、`-Background`、`-Wait`、JSON 输出等远程执行模式。
+    - 扩展 `run_remote.py`，让复杂脚本通过 base64 / stdin 传输，避免 PowerShell 拆坏管道、引号、SQL、heredoc 等远端 shell 语法。
+    - 增加长任务后台执行与远程日志路径，降低 Docker build / apt install 等长输出任务的 SSH 会话风险。
+  - 部署国标爬虫到服务器：
+    - 在服务器安装 Docker 与 Compose。
+    - 创建 `/srv/std-worker/app`，从 GitHub 拉取指定分支。
+    - 准备生产 `.env`，创建 `std_worker` 数据库用户，并处理 MySQL 连接。
+    - 因 Debian 包源和 Docker Hub 在服务器上不稳定，创建 `Dockerfile.server`，使用阿里云 Debian 镜像，并逐步把服务器专用部署文件收敛到仓库。
+    - 发现宿主机 MySQL 只监听 `127.0.0.1:3306`，普通 Docker bridge 网络无法访问宿主机 MySQL，因此服务器 override 使用 `host network`，并让生产 / 测试分别绑定 `127.0.0.1:8765` / `127.0.0.1:8766`。
+  - 收紧公网暴露：
+    - 将 worker 从裸公网 `8765` 收回到本机回环地址。
+    - 移除或收紧 `8765/tcp` 的 UFW 放行。
+    - 在现有 Nginx 站点新增 `/std-worker/` 或 `/crawler/` 受控反代路径。
+    - 明确当前目标是让网站后端或本机受控入口调用 worker，而不是让任意公网用户直连 `8.156.85.7:8765`。
+  - 处理 `prod/test` 共存：
+    - 迁移生产配置为 `.env.prod`，新增 `.env.test`。
+    - 将旧产物迁到 `artifacts-prod` / `.tmp-prod`，测试使用 `artifacts-test` / `.tmp-test`。
+    - 创建测试库 `disaster_knowledge_test` 并授权。
+    - 生产实例常驻，测试实例按需拉起验证后下线。
+  - 接入 `/crawler/` Web 页面：
+    - 确认 GeoAI 已占用 `/` 和 `/api/*`，国标爬虫网页不能直接挂根路径。
+    - 选择同域名子路径方案 `https://8.156.85.7/crawler/`。
+    - 将爬虫前端构建改为支持 `VITE_APP_BASE_PATH=/crawler/` 与 `VITE_API_BASE_PATH=/crawler/api`。
+    - 配置 Nginx 反代 `/crawler/` 和 `/crawler/api/` 到 `127.0.0.1:8765`。
+    - 在线上 GeoAI 前端中加入到 `/crawler/` 的导航入口，但当时没有把 GeoAI 该导航入口正式推回 georag 仓库，因为用户此前要求先不动 georag 项目。
+  - 补鉴权：
+    - 最初按用户要求先不加鉴权公开 `/crawler/`。
+    - 随后按用户提供的账号 `shlshen` 和密码 `741852963shlS.00` 添加 Basic Auth。
+    - 后来按用户要求把密码改为 `10231023`，并验证旧密码 401、新密码 200。
+  - 修复任务失败链路：
+    - 修复 `search_only` / 网页提交没有传 `headless` 时后端误当 `False` 的问题，使服务器容器中默认继承服务端 headless 配置。
+    - 修复目标表误选内部表 `crawl_task_items` 导致 `Unknown column 'standard_code'` 的问题，前端不再把内部任务表作为可选业务表。
+    - 发现 `geoai_metadata` 虽有 `standard_code`，但主键是 `standard_id`，不符合爬虫写库逻辑中对 `id` 的假设，于是收敛为默认写独立表 `gb_standards`，并拒绝不兼容业务表。
+    - 修复失败条目提前写入 `gb_standards` 的问题，只有 PDF 成功保存且该条没有失败记录时才写业务表。
+    - 将 `c.gb688.cn` Chrome 错误页识别为真实上游不可达，统一报 `national standard download endpoint unavailable: c.gb688.cn returned ERR_EMPTY_RESPONSE`，不再误判成下载候选。
+    - 修复下载产物链接在 `/crawler/` 子路径下仍返回 `/api/...` 导致打到 GeoAI API 的问题，改成子路径安全的相对链接。
+    - 修复中文 PDF 文件名在 `Content-Disposition` 中导致 Nginx 502 / 断连接的问题，改成 ASCII fallback + UTF-8 `filename*`。
+  - 排查 `c.gb688.cn` 上游不可达：
+    - 在服务器上确认 DNS、路由、TCP 80 三次握手正常。
+    - 用 tcpdump 确认服务器发送 HTTP 请求后，对端 ACK 后直接 FIN，不返回任何 HTTP 响应头或响应体。
+    - 说明不是简单 DNS / 防火墙 / 端口不通，而更像对方应用、WAF、机房网段策略或当前云服务器出口被静默丢弃。
+    - 明确用户本机开 VPN 不会自动改变服务器出口；若要恢复国标 PDF 下载，需要代理、可达下载节点或分离下载服务。
+  - 改进网页体验：
+    - 把目标表名从 `input + datalist` 改成明确的 `select + 新表名输入框`，去掉乱码 placeholder 和重复控件。
+    - 增加搜索预览勾选表格，默认全选，支持全选 / 全不选 / 单条勾选，继续抓取只提交勾选项。
+    - 增加“下载全部 PDF”按钮，逐个触发当前任务中带 `pdf_download_url` 的 PDF 下载。
+  - 修复 `/crawler/` 静态资源 404：
+    - 发现服务器上 `web/dist/index.html` 引用的是 `/assets/...`，而页面实际挂在 `/crawler/`，所以浏览器请求根路径 `/assets/*.js` / `/assets/*.css` 返回 404。
+    - 在服务器按 `VITE_APP_BASE_PATH=/crawler/` 与 `VITE_API_BASE_PATH=/crawler/api` 重新构建前端。
+    - 发现服务器专用 `Dockerfile.server` 只复制宿主机已有 `web/dist`，不会自行构建前端，因此后续发布如果忘记先构建会复发。
+    - 将 `Dockerfile.server` 和 `docker-compose.server.override.yml` 正式纳入国标爬虫仓库。
+    - 由于服务器拉取 `node:22-bookworm-slim` 镜像超时，最终采用服务器发布脚本 `scripts/deploy_server_prod.sh`：先在宿主机用已有 Node 构建 `web/dist`，再用 `sudo docker compose ... up -d --build` 重建生产容器。
+  - 修复 URL 批量抓取展示：
+    - 对用户粘贴的两个 URL 任务 `be2ddcf6-d5e2-4a24-aca6-54ae72971086` 做结果回查。
+    - 确认元数据实际上已在 `meta_payload` 中解析出来，但任务表 `crawl_task_items.code/name` 仍保留提交 URL 时的空值，导致页面显示 `未知编号` 或 `-`。
+    - 修改 `app/task_store.py`、`app/pipeline.py`、`app/worker_service.py`，让任务完成时将解析出的 `code/name/keyword` 同步回任务明细，并让结果接口对旧任务从 `meta_payload` 兜底显示字段。
+    - 修复国标页面“查看文本”入口识别，避免误点页面目录区域导致 `element timeout`。
+    - 增加“当前标准”卡片名称抽取，避免把 `目录` 当成标准名称。
+    - 对旧任务做一次显示字段回填，使原任务刷新后能显示 `GB/Z 177.9-2026 人工智能终端智能化分级 第9部分：耳机` 和 `GB/T 8491-2026 高硅耐蚀铸铁件`。
+  - 本次共享记忆维护：
+    - 重新读取 `D:\work\Project\ragAI知识库 (2)\ragAI知识库\docs\memory_share.md`。
+    - 默认 PowerShell 输出仍出现乱码，随后显式用 UTF-8 读取，确认文件本体为 UTF-8，乱码是终端显示编码问题。
+    - 核对国标爬虫仓库当前分支、远端、最近提交与 GeoAI 共享记忆文件当前 Git 状态。
+    - 在顶部“当前项目状态”新增国标爬虫 / std-worker 的当前状态。
+    - 在“工作记录”末尾追加本条完整记录，不删除旧记录、不改写其他窗口历史。
+- 验证结果：
+  - `geoai-server-ssh` 曾验证可连接 `8.156.85.7`，远端用户为 `codex_user`，无密码 sudo 可用。
+  - 国标爬虫生产部署多次验证过 `std-worker-prod` 为 `healthy`，`http://127.0.0.1:8765/health` 返回 `{"status": "ok"}`。
+  - `/crawler/` Basic Auth 验证过：未认证返回 401，使用用户指定账号密码返回 200。
+  - `/crawler/` 静态资源 404 修复后验证过：`/crawler/` 返回 200，`/crawler/assets/index-ciRrLq98.js` 返回 200，根路径 `/assets/index-ciRrLq98.js` 返回 404，说明资源路径已走 `/crawler/`。
+  - 失败不写库回归验证过：
+    - 纯失败国标任务写入测试表行数为 0。
+    - 纯成功样例任务写入测试表行数为 1。
+    - 混合任务只写成功项，失败行标和失败国标不写业务表。
+  - `c.gb688.cn` 上游不可达已通过服务器 curl / Chrome / tcpdump 交叉确认，当前证据显示是服务器出口到上游的 HTTP 请求被对端静默断开。
+  - URL 批量抓取复测验证过：
+    - `GB/T 8491-2026` 当前能显示名称 `高硅耐蚀铸铁件`。
+    - 无 `openpdf` 的页面现在会清晰失败为 `view text button not found: //*[contains(concat(' ', normalize-space(@class), ' '), ' openpdf ')]`。
+  - 国标爬虫当前本地 Git 事实：
+    - 当前分支：`codex/scrapling-parser-pilot`
+    - 当前头部：`f59389b`
+    - 当前跟踪远端：`origin/codex/scrapling-parser-pilot`
+    - `origin/codex/web-console-worker` 当前为 `116cf48`
+    - 本地 `codex/web-console-worker` 仍为 `73bd9db`，落后远端 3 个提交
+  - GeoAI 仓库当前共享记忆文件仍未纳入版本控制：`docs/memory_share.md` 在 `git status` 中显示为未跟踪文件。
+- 遇到的问题 / 阻塞：
+  - 源 SSH 私钥存在 ACL 限制，直接读取会被拒绝；已通过缓存 ASCII 路径私钥降低重复阻塞。
+  - PowerShell 容易把复杂远端 shell 内容拆坏，尤其是管道、引号、SQL、heredoc 和 Python 片段；已通过 script mode 和 skill 文档固化规避方式。
+  - 服务器 Docker / Debian / Docker Hub 网络不稳定，曾出现 Debian 包下载慢、Docker Hub 拉 `node` 镜像超时等问题。
+  - 宿主机 MySQL 只监听 `127.0.0.1:3306`，导致标准 bridge 网络下容器无法直连，当前靠 `host network` 维持可用。
+  - `c.gb688.cn` 是当前最关键外部阻塞，代码层面只能清晰失败和避免污染数据，不能从应用层直接修复上游网络不可达。
+  - 服务器构建与部署存在本地特殊性：`Dockerfile.server`、`docker-compose.server.override.yml` 和 `scripts/deploy_server_prod.sh` 是当前生产发布的真实路径，不能只看默认 `docker-compose.yml`。
+  - `docs/memory_share.md` 默认终端显示乱码，后续维护必须显式按 UTF-8 读写。
+- 关键决策：
+  - 不继续开放裸 `8765` 公网端口；需要公网访问网页时走 Nginx 的 `/crawler/` 路径，并叠加 Basic Auth。
+  - 生产继续保持本机受控入口，网站 AI 如果与 worker 同机，优先调用 `127.0.0.1:8765` 或 Nginx 内部路径；未来跨机调用时再补 API Token / IP 白名单等应用层鉴权。
+  - 不继续把爬虫写入 GeoAI 历史表 `geoai_metadata`，而是使用独立业务表 `gb_standards`。
+  - 失败条目完全不写 `gb_standards`，只保留任务明细、日志、失败 Excel 和 debug 文件。
+  - 对 `c.gb688.cn` 不在本轮做自动代理绕过，先把程序收敛为“严格失败 + 清晰提示”。
+  - 对 `/crawler/` 前端发布，采用仓库中的服务器脚本 `scripts/deploy_server_prod.sh`，避免再次因 Vite base path 或 Docker Hub Node 镜像问题引发资源 404 或构建阻塞。
+- 后续交接：
+  - 如果后续要继续处理国标 PDF 下载成功率，优先做网络层验证：接入稳定 HTTP/SOCKS 代理、准备另一台可达 `c.gb688.cn` 的下载节点，或拆出专用下载服务。
+  - 如果后续要长期标准化部署，应评估把 MySQL 从宿主机 localhost 绑定迁到受控内网或容器网络，逐步摆脱 `host network`。
+  - 如果后续要合并国标爬虫分支，需要注意当前 `codex/scrapling-parser-pilot` 已在 `116cf48` 之后继续包含 `9d6e01d`、`bb89071`、`f59389b`，但本次共享记忆维护没有重新验证这些新提交是否已经部署到生产。
+  - 如果后续要检查 `/crawler/` 页面资源问题，先核对 `web/dist/index.html` 中 js/css 是否以 `/crawler/assets/` 开头，再核对 Nginx 反代和 Basic Auth。
+  - 如果后续窗口继续维护共享记忆，必须先 UTF-8 读取本文件，再更新顶部状态并追加记录；如果没有客户端窗口名，继续显式写“当前窗口名未提供”。
+
+### 2026-06-03 GeoAI 登录页动效、README 截图、Git 收口、部署与共享记忆维护
+- 时间：2026-06-03 23:54:41 +08:00
+- 对话窗口名：当前窗口名未提供
+- 窗口主题：GeoAI 前端动效升级、登录页 GSAP 修复、README 截图预览、服务器部署、分支合并清理与共享记忆维护
+- 用户需求 / 问题：
+  - 用户先要求检查 Git 工作区，并基于“左侧地球 / 右侧 AI 问答框”主页面升级前端动效。
+  - 用户选择“浮层宽度切换”方案：展开 Chat 面板时加宽对话框，同时缩小左侧地图可视区域，并让 2D / 3D 地图视角向中国右侧偏移，保证中国或选中省份落在未被面板遮挡的安全区域内。
+  - 用户要求启动后端服务，并反馈本地底图报 `fail to load resources net error connection refused`，希望把 expanded Chat 面板再加宽约 100 像素。
+  - 用户随后明确计划：把 `frontend/src/lib/mapViewport.ts` 中 `EXPANDED_CHAT_WIDTH` 改为 `780`，更新 `frontend/tests/mapViewport.test.ts`，并在 `frontend/vite.config.ts` 增加 `/tianditu` dev proxy。
+  - 用户要求使用 `geo-server ssh skill` 把更新同步到远端服务器。
+  - 用户要求升级登录页前端效果，使用新装的 `gsap` skill，目标是“克制高级”：保留登录页布局、玻璃质感、橙色品牌光和网格背景，只增强环境动效与鼠标微交互。
+  - 用户在浏览器反馈登录卡片晃动幅度需要更大，背景两束橙色光源中左上角也需要动效，斜射光源没有移动到右侧界面尽头就突兀消失。
+  - 用户后续要求去掉从左到右移动的斜射光源，让左上和右下两个圆形光源绕界面做椭圆转动，并用数学函数控制一会快、一会慢的高级丝滑速率。
+  - 用户反馈控制台 GSAP `autoAlpha not eligible for reset` 警告，以及品牌图标呼吸灯循环交界处有右侧拉扯 / 撕裂感，要求修复。
+  - 用户发现屏幕中间多出一个方形光源，要求回顾修改并执行修复。
+  - 用户要求登录卡片 tilt 幅度再增强 1.5 倍，且明确“不使用 superpower skill”。
+  - 用户要求 Git 收口并推送远端，随后要求部署到服务器。
+  - 用户补充已修复详情抽屉标准标题亮色主题问题，要求该改动也 Git 收口并完成服务器部署。
+  - 用户要求优化 README，把 `D:\work\Project\ragAI知识库 (2)\ragAI知识库\docs` 下 3 张截图加入 README，让访客直观看到登录页、2D 地图工作台和 3D 地球工作台。
+  - 用户要求把 README 截图改动同步到 Git 远端仓库。
+  - 用户要求“将 5 个分支都并入主线”，随后确认合并完成后删除其他分支，但保留“前端动效升级”分支。
+  - 用户最后要求执行共享记忆维护：重新读取 `docs/memory_share.md`，更新顶部“当前项目状态”，在“工作记录”末尾追加本窗口完整记录，记录必须包含时间和对话窗口名，不删除旧记录，不改写其他窗口历史，除非修正事实错误。
+- 我做了什么：
+  - 检查 Git 工作区和分支状态，基于现有前端结构定位带 AI 问答框的主页面、地图视角计算与 Chat 面板宽度逻辑。
+  - 实现 Chat expanded 宽度从 `680px` 调整为 `780px`，并让地图安全视区 padding 继续复用 `getChatPanelWidth()`，使 2D / 3D 地图视角随新面板宽度自动偏移。
+  - 在 Vite 开发配置中增加 `/tianditu` dev proxy，将同源 `/tianditu/DataServer?...` 请求转发到 `https://t0.tianditu.gov.cn/DataServer?...`，修复本地开发底图请求未被代理的问题。
+  - 更新并运行地图视口相关静态测试，确认 expanded 宽度和 padding 计算已跟随 `780px`。
+  - 启动本地前后端服务，供浏览器访问 `http://localhost:3000/login` 与主页面测试。
+  - 使用 `geoai-server-ssh` 工作流把前端改动同步到远端服务器，并完成线上部署与 smoke test。
+  - 为登录页新增 `gsap` 与 `@gsap/react` 依赖，按 `useGSAP`、scoped refs、自动 cleanup 的方式实现登录页动画。
+  - 登录页动效包括：标题 / 说明 / 功能条 / 登录卡片 stagger 入场，网格背景慢速漂移，品牌图标 halo 脉冲，功能条错峰浮动，鼠标驱动卡片 tilt / parallax、背景高光和按钮箭头反馈。
+  - 为保护玻璃磨砂质感，动画只作用在外层 wrapper 或装饰层的 `transform` / `opacity`，不直接动画 `.glass` 或 `backdrop-filter`。
+  - 使用 `gsap.matchMedia()` 支持响应式和 `prefers-reduced-motion`；reduced motion 下禁用循环和鼠标跟随，小屏下限制卡片 tilt 强度。
+  - 修复斜射光源中途消失问题后，又按用户最新要求彻底删除斜射扫描光。
+  - 将左上、右下两个圆形橙色环境光改为基于 `gsap.ticker`、`Math.sin`、`Math.cos` 的椭圆轨道运动；通过非匀速角度函数形成自然快慢变化，并在 cleanup 中移除 ticker。
+  - 修复 GSAP `autoAlpha not eligible for reset` 警告：鼠标高光 `quickTo` 从 `autoAlpha` 改为 `opacity`，不再依赖 `visibility` reset。
+  - 修复品牌图标呼吸灯撕裂：停止直接缩放品牌图标容器，新增 `data-login-brand-halo-ring` 独立光晕层，只动画该层 `opacity` 和 `scale`，图标容器保持固定尺寸。
+  - 回顾并修复屏幕中间方形光源问题：确认与环境光容器 / 鼠标高光层位置和尺寸处理有关，调整后避免出现居中的矩形光块。
+  - 按用户要求将登录卡片 tilt 幅度增强 1.5 倍。
+  - 新增并维护 `frontend/tests/loginMotion.test.ts`，用静态测试锁定登录页动效结构、扫描光删除、椭圆轨道、ticker cleanup、`opacity` quickTo、品牌 halo ring 和 reduced-motion 保护。
+  - 修复详情抽屉标准标题亮色主题：将硬编码 `text-[#f0f0f0]` 改为主题色 `text-on-background/90`，并新增 `frontend/tests/documentDetailTheme.test.ts` 防回归。
+  - 多次运行前端验证命令，包括 `npx tsx tests/loginMotion.test.ts`、`npx tsx tests/mapViewport.test.ts`、`npx tsx tests/documentDetailTheme.test.ts`、`npm run lint`、`npm run build`。
+  - Git 收口并推送：
+    - `6dacec0 feat(frontend): upgrade login page motion`
+    - `6eb9b70 fix(frontend): use theme color for document detail title`
+    - `39c0da6 docs: add README product screenshots`
+  - 部署到服务器：
+    - 部署登录页动效与详情标题修复，线上 `build-meta.json` 当时核验到 `6eb9b70`。
+    - 由于前端构建依赖要求，服务器 Node 从 v18.19.1 升级到 v22.22.2。
+    - README 截图属于文档资产变更，已推送 GitHub，但没有重新部署服务器。
+  - README 截图优化：
+    - 新建 `docs/screenshots/`。
+    - 将 3 张截图整理为英文路径：`login-light.png`、`workspace-2d-map.png`、`workspace-3d-globe.png`。
+    - 在 README 的 Live Demo 后新增“产品预览 / Screenshots”小节，依次展示登录页、2D 地图工作台、3D 地球工作台。
+  - 分支合并与清理：
+    - 确认 `feature/frontend-animation-upgrade` 已通过 `e2e8dc5` 合并到 `main`。
+    - 确认 `git branch --all --no-merged main` 为空。
+    - 删除已合并且不需要保留的本地分支：`codex/project-metadata-encoding-guard`、`docs/bilingual-readme-polish`、`feat/public-demo-visitor-quota`。
+    - 删除对应远端分支：`origin/codex/project-metadata-encoding-guard`、`origin/docs/bilingual-readme-polish`、`origin/feat/public-demo-visitor-quota`。
+    - 按用户要求保留 `feature/frontend-animation-upgrade` 与 `origin/feature/frontend-animation-upgrade`。
+    - `git fetch --all --prune` 后发现本地 `main` 落后 `origin/main` 1 个提交，已用 `git pull --ff-only` 同步到 `8f3eb44`。
+  - 本次共享记忆维护：
+    - 重新读取 `D:\work\Project\ragAI知识库 (2)\ragAI知识库\docs\memory_share.md`。
+    - 发现默认终端输出会乱码，改用显式 UTF-8 读取。
+    - 更新顶部“当前项目状态”中的本窗口最新状态。
+    - 仅修正顶部当前状态区中关于 `feature/frontend-animation-upgrade` “未审查 / 未清理”的过时事实，未改写底部旧窗口历史。
+    - 在“工作记录”末尾追加本条完整记录。
+- 验证结果：
+  - 登录页动效相关验证曾通过：`npx tsx tests/loginMotion.test.ts`、`npm run lint`、`npm run build`。
+  - 地图视口相关验证曾通过：`npx tsx tests/mapViewport.test.ts`。
+  - 文档详情标题主题验证曾通过：`npx tsx tests/documentDetailTheme.test.ts`。
+  - `npm run build` 曾只有既有 chunk 体积 warning，没有构建失败。
+  - 部署登录页动效与详情标题修复后，线上曾验证：`https://8.156.85.7/build-meta.json` 对应提交 `6eb9b70`，健康检查 OK，`/login` 返回 200。
+  - 分支清理后验证：
+    - 本地分支仅剩 `main` 与 `feature/frontend-animation-upgrade`。
+    - 远端分支仅剩 `origin/main` 与 `origin/feature/frontend-animation-upgrade`，另有 `origin/HEAD -> origin/main`。
+    - `git branch --all --no-merged main` 为空。
+    - 当前 `git status --short --branch` 显示 `main` 与 `origin/main` 同步；共享记忆文件本身仍是未跟踪文件。
+- 遇到的问题 / 阻塞：
+  - 本地地图底图 `connection refused` 的直接原因按当前证据判断是 Vite 缺少 `/tianditu` dev proxy，不是地图动效改动导致。
+  - 对登录页玻璃质感的保护需要避免直接动画 `.glass` / `backdrop-filter`，否则可能破坏磨砂效果；本窗口改为只动画外层 wrapper 或独立装饰层。
+  - GSAP `autoAlpha` 在 `quickTo` reset 场景下出现警告，改用 `opacity` 后规避。
+  - 品牌图标容器直接缩放会在循环交界处产生边缘拉扯 / 撕裂感，改用内部独立光晕层承载呼吸灯。
+  - 环境光层如果锚点、尺寸或裁切处理不当，会在屏幕中部出现矩形 / 方形光块；后续继续改动环境光时必须保持圆形渐变层与外层定位分离。
+  - 服务器原 Node v18.19.1 不满足当前前端构建依赖要求，已升级到 v22.22.2。
+  - 共享记忆文件默认 PowerShell 输出容易乱码；后续维护必须显式 UTF-8 读写。
+- 关键决策：
+  - Chat expanded 宽度采用用户选择的 `+100px` 方案，固定为 `780px`。
+  - 地图偏移不写死单一位置，继续复用安全视区和面板宽度计算，让 2D / 3D 中国全局与省份选中视角按当前面板状态偏移。
+  - 登录页动效走“克制高级”路线，不新增独立插画或 3D 场景，不改登录逻辑、访客体验逻辑、接口和文案。
+  - 删除斜射扫描光，改为两个圆形橙色环境光沿界面外缘椭圆轨道运行。
+  - README 截图路径使用英文文件名，避免中文、空格和时间戳影响 Markdown 链接可读性。
+  - 分支治理上，已合并分支可以删除，但 `feature/frontend-animation-upgrade` 按用户明确要求保留。
+- 后续交接：
+  - 如果后续要声明线上当前版本，必须重新核验 `https://8.156.85.7/build-meta.json`、`/health`、`/login` 和实际静态资源 hash；不能只沿用本记录中的部署结论。
+  - 如果后续继续改登录页环境光，优先使用 transform / opacity，避免动画 `filter`、`backdrop-filter`、布局尺寸和玻璃卡片本体。
+  - 如果后续要清理最后保留的 `feature/frontend-animation-upgrade`，先再次确认用户不再需要该分支，因为当前它已并入 `main`。
+  - 如果后续要把共享记忆纳入版本控制，需要先确认用户意愿；当前 `docs/memory_share.md` 仍是未跟踪文件。
+
+### 2026-06-03 公开访客演示、GitHub README 收口与共享记忆维护补录
+- 时间：2026-06-03 23:57:11 +08:00
+- 对话窗口名：当前窗口名未提供
+- 窗口主题：GeoRAG 公开访客演示限额、远端部署、GitHub / README 演示入口收口、README 双语整理与共享记忆维护。
+- 用户主要诉求：
+  - 用户先要求检查项目，并围绕“项目已部署到服务器，准备向简历面试官开放展示，但 AI 对话会消耗额度”讨论下一步方案。
+  - 用户明确不确定是否应该做开放注册登录系统，还是免费开放并设置额度限制。
+  - 随后用户给出实施计划，要求实现“公开演示访客模式与 AI 限额控制方案”。
+  - 后续用户要求在远端部署查看效果，确认 Git 是否干净并收口。
+  - 用户又要求同步到 GitHub，并把线上演示入口加入 GitHub 项目 README 和项目介绍中，方便面试官从 GitHub 项目页跳转到演示站。
+  - 用户认为 README 原来的中英文组织方式割裂，要求整体改成中文优先、英文紧跟的双语结构。
+  - 本次最终要求执行共享记忆维护：重新读取本文件，更新顶部“当前项目状态”，并在“工作记录”末尾追加本窗口完整记录，记录必须包含时间和对话窗口名。
+- 方案决策：
+  - 公开展示采用“访客演示限额”方案，不做开放注册系统。
+  - 保留现有管理员登录；登录页新增 `访客体验` 入口。
+  - 访客无需注册即可进入主工作台，但 AI 生成能力受额度限制。
+  - 单访客 AI 额度记录为 10 次 / 天，全站访客 AI 总额度记录为 300 次 / 天，并保留 IP 维度限制。
+  - 额度用完后继续允许检索、引用、地图和文档展示等低成本功能，AI 生成跳过并显示联系提示。
+  - Redis 不可用时优先保证成本安全：访客 AI 禁用，管理员 AI 不受影响。
+- 已完成的后端改动：
+  - 扩展认证模型，支持 `admin` 与 `visitor` 两类角色。
+  - 保留管理员 `POST /api/auth/login` 登录逻辑。
+  - 新增 `POST /api/auth/demo`，创建访客演示会话并写入 HttpOnly Cookie。
+  - `/api/auth/me` 返回当前用户角色，并在访客模式下返回 AI 额度状态。
+  - 新增或整理认证依赖：`require_authenticated_user` 允许 admin / visitor，`require_authenticated_admin` 继续用于管理接口。
+  - 新增 `DemoQuotaService`，使用 Redis 记录每日访客、IP 和全站 AI 计数。
+  - 访客身份使用后端生成的 `visitor_id`；IP 使用 `SECRET_KEY` 做 HMAC 指纹，不保存明文 IP。
+  - AI 额度按 `DEMO_QUOTA_TIMEZONE=Asia/Shanghai` 的自然日重置。
+  - 访客请求 AI 生成时先扣减额度；请求失败也计入额度，避免通过失败请求绕过成本控制。
+  - Redis 不可用时，访客检索仍可用，但 AI 生成降级为额度受限 / 联系提示；管理员不受访客额度影响。
+  - `/api/search/query` 对 admin 和 visitor 开放；visitor 请求 `use_generation=true` 时先检查额度，有额度才执行 AI 生成。
+  - 访客额度耗尽时，搜索仍返回检索结果，`generated_answer` 为 `null`，并返回 quota / contact 状态。
+  - 管理类能力仍限制 admin 或 system API key，例如上传、删除、重建索引、系统管理和缓存清理。
+- 已完成的前端改动：
+  - 登录页保留管理员账号密码表单，并新增 `访客体验` 按钮。
+  - 点击 `访客体验` 后调用 `/api/auth/demo`，成功后进入主工作台。
+  - Auth / API 层支持 visitor session 与 quota 状态。
+  - 顶部用户区域显示访客模式与剩余 AI 次数。
+  - 访客额度用完后，聊天区显示可配置联系提示；输入仍可发起检索。
+  - 检索结果、引用、地图和文档展示能力对访客保持可用。
+  - 访客隐藏或禁用管理型入口，同时保留与后续 `/crawler/` 相关的导航兼容。
+- 已完成的测试与验证：
+  - 后端测试曾验证管理员登录仍返回 `role=admin`。
+  - 后端测试曾验证 demo 登录创建 `role=visitor` session。
+  - 后端测试曾验证 visitor 可以调用 search。
+  - 后端测试曾验证 visitor AI 请求消耗额度，超出单访客或全站额度后返回 search-only 响应。
+  - 后端测试曾验证 Redis 不可用时访客 AI 禁用但管理员 AI 不受影响。
+  - 后端测试曾验证管理员请求不消耗访客额度。
+  - 已记录的验证命令包括后端 pytest 通过、`npm run lint` 通过、`npm run build` 通过、`git diff --check` 通过，以及后端 import smoke 通过。
+  - 前端构建期间曾出现 Vite 大 chunk warning，属于构建提示，不是阻塞错误。
+- 已完成的服务器部署：
+  - 使用既有 GeoAI SSH 工作流连接服务器 `8.156.85.7`。
+  - 已记录的服务器部署目录为 `/srv/geoai/app`。
+  - 远端实际运行方式确认为宿主机 Nginx 静态托管 `frontend/dist`，后端由 systemd `geoai-backend.service` 运行在 `127.0.0.1:8000`，不是 Docker Compose 生产运行。
+  - 曾将服务器代码切到 `feat/public-demo-visitor-quota` 上对应提交，并在服务器构建前端、重启后端、reload Nginx。
+  - 曾整理旧前端备份目录，把旧 `frontend/dist.backup-20260511-183801` 移到 `/srv/geoai/backups/`。
+  - 曾配置 `Backend/.env` 中的访客演示环境变量，联系提示文本为中文：`演示额度已用完，请联系项目作者获取更多体验额度。`
+  - 已记录的线上 health 结果显示 postgres / mysql / redis 连接正常。
+  - 已记录的线上 smoke：`POST /api/auth/demo` 返回 visitor quota 10 / 10，`/api/auth/me` 能识别 visitor，visitor search 在 `use_generation=false` 时返回检索结果且不生成回答，首页能加载新前端 bundle。
+- 已完成的 GitHub 与 README 收口：
+  - 曾提交并推送功能分支 `feat/public-demo-visitor-quota`。
+  - 曾将功能分支合入 `main`，合并提交记录为 `0c18388`。
+  - 曾追加 README 在线演示入口，提交记录为 `98213c7 docs: add live demo link to readme`，并把 GitHub Homepage 设置为 `https://8.156.85.7/`。
+  - 用户反馈 README 中英文结构割裂后，曾创建 `docs/bilingual-readme-polish` 分支，整体重写根 `README.md` 为中文优先、英文紧跟的双语结构。
+  - README 双语整理提交记录为 `ad0003e docs: polish bilingual readme`，随后合并并推送到 `main`。
+  - README 双语整理阶段曾验证 UTF-8 marker、`git diff --check`、GitHub API README marker 和 GitHub Homepage。
+  - 本次共享记忆维护重新核对时，当前 `main` 已继续前进到 `8f3eb44`，最近提交包括 README 更新、合并 `feature/frontend-animation-upgrade`、README 产品截图提交。
+  - 本次维护确认 GitHub 默认分支仍为 `main`，Homepage 仍为 `https://8.156.85.7/`。
+- 本次共享记忆维护实际动作：
+  - 重新读取 `D:\work\Project\ragAI知识库 (2)\ragAI知识库\docs\memory_share.md`。
+  - 默认 PowerShell 输出出现乱码后，改用显式 UTF-8 读取，确认文件内容可正常解码。
+  - 核对当前 Git 状态、最近提交和 GitHub Homepage。
+  - 在顶部“当前项目状态”新增“公开访客演示、GitHub README 收口与共享记忆维护（本次补录）”状态块。
+  - 将本条记录追加到“工作记录”真正末尾；首次写入位置误插到中间，已在本次维护中移动到末尾。
+  - 没有删除旧记录，没有改写其他窗口历史。
+- 当前事实快照：
+  - 当前本地分支：`main`
+  - 当前跟踪远端：`origin/main`
+  - 当前本地 / 远端头部：`8f3eb44`（`Update README.md`）
+  - 当前 GitHub Homepage：`https://8.156.85.7/`
+  - 当前共享记忆文件在 Git 状态中仍显示为未跟踪：`docs/memory_share.md`
+- 后续交接：
+  - 如果后续要证明线上“此刻”健康或线上运行版本，应重新执行服务器 smoke test，不要只依据本记录中的历史部署结论。
+  - 如果后续继续打磨 GitHub 项目页，应优先清理 README 中可能存在的重复文案，并确认截图展示顺序与简历投递场景匹配。
+  - 如果后续继续维护共享记忆，必须继续先 UTF-8 读取本文件，再更新顶部状态并追加记录；如果窗口名仍不可见，继续写明“当前窗口名未提供”。

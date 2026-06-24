@@ -1354,8 +1354,19 @@ class SearchService:
         if not history:
             return []
 
-        # 只保留最近的 max_messages 条消息
-        truncated = history[-max_messages:]
+        # 只保留最近的 max_messages 条消息，并转换为 LLM client 需要的普通 dict。
+        truncated = []
+        for message in history[-max_messages:]:
+            if hasattr(message, "model_dump"):
+                payload = message.model_dump()
+            else:
+                payload = dict(message)
+            truncated.append(
+                {
+                    "role": str(payload.get("role", "")),
+                    "content": str(payload.get("content", "")),
+                }
+            )
 
         original_len = len(history)
         truncated_len = len(truncated)
