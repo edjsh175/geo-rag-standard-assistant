@@ -58,6 +58,7 @@ class Settings(BaseSettings):
 
     UPLOAD_DIR: Path = Path("uploads")
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024
+    DOCUMENT_UPLOAD_ENABLED: bool = False
     CELERY_BROKER_URL: Optional[str] = None
     CELERY_RESULT_BACKEND: Optional[str] = None
     DOCUMENT_CHUNK_SIZE: int = 500

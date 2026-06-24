@@ -42,7 +42,7 @@ http://SERVER_PUBLIC_IP
 - Redis：必需，用于访客配额；启用文档上传索引闭环时也作为 Celery broker/result backend。
 - MinIO：启用文档上传、下载、索引闭环时必需，用于保存原始上传文件。只做标准库检索演示时可暂不启用。
 
-`docker-compose.yml` 中的 PostgreSQL 服务会从 [docker/postgis-pgvector/Dockerfile](../docker/postgis-pgvector/Dockerfile) 构建镜像，确保同一个 PostgreSQL 16 实例同时具备 PostGIS 和 pgvector。
+非 Docker 部署时，请在宿主机 PostgreSQL 实例中直接安装并启用 `vector` 和 `postgis` 扩展。不要为了本部署路径去构建项目内的 Docker 镜像。
 
 ## 安装基础软件
 
@@ -180,6 +180,7 @@ PUBLIC_API_BASE_URL=http://SERVER_PUBLIC_IP
 CORS_ORIGINS=["http://SERVER_PUBLIC_IP"]
 
 # 启用文档上传索引闭环时配置
+DOCUMENT_UPLOAD_ENABLED=False
 MINIO_URL=127.0.0.1:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=replace_with_strong_password

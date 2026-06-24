@@ -34,8 +34,22 @@ from app.services.document_service import DocumentService
 
 router = APIRouter()
 
+DOCUMENT_UPLOAD_DISABLED_DETAIL = (
+    "Document upload and object-storage workflows are disabled. "
+    "Set DOCUMENT_UPLOAD_ENABLED=True and configure MinIO/Celery before using this endpoint."
+)
+
+
+def require_document_upload_enabled() -> None:
+    if not settings.DOCUMENT_UPLOAD_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=DOCUMENT_UPLOAD_DISABLED_DETAIL,
+        )
+
 
 def get_document_service() -> DocumentService:
+    require_document_upload_enabled()
     return DocumentService()
 
 
@@ -308,7 +322,6 @@ async def download_document_object(
 @router.get("/{doc_id}/download")
 async def download_document_by_id(
     doc_id: str,
-    document_service: DocumentService = Depends(get_document_service),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
     contract_service: DocumentContractService = Depends(DocumentContractService),
     repository: DocumentRepository = Depends(get_document_repository),
@@ -317,7 +330,9 @@ async def download_document_by_id(
     if _is_uuid(doc_id):
         uploaded_target = await repository.get_download_target(doc_id)
         if uploaded_target:
+            require_document_upload_enabled()
             try:
+                document_service = get_document_service()
                 download_data = document_service.get_download_stream(uploaded_target["object_name"])
                 return StreamingResponse(
                     download_data["stream"].stream(32 * 1024),
@@ -344,7 +359,9 @@ async def download_document_by_id(
             detail="No downloadable original file is available for this document.",
         )
 
+    require_document_upload_enabled()
     try:
+        document_service = get_document_service()
         download_data = document_service.get_download_stream(download_target["object_name"])
         return StreamingResponse(
             download_data["stream"].stream(32 * 1024),
@@ -439,6 +456,7 @@ async def reindex_document(
     actor=Depends(require_admin_or_system_api_key),
 ):
     if _is_uuid(doc_id):
+        require_document_upload_enabled()
         job_id = await lifecycle_service.queue_reindex_job(doc_id, str(actor))
         if job_id:
             return {
@@ -475,6 +493,8 @@ async def batch_document_operation(
             continue
 
         try:
+            if request.operation != "delete":
+                require_document_upload_enabled()
             if request.operation == "delete":
                 deleted = await repository.soft_delete(doc_id, str(actor))
                 results.append(
@@ -587,6 +607,7 @@ async def update_document_info(
             if not updated:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
         if update_request.reindex:
+            require_document_upload_enabled()
             await lifecycle_service.queue_reindex_job(doc_id, str(actor))
         uploaded_detail = await repository.get_uploaded_document_detail(doc_id)
         if not uploaded_detail:

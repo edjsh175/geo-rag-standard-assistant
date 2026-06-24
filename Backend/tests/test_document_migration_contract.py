@@ -20,9 +20,14 @@ def test_uploaded_document_vector_search_matches_halfvec_index_expression() -> N
     assert "CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))" in source
 
 
-def test_compose_postgis_image_installs_pgvector() -> None:
-    compose = (ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8")
-    dockerfile = (ROOT.parent / "docker" / "postgis-pgvector" / "Dockerfile").read_text(encoding="utf-8")
+def test_non_docker_docs_are_the_primary_runtime_contract() -> None:
+    readme = (ROOT.parent / "README.md").read_text(encoding="utf-8")
+    deploy = (ROOT.parent / "docs" / "DEPLOY.md").read_text(encoding="utf-8")
+    root_env_example = (ROOT.parent / ".env.example").read_text(encoding="utf-8")
 
-    assert "dockerfile: docker/postgis-pgvector/Dockerfile" in compose
-    assert "postgresql-16-pgvector" in dockerfile
+    assert "### Non-Docker local development" in readme
+    assert "### Optional Docker Compose" in readme
+    assert readme.index("### Non-Docker local development") < readme.index("### Optional Docker Compose")
+    assert "Docker Compose is optional" in root_env_example.splitlines()[0]
+    assert "docker-compose.yml 中的 PostgreSQL 服务会从" not in deploy
+    assert "Docker 对当前项目是可选项" in deploy
