@@ -39,7 +39,7 @@ GeoAI Client
 - 保存当前未提交成果的可恢复基线，但不得把无关用户改动重写或丢弃。
 - 冻结 `agentic rag` commit `2eab8d5c479ba32c27b7c929a35c273edf0a2f64` 与 `gis-agent-core` commit `ee3d30667fbd0b970633d32265f97c6d147c35c1`。
 - 记录两个上游仓库均由 `edjsh175` 控制并授权选择性迁入 GeoAI。
-- 建立 `docs/upstream-sources/agent-native-v3.json` source manifest；每个迁入文件必须可追溯到来源 commit，并记录其依赖闭包。
+- 建立 `docs/upstream-sources/agent-native-v3.toml` source manifest；Python 3.12 使用标准库 `tomllib` 读取，无需增加解析依赖。每个迁入文件必须可追溯到来源 commit，并记录其依赖闭包。
 
 ### 3.2 G1：Agent Runtime 迁入与 GeoAI Adapter
 
