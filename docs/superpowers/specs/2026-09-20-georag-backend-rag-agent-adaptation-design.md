@@ -1,7 +1,7 @@
 # GeoRAG 后端 RAG / Agent 内核适配升级设计
 
 > 日期：2026-09-20  
-> 状态：设计已确认，待实施计划  
+> 状态：代码实施与自动化验收已完成；真实 PostgreSQL + LLM + Frontend E2E 按用户要求暂跳过
 > 目标仓库：`geo-rag-standard-assistant`  
 > 能力来源参考：`rag_cy/rag`  
 

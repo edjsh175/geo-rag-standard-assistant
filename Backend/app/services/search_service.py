@@ -32,7 +32,7 @@ class SearchService:
             self.rag_search_logger = RagSearchLogger()
         return self.rag_search_logger
 
-    def _get_retrieval_adapter(self) -> PostgresRetrievalAdapter:
+    def get_retrieval_port(self) -> PostgresRetrievalAdapter:
         if not hasattr(self, "retrieval_adapter"):
             self.retrieval_adapter = PostgresRetrievalAdapter()
         return self.retrieval_adapter
@@ -90,7 +90,7 @@ class SearchService:
                 spatial_filter=spatial_filter,
                 metadata_filter=metadata_filter,
             )
-            retrieved = await self._get_retrieval_adapter().retrieve(retrieval_query)
+            retrieved = await self.get_retrieval_port().retrieve(retrieval_query)
             final_results = [candidate.source_result for candidate in retrieved.candidates]
 
             # 6. 记录搜索日志
@@ -140,7 +140,7 @@ class SearchService:
 
             # 2. 如果提供了空间查询，进行空间搜索
             if spatial_query:
-                spatial_results = await self._get_retrieval_adapter().spatial_search(
+                spatial_results = await self.get_retrieval_port().spatial_search(
                     spatial_query,
                     top_k,
                 )
@@ -165,7 +165,7 @@ class SearchService:
         doc_id: str,
         top_k: int = 5
     ) -> List[DocumentResult]:
-        return await self._get_retrieval_adapter().find_similar_documents(
+        return await self.get_retrieval_port().find_similar_documents(
             doc_id=doc_id,
             top_k=top_k,
         )

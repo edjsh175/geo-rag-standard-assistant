@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Sequence
+from typing import Any, Literal, Protocol, Sequence
 
 from app.models.search_models import DocumentResult, MetadataFilter, SpatialFilter
 
@@ -75,10 +75,34 @@ class RetrievalCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievalChannelDiagnostic:
+    channel: str
+    state: Literal["succeeded", "unavailable"]
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalDiagnostics:
     exact_count: int = 0
     keyword_count: int = 0
     vector_count: int = 0
+    channels: tuple[RetrievalChannelDiagnostic, ...] = ()
+
+    @property
+    def unavailable_channels(self) -> tuple[str, ...]:
+        return tuple(
+            item.channel for item in self.channels if item.state == "unavailable"
+        )
+
+    @property
+    def is_degraded(self) -> bool:
+        return bool(self.unavailable_channels)
+
+    @property
+    def is_fully_unavailable(self) -> bool:
+        return bool(self.channels) and all(
+            item.state == "unavailable" for item in self.channels
+        )
 
 
 @dataclass(frozen=True, slots=True)

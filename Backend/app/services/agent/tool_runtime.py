@@ -20,6 +20,10 @@ class ResourceFuseExceeded(RuntimeError):
     """Raised when a physical runtime safety limit has been exhausted."""
 
 
+class RetrievalUnavailableError(RuntimeError):
+    """Raised when every retrieval channel attempted for a tool call is unavailable."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolCall:
     tool_call_id: str
@@ -149,6 +153,11 @@ class ToolRuntime:
                 spatial_filter=constraints.spatial_filter,
             )
         )
+        if result.diagnostics.is_fully_unavailable:
+            channels = ", ".join(result.diagnostics.unavailable_channels)
+            raise RetrievalUnavailableError(
+                f"RETRIEVAL_UNAVAILABLE: all attempted channels unavailable ({channels})"
+            )
         admitted = self.evidence_ledger.add_candidates(
             turn_id=turn_id,
             candidates=result.candidates,
@@ -156,13 +165,14 @@ class ToolRuntime:
         return ToolObservation(
             tool_call_id=call.tool_call_id,
             tool_name=call.name,
-            status="ok",
+            status="partial" if result.diagnostics.is_degraded else "ok",
             payload={
                 "evidence_ids": [item.evidence_id for item in admitted],
                 "candidate_count": len(result.candidates),
                 "admitted_count": len(admitted),
                 "embedding_available": result.embedding_available,
                 "diagnostics": result.diagnostics,
+                "unavailable_channels": list(result.diagnostics.unavailable_channels),
             },
         )
 
@@ -227,6 +237,7 @@ class ToolRuntime:
 
 
 __all__ = [
+    "RetrievalUnavailableError",
     "ResourceFuse",
     "ResourceFuseExceeded",
     "RetrievalRequestConstraints",

@@ -8,7 +8,7 @@ def test_markdown_parser_preserves_headings_tables_and_fenced_code(tmp_path) -> 
     path.write_text(
         """# 总则
 
-适用范围。  
+适用范围。
 
 | 编号 | 要求 |
 | --- | --- |

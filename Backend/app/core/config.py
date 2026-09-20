@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     DEEPSEEK_API_KEY: Optional[str] = None
     DEEPSEEK_MODEL: str = "deepseek-chat"
+    LLM_REASONING_MODEL: Optional[str] = None
 
     SIMILARITY_THRESHOLD: float = 0.7
     TOP_K_RESULTS: int = 10

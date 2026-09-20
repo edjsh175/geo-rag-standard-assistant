@@ -58,3 +58,30 @@ async def test_retriever_keeps_exact_and_keyword_when_embedding_fails() -> None:
     assert retrieved.diagnostics.exact_count == 1
     assert retrieved.diagnostics.keyword_count == 1
     assert retrieved.diagnostics.vector_count == 0
+    assert retrieved.diagnostics.is_degraded is True
+    assert retrieved.diagnostics.unavailable_channels == ("vector",)
+
+
+@pytest.mark.asyncio
+async def test_retriever_distinguishes_total_backend_unavailability_from_zero_matches() -> None:
+    async def unavailable_exact(query: str, top_k: int) -> list[DocumentResult]:
+        raise RuntimeError("postgres unavailable")
+
+    async def unavailable_keyword(query: str, top_k: int) -> list[DocumentResult]:
+        raise RuntimeError("postgres unavailable")
+
+    retriever = PostgresRetrievalAdapter()
+    retriever._exact_standard_code_search = unavailable_exact  # type: ignore[method-assign]
+    retriever._keyword_search = unavailable_keyword  # type: ignore[method-assign]
+
+    retrieved = await retriever.retrieve(
+        RetrievalQuery(
+            query_text="规划标准",
+            top_k=10,
+            search_mode="keyword",
+        )
+    )
+
+    assert retrieved.candidates == ()
+    assert retrieved.diagnostics.is_fully_unavailable is True
+    assert retrieved.diagnostics.unavailable_channels == ("exact", "keyword")

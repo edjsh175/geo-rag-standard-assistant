@@ -17,6 +17,7 @@ from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
     RetrievalRequestConstraints,
+    RetrievalUnavailableError,
     ResourceFuse,
     ResourceFuseExceeded,
     ToolExecutionError,
@@ -118,6 +119,13 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
+            self._append_assistant_message(
+                session.events,
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                text=limitation,
+            )
             return AgentRunResult(
                 session_id=session.session_id,
                 turn_id=turn_id,
@@ -145,11 +153,52 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
+            self._append_assistant_message(
+                session.events,
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                text=limitation,
+            )
             return AgentRunResult(
                 session_id=session.session_id,
                 turn_id=turn_id,
                 trace_id=trace_id,
                 publication_state="model_output_invalid",
+                answer=None,
+                clarification=None,
+                limitation=limitation,
+                frozen_evidence=None,
+                review=None,
+                events=tuple(turn_events),
+            )
+
+        def retrieval_unavailable_result() -> AgentRunResult:
+            limitation = "知识检索服务当前不可用，未发布答案。"
+            self._append_event(
+                session.events,
+                turn_events,
+                AgentEvent(
+                    event_type="publication_completed",
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    payload={"state": "retrieval_unavailable"},
+                ),
+                event_listener,
+            )
+            self._append_assistant_message(
+                session.events,
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                text=limitation,
+            )
+            return AgentRunResult(
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                publication_state="retrieval_unavailable",
                 answer=None,
                 clarification=None,
                 limitation=limitation,
@@ -249,6 +298,8 @@ class AgentRuntime:
                 observation = await tool_runtime.execute(turn_id=turn_id, call=call)
             except ResourceFuseExceeded:
                 return resource_fuse_result()
+            except RetrievalUnavailableError:
+                return retrieval_unavailable_result()
             except ToolExecutionError:
                 return model_output_failure_result()
             if call.name == "compose_answer":
@@ -304,6 +355,13 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
+                self._append_assistant_message(
+                    session.events,
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    text=clarification,
+                )
                 return AgentRunResult(
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -330,6 +388,13 @@ class AgentRuntime:
                         payload={"state": "limitation"},
                     ),
                     event_listener,
+                )
+                self._append_assistant_message(
+                    session.events,
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    text=limitation,
                 )
                 return AgentRunResult(
                     session_id=session.session_id,
@@ -396,6 +461,13 @@ class AgentRuntime:
                         ),
                         event_listener,
                     )
+                    self._append_assistant_message(
+                        session.events,
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        text=limitation,
+                    )
                     return AgentRunResult(
                         session_id=session.session_id,
                         turn_id=turn_id,
@@ -423,6 +495,13 @@ class AgentRuntime:
                         ),
                         event_listener,
                     )
+                    self._append_assistant_message(
+                        session.events,
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        text=limitation,
+                    )
                     return AgentRunResult(
                         session_id=session.session_id,
                         turn_id=turn_id,
@@ -448,14 +527,12 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
-            session.events.append(
-                AgentEvent(
-                    event_type="assistant_message",
-                    session_id=session.session_id,
-                    turn_id=turn_id,
-                    trace_id=trace_id,
-                    payload={"text": answer.answer},
-                )
+            self._append_assistant_message(
+                session.events,
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                text=answer.answer,
             )
             return AgentRunResult(
                 session_id=session.session_id,
@@ -508,6 +585,27 @@ class AgentRuntime:
         turn_events.append(event)
         if event_listener is not None:
             event_listener(event)
+
+    @staticmethod
+    def _append_assistant_message(
+        session_events: list[AgentEvent],
+        *,
+        session_id: str,
+        turn_id: str,
+        trace_id: str,
+        text: str,
+    ) -> None:
+        if not text.strip():
+            return
+        session_events.append(
+            AgentEvent(
+                event_type="assistant_message",
+                session_id=session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                payload={"text": text.strip()},
+            )
+        )
 
     @staticmethod
     def _merge_request_context(

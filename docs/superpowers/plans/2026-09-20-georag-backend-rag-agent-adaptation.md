@@ -1,6 +1,6 @@
 # GeoRAG Backend RAG / Agent Adaptation Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 在保留 GeoRAG 现有产品/API/GIS/文档生命周期与 PostgreSQL/pgvector 存储的前提下，用清晰的 Retrieval Port、Evidence 生命周期和 Agent Runtime 替换 `SearchService` 中混杂的语义规划与答案生成核心。
 
@@ -12,15 +12,24 @@
 
 ## Post-Review Closure Status
 
-2026-09-20 review pass closed the Task 4–8/12 gaps that were not covered by the
-first implementation pass: Controller now receives bounded Working Evidence,
-tool input models are the schema/validation source of truth, request-level
-retrieval constraints are preserved in Agent mode, limitation/resource/model
-failure outcomes are structured, Reviewer verdicts gate publication, Session
-state is principal-scoped with a hard in-memory capacity, legacy client history
-only seeds a new Session, and the duplicate route-level retrieval helper was
-removed. Task 13 real PostgreSQL + real LLM + frontend E2E remains pending and
-is still required before the whole PRD can be declared complete.
+2026-09-20 final code-review closure completed the remaining non-E2E gaps:
+Controller receives bounded Working Evidence; tool input models are the
+schema/validation source of truth; request-level retrieval constraints are
+preserved in Agent mode; retrieval now distinguishes zero matches, partial
+degradation and total `RETRIEVAL_UNAVAILABLE`; limitation/resource/model/review
+failure outcomes are structured; every user-visible terminal response is
+written back to Session conversation state; Reviewer verdicts gate publication
+in both Agent and explicit Linear mode; Session state is principal-scoped with
+a hard in-memory capacity; legacy client history only seeds a new Session; the
+production model adapter derives Controller reasoning capability from an
+explicitly configured `LLM_REASONING_MODEL`; and the API composition root no
+longer reaches through a private `SearchService` retrieval accessor.
+
+Tasks 1–12 are code-complete and subject to the final automated verification
+recorded by the implementation session. Task 13 real PostgreSQL + real LLM +
+frontend E2E is intentionally skipped at the user's request. Therefore the
+code migration may be treated as implementation-complete, but the original PRD
+success criterion requiring production-like E2E remains explicitly unverified.
 
 ## Global Constraints
 
@@ -51,11 +60,11 @@ is still required before the whole PRD can be declared complete.
 - Consumes: committed design/spec at `3a452af` plus this plan.
 - Produces: isolated worktree, known Python 3.12 interpreter, reproducible test command, frozen `/api/search/query` OpenAPI contract.
 
-- [ ] **Step 1: Create the isolated implementation worktree from the plan commit**
+- [x] **Step 1: Create the isolated implementation worktree from the plan commit**
 
 Use `superpowers:using-git-worktrees`. Confirm the new worktree is based on the commit containing this plan and has a clean `git status` before edits.
 
-- [ ] **Step 2: Verify a Python 3.12 interpreter exists before creating any environment**
+- [x] **Step 2: Verify a Python 3.12 interpreter exists before creating any environment**
 
 Run:
 
@@ -66,7 +75,7 @@ py -3.12 --version
 
 Expected: `Python 3.12.x`. If `py -3.12` does not exist, record the environment blocker in the baseline document; do not fall back to 3.11 and call the suite broken.
 
-- [ ] **Step 3: Create the project environment and install the dev dependencies**
+- [x] **Step 3: Create the project environment and install the dev dependencies**
 
 Run:
 
@@ -78,7 +87,7 @@ py -3.12 -m venv .venv
 
 If editable install exposes existing packaging defects, record the exact failure and use the repository's already-declared dependency files only if present; do not silently invent a second dependency manifest.
 
-- [ ] **Step 4: Run the existing backend suite unchanged**
+- [x] **Step 4: Run the existing backend suite unchanged**
 
 Run:
 
@@ -88,11 +97,11 @@ Run:
 
 Record interpreter version, pass/fail counts and every pre-existing failure in `docs/superpowers/baselines/2026-09-20-backend-test-baseline.md`.
 
-- [ ] **Step 5: Freeze the current OpenAPI shape**
+- [x] **Step 5: Freeze the current OpenAPI shape**
 
 Write a small one-shot Python command/test that imports `Backend/main.py`, serializes `app.openapi()` with stable key ordering, and writes `docs/superpowers/baselines/2026-09-20-search-openapi.json`. The snapshot must include `SearchRequest`, `SearchResponse` and `/api/search/query`.
 
-- [ ] **Step 6: Commit the baseline**
+- [x] **Step 6: Commit the baseline**
 
 ```bat
 git add docs/superpowers/baselines pyproject.toml
@@ -124,7 +133,7 @@ git commit -m "test: establish GeoRAG adaptation baseline"
   - `RetrievalPort.retrieve(query: RetrievalQuery) -> RetrievalResult`
   - `RetrievalPort.fetch_chunks(chunk_ids: Sequence[str]) -> list[RetrievalCandidate]`
 
-- [ ] **Step 1: Write failing port contract tests**
+- [x] **Step 1: Write failing port contract tests**
 
 Add tests proving that retrieval contracts contain stable chunk/document identity and provenance, and that `PostgresRetrievalAdapter.retrieve()` preserves exact/keyword/vector fallback behavior without requiring any LLM.
 
@@ -138,33 +147,33 @@ assert all(item.chunk_id for item in result.candidates)
 assert all(item.provenance.source == "postgres" for item in result.candidates)
 ```
 
-- [ ] **Step 2: Run the new tests and verify they fail for missing contracts**
+- [x] **Step 2: Run the new tests and verify they fail for missing contracts**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_rag_retrieval_port.py -q
 ```
 
-- [ ] **Step 3: Implement neutral retrieval contracts**
+- [x] **Step 3: Implement neutral retrieval contracts**
 
 Use frozen dataclasses or Pydantic models with no SQL/pgvector imports. `RetrievalPort` must be a `Protocol`; the Agent layer must be able to depend on this module without importing `search_service.py`.
 
-- [ ] **Step 4: Move retrieval ownership into `PostgresRetrievalAdapter`**
+- [x] **Step 4: Move retrieval ownership into `PostgresRetrievalAdapter`**
 
 Move/extract the current `_exact_standard_code_search`, `_keyword_search`, `_vector_search`, uploaded-document variants, candidate merge, metadata/spatial filter application and rerank orchestration out of semantic/generation ownership in `SearchService`. Preserve behavior through tests; do not add new retrieval heuristics during this task.
 
 `SearchService.search()` becomes a thin deterministic façade that creates `RetrievalQuery`, calls the adapter, maps candidates back to existing `DocumentResult`, logs, and returns results.
 
-- [ ] **Step 5: Remove the duplicate retrieval orchestrator**
+- [x] **Step 5: Remove the duplicate retrieval orchestrator**
 
 Once `PostgresRetrievalAdapter` owns exact/keyword/vector composition, migrate `test_rag_retriever_degradation.py` to the port/adapter contract and delete `Backend/app/services/rag/retriever.py`. Do not keep both `RagRetriever` and `PostgresRetrievalAdapter` performing the same composition.
 
-- [ ] **Step 6: Run retrieval regression tests**
+- [x] **Step 6: Run retrieval regression tests**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_rag_retrieval_port.py Backend\tests\test_rag_retriever_degradation.py Backend\tests\test_search_service_standard_code.py Backend\tests\test_rag_metadata_filters.py Backend\tests\test_rag_spatial_filters.py Backend\tests\test_rag_reranker.py -q
 ```
 
-- [ ] **Step 7: Commit the retrieval boundary**
+- [x] **Step 7: Commit the retrieval boundary**
 
 ```bat
 git add Backend/app/services/rag Backend/app/services/search_service.py Backend/tests
@@ -185,7 +194,7 @@ git commit -m "refactor: establish PostgreSQL retrieval boundary"
 - Consumes: `RetrievalCandidate` from Task 2.
 - Produces: `EvidenceItem`, `EvidenceLedger`, `FrozenEvidenceSnapshot`, `EvidenceMemorySearchResult`, stable evidence/citation IDs.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 Cover:
 
@@ -198,25 +207,25 @@ assert snapshot.items[0].citation_id.startswith("E")
 
 Also assert that historical evidence is searchable but is not automatically part of a new turn's frozen snapshot.
 
-- [ ] **Step 2: Verify the tests fail**
+- [x] **Step 2: Verify the tests fail**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_agent_evidence_lifecycle.py -q
 ```
 
-- [ ] **Step 3: Implement deterministic candidate admission and stable identity**
+- [x] **Step 3: Implement deterministic candidate admission and stable identity**
 
 Candidate admission may reject structurally invalid/empty candidates, but must not call an LLM per chunk. Preserve provenance, source document/chunk IDs, retrieval score and scope metadata.
 
-- [ ] **Step 4: Implement immutable frozen snapshots**
+- [x] **Step 4: Implement immutable frozen snapshots**
 
 `FrozenEvidenceSnapshot` must be immutable after creation. Answer generation/review receives the snapshot rather than a mutable ledger view.
 
-- [ ] **Step 5: Implement session-level Evidence Memory search**
+- [x] **Step 5: Implement session-level Evidence Memory search**
 
 Expose explicit lookup by query/metadata over previously admitted evidence. A lookup returns candidates for Controller consideration; it never silently reactivates citations.
 
-- [ ] **Step 6: Run lifecycle tests and commit**
+- [x] **Step 6: Run lifecycle tests and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_agent_evidence_lifecycle.py -q
@@ -238,7 +247,7 @@ git commit -m "feat: add evidence ledger and frozen snapshots"
 - Consumes: `RetrievalPort`, `EvidenceLedger`.
 - Produces tools: `retrieve_kb`, `reuse_evidence`, `compose_answer`, `clarify`; plus schema validation, dispatch, timeout/idempotency and physical resource accounting.
 
-- [ ] **Step 1: Write failing registry tests**
+- [x] **Step 1: Write failing registry tests**
 
 Assert the exact public tool names are:
 
@@ -254,19 +263,19 @@ assert not any("graph" in name.lower() for name in registry.names())
 
 Also assert no tool description contains a semantic mandate such as “多实体必须调用” or a fixed “检索两次后停止” rule.
 
-- [ ] **Step 2: Implement typed tool inputs/observations and dispatcher**
+- [x] **Step 2: Implement typed tool inputs/observations and dispatcher**
 
 `retrieve_kb` accepts a semantic search gap plus ordinary retrieval hints and writes returned candidates to Working Evidence. `reuse_evidence` performs explicit historical evidence lookup. `compose_answer` accepts selected evidence IDs and creates the Frozen Snapshot. `clarify` ends the turn with a structured clarification result.
 
-- [ ] **Step 3: Add physical-only resource fuse**
+- [x] **Step 3: Add physical-only resource fuse**
 
 Track total Controller steps/tool execution time as protection against infinite loops. Resource exhaustion must surface `RESOURCE_FUSE`; do not encode “N retrievals means stop” as semantics.
 
-- [ ] **Step 4: Add architecture guards**
+- [x] **Step 4: Add architecture guards**
 
 Test that `Backend/app/services/agent` contains no imports of Chroma and no graph registry/state symbols.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_agent_tool_runtime.py Backend\tests\test_agent_architecture_guards.py -q
@@ -292,7 +301,7 @@ git commit -m "feat: add graph-free agent tool runtime"
 - Consumes: Tool Runtime and `FrozenEvidenceSnapshot`.
 - Produces: `LLMStagePolicy`, Controller tool decisions, structured final answer, optional grounding review.
 
-- [ ] **Step 1: Write failing stage-policy tests**
+- [x] **Step 1: Write failing stage-policy tests**
 
 Required behavior:
 
@@ -303,23 +312,23 @@ assert policy.for_stage("answer_generation").request_reasoning is False
 assert policy.for_stage("reviewer").request_reasoning is False
 ```
 
-- [ ] **Step 2: Write failing answer publication tests**
+- [x] **Step 2: Write failing answer publication tests**
 
 Assert `knowledge_answer` cannot be created/published without a non-empty Frozen Snapshot. Limitation/clarification remains legal without knowledge evidence.
 
-- [ ] **Step 3: Implement the Controller as the only semantic planner**
+- [x] **Step 3: Implement the Controller as the only semantic planner**
 
 The Controller receives user question, context projection, available tools and tool observations. It returns a structured next action. Runtime code must not pre-classify intent before calling it.
 
-- [ ] **Step 4: Implement Answer Generator over Frozen Evidence only**
+- [x] **Step 4: Implement Answer Generator over Frozen Evidence only**
 
 Input contract contains user question, bounded context and Frozen Snapshot. The generator may format/derive bounded claims from those evidence items but cannot call retrieval. If structured output is invalid or `content` is empty, perform at most one clean retry with answer-generation reasoning forced OFF; never parse `reasoning_content` as answer text.
 
-- [ ] **Step 5: Implement Reviewer as optional grounding validation**
+- [x] **Step 5: Implement Reviewer as optional grounding validation**
 
 Reviewer returns supported/unsupported/overstated findings for claims and citation IDs. It never calls retrieval and never rewrites the user's semantic task.
 
-- [ ] **Step 6: Run and commit**
+- [x] **Step 6: Run and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_agent_stage_policy.py Backend\tests\test_agent_answer_generation.py Backend\tests\test_agent_reviewer.py Backend\tests\test_agent_architecture_guards.py -q
@@ -343,23 +352,23 @@ git commit -m "feat: add agent LLM stage boundaries"
 - Consumes: Controller, Tool Runtime, Evidence Ledger, Answer Generator, Reviewer, Stage Policy.
 - Produces: `AgentRuntime.run(request) -> AgentRunResult`, stable `session_id`, `trace_id`, ordered events and publication state.
 
-- [ ] **Step 1: Write failing multi-turn session tests**
+- [x] **Step 1: Write failing multi-turn session tests**
 
 Test that two turns sharing the same session can explicitly discover historical evidence, while a different session cannot. Verify no fixed `history[-6:]` behavior exists in the new context path.
 
-- [ ] **Step 2: Implement session state with explicit ownership**
+- [x] **Step 2: Implement session state with explicit ownership**
 
 Session owns conversation events, evidence memory and turn metadata. Request-carried legacy history can seed a new/migrating session but is not a second persistent truth source.
 
-- [ ] **Step 3: Implement token-budget context projection**
+- [x] **Step 3: Implement token-budget context projection**
 
 Build Controller context from current request + selected historical conversation/evidence metadata under a token/character budget. Keep evidence items separate from free-text history.
 
-- [ ] **Step 4: Implement the runtime loop**
+- [x] **Step 4: Implement the runtime loop**
 
 Loop: build context → call Controller → dispatch one structured action → append observation/event → continue until `compose_answer`/`clarify` or physical fuse. `compose_answer` freezes evidence then invokes Answer Generator and optional Reviewer.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_agent_runtime.py Backend\tests\test_agent_context.py Backend\tests\test_agent_architecture_guards.py -q
@@ -385,7 +394,7 @@ git commit -m "feat: add session-aware agent runtime"
 - Consumes: deterministic `SearchService.search()` and `AgentRuntime.run()`.
 - Produces one application boundary selecting search vs agent without reintroducing semantic classification.
 
-- [ ] **Step 1: Write failing request/response contract tests**
+- [x] **Step 1: Write failing request/response contract tests**
 
 Add optional request fields:
 
@@ -406,7 +415,7 @@ publication_state: str | None
 map_action: MapAction | None
 ```
 
-- [ ] **Step 2: Implement `SearchApplicationService` routing by explicit product mode only**
+- [x] **Step 2: Implement `SearchApplicationService` routing by explicit product mode only**
 
 Rules:
 
@@ -417,15 +426,15 @@ use_generation=true  -> AgentRuntime (default mode agent)
 
 Do not call `detect_intent()` to choose these paths.
 
-- [ ] **Step 3: Preserve Auth/Demo quota and existing response fields**
+- [x] **Step 3: Preserve Auth/Demo quota and existing response fields**
 
 The route remains responsible for public contract/auth/quota behavior. New runtime metadata augments rather than replaces existing `results`, `generated_answer`, `quota`, timing fields.
 
-- [ ] **Step 4: Verify OpenAPI backward compatibility**
+- [x] **Step 4: Verify OpenAPI backward compatibility**
 
 Compare the baseline snapshot: old request fields remain accepted and old response fields remain present; new fields are optional/defaulted.
 
-- [ ] **Step 5: Run and commit**
+- [x] **Step 5: Run and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_search_agent_api.py Backend\tests\test_api_contract_models.py Backend\tests\test_api_contract_openapi.py Backend\tests\test_search_demo_quota.py -q
@@ -447,11 +456,11 @@ git commit -m "feat: route generated search through agent runtime"
 - Consumes: Task 7 optional `session_id` request/response.
 - Produces: every continuing chat sends its local conversation ID as runtime session ID and adopts the server-returned session ID.
 
-- [ ] **Step 1: Regenerate or update the OpenAPI client from the backend contract**
+- [x] **Step 1: Regenerate or update the OpenAPI client from the backend contract**
 
 Do not hand-maintain a divergent duplicate SearchRequest type if the generated schema is the source of truth.
 
-- [ ] **Step 2: Send `session_id` in `chatService.sendMessage()`**
+- [x] **Step 2: Send `session_id` in `chatService.sendMessage()`**
 
 The request object must include:
 
@@ -461,11 +470,11 @@ session_id: conversationId,
 
 and returned `conversation_id` must prefer `searchResponse.session_id` before locally generating a fallback.
 
-- [ ] **Step 3: Keep `history` only as migration compatibility**
+- [x] **Step 3: Keep `history` only as migration compatibility**
 
 Do not remove it in this task; ensure runtime session continuity no longer depends solely on it.
 
-- [ ] **Step 4: Run frontend type/build checks and commit**
+- [x] **Step 4: Run frontend type/build checks and commit**
 
 Use the scripts declared by `frontend/package.json` (for example `npm run build`/`npm run check` if present), then:
 
@@ -491,19 +500,19 @@ git commit -m "feat: connect chat conversations to agent sessions"
 - Consumes: existing MinIO download/index job lifecycle.
 - Produces: normalized parsed blocks/chunks while still writing through the existing repository into PostgreSQL/pgvector.
 
-- [ ] **Step 1: Write failing structure-preservation tests**
+- [x] **Step 1: Write failing structure-preservation tests**
 
 Cover heading boundaries, Markdown tables, fenced code blocks, Word cleanup and Excel-to-Markdown representation using small fixture strings/files already supported by repository dependencies.
 
-- [ ] **Step 2: Implement parser normalization and deterministic chunker**
+- [x] **Step 2: Implement parser normalization and deterministic chunker**
 
 Adapt the useful behavior from the source RAG project, but expose GeoRAG-native `parse(path)` and `chunk(parsed_document)` contracts. Do not import the source project's directory scanner, Chroma ingestion or graph extraction.
 
-- [ ] **Step 3: Replace `_split_text` ownership in `DocumentIndexingService`**
+- [x] **Step 3: Replace `_split_text` ownership in `DocumentIndexingService`**
 
 Keep `run_job()` lifecycle and repository/storage boundaries unchanged; only swap parsing/chunking internals.
 
-- [ ] **Step 4: Run indexing regression tests and commit**
+- [x] **Step 4: Run indexing regression tests and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_document_parser.py Backend\tests\test_document_chunker.py Backend\tests\test_document_indexing_service.py Backend\tests\test_document_text_extractor.py -q
@@ -526,19 +535,19 @@ git commit -m "feat: preserve document structure during indexing"
 **Interfaces:**
 - Produces `MapAction(type, target, adcode, name, payload)` as structured response data.
 
-- [ ] **Step 1: Write failing backend compatibility tests**
+- [x] **Step 1: Write failing backend compatibility tests**
 
 Assert a generated structured `MapAction` is returned in `SearchResponse.map_action` and, while migration compatibility is enabled, a single Response Adapter may render the legacy Markdown JSON representation.
 
-- [ ] **Step 2: Implement structured MapAction generation/output**
+- [x] **Step 2: Implement structured MapAction generation/output**
 
 Keep map action outside Evidence objects. If the action relies on a knowledge claim (for example an administrative code found in documents), that claim still requires frozen evidence.
 
-- [ ] **Step 3: Make frontend prefer `response.map_action`**
+- [x] **Step 3: Make frontend prefer `response.map_action`**
 
 Retain old text extraction only as fallback during this task. Once structured path is proven by frontend regression/E2E, remove the fallback in Task 12.
 
-- [ ] **Step 4: Run tests/build and commit**
+- [x] **Step 4: Run tests/build and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_map_action_compatibility.py -q

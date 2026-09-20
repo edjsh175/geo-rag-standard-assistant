@@ -53,7 +53,7 @@ def _build_search_application_service(
     asset_service: DocumentAssetService,
     contract_service: DocumentContractService,
 ) -> SearchApplicationService:
-    retrieval_port = search_service._get_retrieval_adapter()
+    retrieval_port = search_service.get_retrieval_port()
     model_client = LLMConfigStageModelClient(llm_config)
     controller = MainController(
         model_client=model_client,

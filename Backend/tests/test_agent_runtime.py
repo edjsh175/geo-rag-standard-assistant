@@ -14,6 +14,7 @@ from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.tool_runtime import ToolCall
 from app.services.rag.contracts import (
     RetrievalCandidate,
+    RetrievalChannelDiagnostic,
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
@@ -232,6 +233,15 @@ async def test_runtime_can_end_with_structured_clarification_without_evidence() 
     assert result.clarification == "请明确行政区。"
     assert result.answer is None
 
+    session = runtime.session_store.get("admin:test", "session-1")
+    assert session is not None
+    assistant_messages = [
+        event.payload["text"]
+        for event in session.events
+        if event.event_type == "assistant_message"
+    ]
+    assert assistant_messages[-1] == "请明确行政区。"
+
 
 @pytest.mark.asyncio
 async def test_reviewer_is_only_invoked_when_request_explicitly_enables_it() -> None:
@@ -372,6 +382,53 @@ async def test_runtime_reports_resource_fuse_as_structured_failure() -> None:
     assert result.answer is None
     assert result.limitation == "Agent 运行达到资源保护上限，未发布答案。"
     assert result.events[-1].payload["state"] == "resource_fuse"
+
+    session = runtime.session_store.get("admin:test", "session-fuse")
+    assert session is not None
+    assert any(
+        event.event_type == "assistant_message"
+        and event.payload.get("text") == result.limitation
+        for event in session.events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_reports_retrieval_unavailable_as_distinct_structured_failure() -> None:
+    class UnavailablePort(FakeRetrievalPort):
+        async def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
+            return RetrievalResult(
+                candidates=(),
+                embedding_available=False,
+                diagnostics=RetrievalDiagnostics(
+                    channels=(
+                        RetrievalChannelDiagnostic(
+                            channel="keyword",
+                            state="unavailable",
+                            detail="postgres unavailable",
+                        ),
+                    ),
+                ),
+            )
+
+    runtime = AgentRuntime(
+        retrieval_port=UnavailablePort(),
+        controller=EndlessRetrieveController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="规划标准",
+            session_id="session-retrieval-down",
+            principal_id="admin:test",
+        )
+    )
+
+    assert result.publication_state == "retrieval_unavailable"
+    assert result.answer is None
+    assert result.limitation == "知识检索服务当前不可用，未发布答案。"
+    assert result.events[-1].payload["state"] == "retrieval_unavailable"
 
 
 def test_session_store_evicts_oldest_session_when_capacity_is_reached() -> None:

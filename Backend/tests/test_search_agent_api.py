@@ -233,6 +233,38 @@ async def test_explicit_linear_mode_is_compatibility_path_without_intent_detecti
 
 
 @pytest.mark.asyncio
+async def test_linear_mode_honors_explicit_reviewer_and_blocks_rejected_answer() -> None:
+    class RejectingReviewer:
+        async def review(self, **kwargs):
+            return SimpleNamespace(verdict="UNSUPPORTED", findings=())
+
+    search = SearchServiceStub()
+    runtime = AgentRuntimeStub()
+    runtime.reviewer = RejectingReviewer()
+    service = SearchApplicationService(
+        search_service=search,
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=runtime,
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    response = await service.execute(
+        SearchRequest(
+            query="规划标准",
+            use_generation=True,
+            mode="linear",
+            reviewer_enabled=True,
+        ),
+        generation_allowed=True,
+        principal_id="admin:test",
+    )
+
+    assert response.generated_answer == "答案未通过证据审查，未发布。"
+    assert response.publication_state == "review_rejected"
+
+
+@pytest.mark.asyncio
 async def test_agent_mode_forwards_search_constraints_to_runtime() -> None:
     runtime = AgentRuntimeStub()
     service = SearchApplicationService(
