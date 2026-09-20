@@ -9,6 +9,9 @@ from app.models.search_models import SearchRequest, SearchResponse
 from app.services.agent.runtime import AgentRunRequest
 
 
+RELAXED_VECTOR_THRESHOLD = 0.35
+
+
 class SearchApplicationService:
     """Own explicit product-mode routing without semantic intent classification."""
 
@@ -119,6 +122,16 @@ class SearchApplicationService:
             search_mode=request.search_mode,
             use_rerank=request.use_rerank,
         )
+        if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
+            results = await self.search_service.search(
+                query=request.query,
+                top_k=request.top_k,
+                threshold=RELAXED_VECTOR_THRESHOLD,
+                spatial_filter=request.spatial_filter,
+                metadata_filter=request.metadata_filter,
+                search_mode=request.search_mode,
+                use_rerank=request.use_rerank,
+            )
         results = await self.asset_service.enrich_search_results(results)
         return await self.contract_service.filter_deleted_results(results)
 
