@@ -61,3 +61,4 @@ def test_legacy_search_generation_core_is_removed() -> None:
         assert symbol not in combined_backend
 
     assert "extractAdcodeAndPurify" not in frontend_source
+    assert "async def _retrieve_results" not in route_source

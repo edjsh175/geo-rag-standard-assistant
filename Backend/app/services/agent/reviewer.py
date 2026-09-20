@@ -54,6 +54,7 @@ class GroundingReviewer:
                     "role": "user",
                     "content": (
                         f"Question:\n{question}\n\nAnswer:\n{answer.answer}\n\n"
+                        f"Answer Citations:\n{json.dumps(list(answer.citations), ensure_ascii=False)}\n\n"
                         f"Frozen Evidence:\n{evidence_text}"
                     ),
                 },
@@ -82,6 +83,9 @@ class GroundingReviewer:
         raw_findings = payload.get("findings")
         if not isinstance(verdict, str) or not isinstance(raw_findings, list):
             raise ValueError("reviewer returned invalid structured output")
+        normalized_verdict = verdict.strip().upper()
+        if normalized_verdict not in {"SUPPORTED", "UNSUPPORTED", "OVERSTATED"}:
+            raise ValueError("reviewer returned invalid verdict")
 
         allowed = {item.citation_id for item in snapshot.items}
         findings: list[ReviewFinding] = []
@@ -99,11 +103,14 @@ class GroundingReviewer:
                 or any(value not in allowed for value in citations)
             ):
                 raise ValueError("reviewer returned invalid structured output")
+            normalized_status = status.strip().upper()
+            if normalized_status not in {"SUPPORTED", "UNSUPPORTED", "OVERSTATED"}:
+                raise ValueError("reviewer returned invalid finding status")
             findings.append(
                 ReviewFinding(
                     claim=claim,
-                    status=status,
+                    status=normalized_status,
                     citations=tuple(citations),
                 )
             )
-        return ReviewResult(verdict=verdict, findings=tuple(findings))
+        return ReviewResult(verdict=normalized_verdict, findings=tuple(findings))

@@ -12,6 +12,7 @@ from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
 from app.services.agent.runtime import AgentRunRequest
 from app.services.agent.stage_policy import LLMStagePolicy
+from app.services.agent.tool_runtime import RetrievalRequestConstraints
 from app.services.rag.contracts import RetrievalCandidate
 
 
@@ -35,20 +36,19 @@ class SearchApplicationService:
         contract_service,
         agent_runtime,
         retrieval_port,
-        endpoint_supports_reasoning: bool = False,
     ) -> None:
         self.search_service = search_service
         self.asset_service = asset_service
         self.contract_service = contract_service
         self.agent_runtime = agent_runtime
         self.retrieval_port = retrieval_port
-        self.endpoint_supports_reasoning = endpoint_supports_reasoning
 
     async def execute(
         self,
         request: SearchRequest,
         *,
         generation_allowed: bool,
+        principal_id: str,
     ) -> SearchResponse:
         started_at = datetime.now()
         if not generation_allowed:
@@ -118,26 +118,27 @@ class SearchApplicationService:
             AgentRunRequest(
                 question=request.query,
                 session_id=session_id,
+                principal_id=principal_id,
                 reviewer_enabled=request.reviewer_enabled,
                 thinking=bool(request.thinking),
-                endpoint_supports_reasoning=self.endpoint_supports_reasoning,
                 request_context={
                     "follow_up_context": (
                         request.follow_up_context.model_dump()
                         if request.follow_up_context is not None
                         else None
                     ),
-                    "legacy_history": [
-                        message.model_dump() for message in (request.history or [])
-                    ],
                 },
+                legacy_history=tuple(
+                    message.model_dump() for message in (request.history or [])
+                ),
+                retrieval_constraints=self._retrieval_constraints(request),
             )
         )
         results = await self._results_from_frozen_evidence(run_result.frozen_evidence)
         generated_answer = (
             run_result.answer.answer
             if run_result.answer is not None
-            else run_result.clarification
+            else (run_result.clarification or run_result.limitation)
         )
         elapsed = (datetime.now() - started_at).total_seconds()
         return SearchResponse(
@@ -164,12 +165,14 @@ class SearchApplicationService:
         request: SearchRequest,
         *,
         generation_allowed: bool,
+        principal_id: str,
     ) -> AsyncIterator[SearchStreamFrame]:
         if not generation_allowed or (request.mode or "agent") == "linear":
             yield SearchStreamFrame(
                 response=await self.execute(
                     request,
                     generation_allowed=generation_allowed,
+                    principal_id=principal_id,
                 )
             )
             return
@@ -179,19 +182,20 @@ class SearchApplicationService:
         run_request = AgentRunRequest(
             question=request.query,
             session_id=session_id,
+            principal_id=principal_id,
             reviewer_enabled=request.reviewer_enabled,
             thinking=bool(request.thinking),
-            endpoint_supports_reasoning=self.endpoint_supports_reasoning,
             request_context={
                 "follow_up_context": (
                     request.follow_up_context.model_dump()
                     if request.follow_up_context is not None
                     else None
                 ),
-                "legacy_history": [
-                    message.model_dump() for message in (request.history or [])
-                ],
             },
+            legacy_history=tuple(
+                message.model_dump() for message in (request.history or [])
+            ),
+            retrieval_constraints=self._retrieval_constraints(request),
         )
 
         async for frame in self.agent_runtime.stream(run_request):
@@ -206,7 +210,7 @@ class SearchApplicationService:
             generated_answer = (
                 run_result.answer.answer
                 if run_result.answer is not None
-                else run_result.clarification
+                else (run_result.clarification or run_result.limitation)
             )
             elapsed = (datetime.now() - started_at).total_seconds()
             yield SearchStreamFrame(
@@ -261,3 +265,14 @@ class SearchApplicationService:
         results = [candidate.source_result for candidate in candidates]
         results = await self.asset_service.enrich_search_results(results)
         return await self.contract_service.filter_deleted_results(results)
+
+    @staticmethod
+    def _retrieval_constraints(request: SearchRequest) -> RetrievalRequestConstraints:
+        return RetrievalRequestConstraints(
+            top_k=request.top_k,
+            threshold=request.threshold,
+            search_mode=request.search_mode,
+            use_rerank=request.use_rerank,
+            metadata_filter=request.metadata_filter,
+            spatial_filter=request.spatial_filter,
+        )

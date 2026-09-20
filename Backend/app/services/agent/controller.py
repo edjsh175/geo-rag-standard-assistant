@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
-from typing import Sequence
+from typing import Mapping, Sequence, Any
 
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import ToolCall, ToolObservation
 from app.services.agent.tools import ToolRegistry
+
+
+class ControllerOutputError(ValueError):
+    """Raised when the Controller fails its structured tool-call contract."""
 
 
 class MainController:
@@ -26,15 +30,25 @@ class MainController:
         *,
         question: str,
         context_summary: str,
+        working_evidence: Sequence[Mapping[str, Any]],
         observations: Sequence[ToolObservation],
         stage_policy: LLMStagePolicy,
     ) -> ToolCall:
         tools = "\n".join(
-            f"- {spec.name}: {spec.description}"
+            (
+                f"- {spec.name}: {spec.description}\n"
+                f"  input_schema={json.dumps(spec.input_schema, ensure_ascii=False, sort_keys=True)}"
+            )
             for spec in self.tool_registry.specs()
         )
         observation_text = "\n".join(
             f"{item.tool_name}: {dict(item.payload)}" for item in observations
+        )
+        evidence_text = json.dumps(
+            list(working_evidence),
+            ensure_ascii=False,
+            default=str,
+            sort_keys=True,
         )
         request = ModelRequest(
             stage="controller",
@@ -52,6 +66,7 @@ class MainController:
                     "role": "user",
                     "content": (
                         f"Question:\n{question}\n\nContext:\n{context_summary}\n\n"
+                        f"Working Evidence Catalog:\n{evidence_text}\n\n"
                         f"Observations:\n{observation_text}"
                     ),
                 },
@@ -63,13 +78,13 @@ class MainController:
 
     def _parse_tool_call(self, content: str | None) -> ToolCall:
         if not content:
-            raise ValueError("controller must return a structured tool call")
+            raise ControllerOutputError("controller must return a structured tool call")
         try:
             payload = json.loads(content)
         except json.JSONDecodeError as exc:
-            raise ValueError("controller must return a structured tool call") from exc
+            raise ControllerOutputError("controller must return a structured tool call") from exc
         if not isinstance(payload, dict):
-            raise ValueError("controller must return a structured tool call")
+            raise ControllerOutputError("controller must return a structured tool call")
 
         tool_call_id = payload.get("tool_call_id")
         name = payload.get("name")
@@ -81,7 +96,7 @@ class MainController:
             or name not in self.tool_registry.names()
             or not isinstance(arguments, dict)
         ):
-            raise ValueError("controller must return a structured tool call")
+            raise ControllerOutputError("controller must return a structured tool call")
         return ToolCall(
             tool_call_id=tool_call_id.strip(),
             name=name,

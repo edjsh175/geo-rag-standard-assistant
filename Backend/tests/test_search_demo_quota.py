@@ -28,8 +28,14 @@ class ApplicationServiceStub:
     def __init__(self) -> None:
         self.calls = []
 
-    async def execute(self, request: SearchRequest, *, generation_allowed: bool) -> SearchResponse:
-        self.calls.append((request, generation_allowed))
+    async def execute(
+        self,
+        request: SearchRequest,
+        *,
+        generation_allowed: bool,
+        principal_id: str,
+    ) -> SearchResponse:
+        self.calls.append((request, generation_allowed, principal_id))
         return SearchResponse(
             query=request.query,
             results=[make_result()],
@@ -71,6 +77,7 @@ async def test_visitor_ai_request_consumes_quota_and_generates_answer() -> None:
 
     assert quota_service.calls == 1
     assert application_service.calls[0][1] is True
+    assert application_service.calls[0][2] == "visitor:visitor-1"
     assert response.generated_answer == "AI 生成回答。"
     assert response.quota is not None
     assert response.quota.remaining == 9
@@ -88,6 +95,7 @@ async def test_visitor_ai_request_exhausted_returns_search_only_response() -> No
     )
 
     assert application_service.calls[0][1] is False
+    assert application_service.calls[0][2] == "visitor:visitor-1"
     assert response.generated_answer is None
     assert response.results[0].id == "doc-1"
     assert response.quota is not None

@@ -10,6 +10,7 @@ from app.services.agent.events import AgentEvent
 
 @dataclass(slots=True)
 class AgentSession:
+    principal_id: str
     session_id: str
     evidence_ledger: EvidenceLedger
     events: list[AgentEvent] = field(default_factory=list)
@@ -24,21 +25,32 @@ class AgentSession:
 class InMemoryAgentSessionStore:
     """Process-local session store; persistence is intentionally a later concern."""
 
-    def __init__(self) -> None:
-        self._sessions: dict[str, AgentSession] = {}
+    def __init__(self, *, max_sessions: int = 1000) -> None:
+        if max_sessions <= 0:
+            raise ValueError("max_sessions must be positive")
+        self.max_sessions = max_sessions
+        self._sessions: dict[tuple[str, str], AgentSession] = {}
 
-    def get_or_create(self, session_id: str) -> AgentSession:
+    def get_or_create(self, principal_id: str, session_id: str) -> AgentSession:
+        principal = principal_id.strip()
+        if not principal:
+            raise ValueError("principal_id must not be empty")
         normalized = session_id.strip()
         if not normalized:
             raise ValueError("session_id must not be empty")
-        session = self._sessions.get(normalized)
+        key = (principal, normalized)
+        session = self._sessions.get(key)
         if session is None:
+            if len(self._sessions) >= self.max_sessions:
+                oldest_key = next(iter(self._sessions))
+                self._sessions.pop(oldest_key, None)
             session = AgentSession(
+                principal_id=principal,
                 session_id=normalized,
                 evidence_ledger=EvidenceLedger(session_id=normalized),
             )
-            self._sessions[normalized] = session
+            self._sessions[key] = session
         return session
 
-    def get(self, session_id: str) -> AgentSession | None:
-        return self._sessions.get(session_id)
+    def get(self, principal_id: str, session_id: str) -> AgentSession | None:
+        return self._sessions.get((principal_id, session_id))

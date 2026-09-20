@@ -72,7 +72,6 @@ def _build_search_application_service(
         contract_service=contract_service,
         agent_runtime=runtime,
         retrieval_port=retrieval_port,
-        endpoint_supports_reasoning=False,
     )
 
 
@@ -112,6 +111,7 @@ async def search_documents(
         response = await application_service.execute(
             request,
             generation_allowed=generation_allowed,
+            principal_id=_principal_id(current_user),
         )
         response.quota = _quota_status(quota_decision)
         return response
@@ -144,6 +144,7 @@ async def stream_search_documents(
             async for frame in application_service.stream(
                 request,
                 generation_allowed=generation_allowed,
+                principal_id=_principal_id(current_user),
             ):
                 if frame.event is not None:
                     event = frame.event
@@ -242,44 +243,6 @@ async def submit_search_feedback(
         raise HTTPException(status_code=500, detail=f"Feedback submission failed: {exc}") from exc
 
 
-async def _retrieve_results(
-    request: SearchRequest,
-    search_service: SearchService,
-    asset_service: DocumentAssetService,
-    contract_service: DocumentContractService | None = None,
-):
-    results = await search_service.search(
-        query=request.query,
-        top_k=request.top_k,
-        threshold=request.threshold,
-        spatial_filter=request.spatial_filter,
-        metadata_filter=request.metadata_filter,
-        search_mode=request.search_mode,
-        use_rerank=request.use_rerank,
-    )
-
-    if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
-        logger.info(
-            "Retrying search with relaxed threshold: %.2f -> %.2f",
-            request.threshold,
-            RELAXED_VECTOR_THRESHOLD,
-        )
-        results = await search_service.search(
-            query=request.query,
-            top_k=request.top_k,
-            threshold=RELAXED_VECTOR_THRESHOLD,
-            spatial_filter=request.spatial_filter,
-            metadata_filter=request.metadata_filter,
-            search_mode=request.search_mode,
-            use_rerank=request.use_rerank,
-        )
-
-    enriched_results = await asset_service.enrich_search_results(results)
-    if contract_service is None or not hasattr(contract_service, "filter_deleted_results"):
-        contract_service = DocumentContractService()
-    return await contract_service.filter_deleted_results(enriched_results)
-
-
 def _quota_status(quota_decision: DemoQuotaDecision | None):
     return quota_decision.quota if quota_decision else None
 
@@ -302,3 +265,11 @@ async def _consume_visitor_generation_quota(
         )
 
     return await quota_service.consume_generation(visitor_id, ip_hash)
+
+
+def _principal_id(current_user: UserIdentity) -> str:
+    if current_user.role == "visitor":
+        if not current_user.visitor_id:
+            raise RuntimeError("visitor identity is missing visitor_id")
+        return f"visitor:{current_user.visitor_id}"
+    return f"admin:{current_user.username}"

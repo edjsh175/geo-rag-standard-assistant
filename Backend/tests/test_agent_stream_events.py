@@ -53,7 +53,7 @@ class RetrievalPortStub:
 
 
 class ControllerStub:
-    async def decide(self, *, question, context_summary, observations, stage_policy):
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
         if not observations:
             return ToolCall(
                 tool_call_id="retrieve-1",
@@ -88,7 +88,7 @@ async def test_runtime_stream_projects_same_run_events_in_order() -> None:
     frames = [
         frame
         async for frame in runtime.stream(
-            AgentRunRequest(question="规划标准有什么要求？", session_id="session-1")
+            AgentRunRequest(question="规划标准有什么要求？", session_id="session-1", principal_id="admin:test")
         )
     ]
 
@@ -123,7 +123,8 @@ class StreamApplicationServiceStub:
     def __init__(self) -> None:
         self.calls: list[tuple[SearchRequest, bool]] = []
 
-    async def stream(self, request: SearchRequest, *, generation_allowed: bool):
+    async def stream(self, request: SearchRequest, *, generation_allowed: bool, principal_id: str):
+        assert principal_id == "admin:admin"
         self.calls.append((request, generation_allowed))
         yield SimpleNamespace(
             event=SimpleNamespace(
