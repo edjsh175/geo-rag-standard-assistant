@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+import json
+from typing import Any, Mapping
 from uuid import uuid4
 
 from app.services.agent.answer_generator import GeneratedAnswer
@@ -29,6 +30,7 @@ class AgentRunRequest:
     endpoint_supports_reasoning: bool = False
     max_steps: int = 12
     max_elapsed_seconds: float = 60.0
+    request_context: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +119,10 @@ class AgentRuntime:
             )
             call = await self.controller.decide(
                 question=context.current_question,
-                context_summary=context.summary,
+                context_summary=self._merge_request_context(
+                    context.summary,
+                    request.request_context,
+                ),
                 observations=tuple(observations),
                 stage_policy=stage_policy,
             )
@@ -278,3 +283,20 @@ class AgentRuntime:
     ) -> None:
         session_events.append(event)
         turn_events.append(event)
+
+    @staticmethod
+    def _merge_request_context(
+        summary: str,
+        request_context: Mapping[str, Any],
+    ) -> str:
+        if not request_context:
+            return summary
+        factual_context = json.dumps(
+            dict(request_context),
+            ensure_ascii=False,
+            default=str,
+            sort_keys=True,
+        )
+        if not summary:
+            return f"request_context: {factual_context}"
+        return f"{summary}\nrequest_context: {factual_context}"

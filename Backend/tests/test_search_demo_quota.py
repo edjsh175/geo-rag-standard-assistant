@@ -6,7 +6,7 @@ import pytest
 
 from app.api.search_routes import search_documents
 from app.core.auth import UserIdentity
-from app.models.search_models import DocumentResult, SearchRequest
+from app.models.search_models import DocumentResult, SearchRequest, SearchResponse
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaStatus
 
 
@@ -24,38 +24,19 @@ def make_result(doc_id: str = "doc-1") -> DocumentResult:
     )
 
 
-class AssetServiceStub:
-    async def enrich_search_results(self, results: list[DocumentResult]) -> list[DocumentResult]:
-        return results
-
-
-class SearchServiceStub:
+class ApplicationServiceStub:
     def __init__(self) -> None:
-        self.generated = False
-        self.detected = False
+        self.calls = []
 
-    def _is_document_summary_query(self, query: str) -> bool:
-        return False
-
-    async def detect_intent(self, query: str) -> str:
-        self.detected = True
-        return "search"
-
-    async def search(
-        self,
-        query,
-        top_k,
-        threshold,
-        spatial_filter=None,
-        metadata_filter=None,
-        search_mode="hybrid",
-        use_rerank=True,
-    ):
-        return [make_result()]
-
-    async def generate_answer(self, query, results, top_context_docs=5, history=None):
-        self.generated = True
-        return "AI 生成回答。", 0.2
+    async def execute(self, request: SearchRequest, *, generation_allowed: bool) -> SearchResponse:
+        self.calls.append((request, generation_allowed))
+        return SearchResponse(
+            query=request.query,
+            results=[make_result()],
+            total_count=1,
+            generated_answer="AI 生成回答。" if generation_allowed else None,
+            final_mode="agent" if generation_allowed else None,
+        )
 
 
 class QuotaServiceStub:
@@ -78,20 +59,18 @@ class QuotaServiceStub:
 
 @pytest.mark.asyncio
 async def test_visitor_ai_request_consumes_quota_and_generates_answer() -> None:
-    search_service = SearchServiceStub()
+    application_service = ApplicationServiceStub()
     quota_service = QuotaServiceStub(allowed=True)
 
     response = await search_documents(
         SearchRequest(query="土地利用图怎么制图", use_generation=True),
         current_user=UserIdentity(username="demo-visitor", role="visitor", visitor_id="visitor-1", ip_hash="ip-1"),
-        search_service=search_service,
-        asset_service=AssetServiceStub(),
+        application_service=application_service,
         quota_service=quota_service,
     )
 
     assert quota_service.calls == 1
-    assert search_service.detected is True
-    assert search_service.generated is True
+    assert application_service.calls[0][1] is True
     assert response.generated_answer == "AI 生成回答。"
     assert response.quota is not None
     assert response.quota.remaining == 9
@@ -99,18 +78,16 @@ async def test_visitor_ai_request_consumes_quota_and_generates_answer() -> None:
 
 @pytest.mark.asyncio
 async def test_visitor_ai_request_exhausted_returns_search_only_response() -> None:
-    search_service = SearchServiceStub()
+    application_service = ApplicationServiceStub()
 
     response = await search_documents(
         SearchRequest(query="土地利用图怎么制图", use_generation=True),
         current_user=UserIdentity(username="demo-visitor", role="visitor", visitor_id="visitor-1", ip_hash="ip-1"),
-        search_service=search_service,
-        asset_service=AssetServiceStub(),
+        application_service=application_service,
         quota_service=QuotaServiceStub(allowed=False),
     )
 
-    assert search_service.detected is False
-    assert search_service.generated is False
+    assert application_service.calls[0][1] is False
     assert response.generated_answer is None
     assert response.results[0].id == "doc-1"
     assert response.quota is not None
@@ -120,39 +97,35 @@ async def test_visitor_ai_request_exhausted_returns_search_only_response() -> No
 
 @pytest.mark.asyncio
 async def test_admin_ai_request_does_not_consume_demo_quota() -> None:
-    search_service = SearchServiceStub()
+    application_service = ApplicationServiceStub()
     quota_service = QuotaServiceStub(allowed=False)
 
     response = await search_documents(
         SearchRequest(query="土地利用图怎么制图", use_generation=True),
         current_user=UserIdentity(username="admin", role="admin"),
-        search_service=search_service,
-        asset_service=AssetServiceStub(),
+        application_service=application_service,
         quota_service=quota_service,
     )
 
     assert quota_service.calls == 0
-    assert search_service.detected is True
-    assert search_service.generated is True
+    assert application_service.calls[0][1] is True
     assert response.generated_answer == "AI 生成回答。"
     assert response.quota is None
 
 
 @pytest.mark.asyncio
 async def test_search_without_generation_skips_ai_intent_detection() -> None:
-    search_service = SearchServiceStub()
+    application_service = ApplicationServiceStub()
     quota_service = QuotaServiceStub(allowed=True)
 
     response = await search_documents(
         SearchRequest(query="土地利用图怎么制图", use_generation=False),
         current_user=UserIdentity(username="demo-visitor", role="visitor", visitor_id="visitor-1", ip_hash="ip-1"),
-        search_service=search_service,
-        asset_service=AssetServiceStub(),
+        application_service=application_service,
         quota_service=quota_service,
     )
 
     assert quota_service.calls == 0
-    assert search_service.detected is False
-    assert search_service.generated is False
+    assert application_service.calls[0][1] is False
     assert response.generated_answer is None
     assert response.results[0].id == "doc-1"

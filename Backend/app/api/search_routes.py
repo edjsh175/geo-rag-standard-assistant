@@ -16,10 +16,19 @@ from pydantic import BaseModel
 from app.core.auth import UserIdentity
 from app.core.security import require_authenticated_user
 from app.models.search_models import FeedbackRequest, FeedbackResponse, FollowUpContext, SearchRequest, SearchResponse
+from app.core.llm_config import llm_config
+from app.services.agent.answer_generator import AnswerGenerator
+from app.services.agent.controller import MainController
+from app.services.agent.model_client import LLMConfigStageModelClient
+from app.services.agent.reviewer import GroundingReviewer
+from app.services.agent.runtime import AgentRuntime
+from app.services.agent.session import InMemoryAgentSessionStore
+from app.services.agent.tools import build_default_tool_registry
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
 from app.services.document_contract_service import DocumentContractService
 from app.services.document_asset_service import DocumentAssetService
 from app.services.search_feedback_service import SearchFeedbackService
+from app.services.search_application_service import SearchApplicationService
 from app.services.search_service import SearchService
 
 logger = logging.getLogger(__name__)
@@ -28,12 +37,53 @@ public_router = APIRouter()
 router = APIRouter()
 
 RELAXED_VECTOR_THRESHOLD = 0.35
-NON_SEARCH_INTENTS = {"greeting", "other", "dialog_management"}
+_agent_session_store = InMemoryAgentSessionStore()
 
 
 class HealthCheckResponse(BaseModel):
     status: str
     service: str
+
+
+def _build_search_application_service(
+    *,
+    search_service: SearchService,
+    asset_service: DocumentAssetService,
+    contract_service: DocumentContractService,
+) -> SearchApplicationService:
+    retrieval_port = search_service._get_retrieval_adapter()
+    model_client = LLMConfigStageModelClient(llm_config)
+    controller = MainController(
+        model_client=model_client,
+        tool_registry=build_default_tool_registry(),
+    )
+    runtime = AgentRuntime(
+        retrieval_port=retrieval_port,
+        controller=controller,
+        answer_generator=AnswerGenerator(model_client=model_client),
+        reviewer=GroundingReviewer(model_client=model_client),
+        session_store=_agent_session_store,
+    )
+    return SearchApplicationService(
+        search_service=search_service,
+        asset_service=asset_service,
+        contract_service=contract_service,
+        agent_runtime=runtime,
+        retrieval_port=retrieval_port,
+        endpoint_supports_reasoning=False,
+    )
+
+
+def get_search_application_service(
+    search_service: SearchService = Depends(SearchService),
+    asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+) -> SearchApplicationService:
+    return _build_search_application_service(
+        search_service=search_service,
+        asset_service=asset_service,
+        contract_service=contract_service,
+    )
 
 
 @public_router.get("/health", response_model=HealthCheckResponse)
@@ -45,13 +95,10 @@ async def health_check() -> HealthCheckResponse:
 async def search_documents(
     request: SearchRequest,
     current_user: UserIdentity = Depends(require_authenticated_user),
-    search_service: SearchService = Depends(SearchService),
-    asset_service: DocumentAssetService = Depends(DocumentAssetService),
-    contract_service: DocumentContractService = Depends(DocumentContractService),
+    application_service: SearchApplicationService = Depends(get_search_application_service),
     quota_service: DemoQuotaService = Depends(get_demo_quota_service),
 ):
     try:
-        start_time = datetime.now()
         quota_decision = await _consume_visitor_generation_quota(
             request,
             current_user,
@@ -60,130 +107,12 @@ async def search_documents(
         generation_allowed = request.use_generation and (
             quota_decision is None or quota_decision.allowed
         )
-
-        follow_up_context = request.follow_up_context
-        if (
-            follow_up_context is None
-            and request.use_generation
-            and search_service._is_document_summary_query(request.query)
-        ):
-            explicit_document_id = search_service.extract_explicit_document_id(request.query)
-            if explicit_document_id:
-                follow_up_context = FollowUpContext(
-                    target_document_id=explicit_document_id,
-                    candidate_documents=[],
-                    resolution_source="explicit_text",
-                )
-
-        follow_up_detail = None
-        if follow_up_context and follow_up_context.target_document_id:
-            follow_up_detail, follow_up_result = await search_service.load_follow_up_document_result(
-                follow_up_context,
-                asset_service,
-            )
-            if follow_up_detail and follow_up_result:
-                base_response = SearchResponse(
-                    query=request.query,
-                    results=[follow_up_result],
-                    total_count=1,
-                    search_time=(datetime.now() - start_time).total_seconds(),
-                    search_mode=request.search_mode,
-                )
-
-                base_response.quota = _quota_status(quota_decision)
-
-                if generation_allowed:
-                    try:
-                        generated_answer, generation_time = await search_service.generate_document_follow_up_answer(
-                            query=request.query,
-                            document_detail=follow_up_detail,
-                            history=request.history,
-                        )
-                        base_response.generated_answer = generated_answer
-                        base_response.generation_time = generation_time
-                    except Exception as exc:
-                        logger.error(
-                            "Document follow-up answer generation failed, falling back to search: %s",
-                            exc,
-                        )
-                    else:
-                        return base_response
-                return base_response
-
-        if not generation_allowed:
-            results = await _retrieve_results(request, search_service, asset_service, contract_service)
-            return SearchResponse(
-                query=request.query,
-                results=results,
-                total_count=len(results),
-                search_time=(datetime.now() - start_time).total_seconds(),
-                search_mode=request.search_mode,
-                quota=_quota_status(quota_decision),
-            )
-
-        intent = await search_service.detect_intent(request.query)
-        logger.info("Search intent detected for query=%r: %s", request.query, intent)
-
-        if intent in NON_SEARCH_INTENTS:
-            generated_answer = None
-            generation_time = None
-            if intent == "dialog_management":
-                generated_answer = await search_service.handle_dialog_management(
-                    query=request.query,
-                    history=request.history,
-                )
-            elif generation_allowed:
-                try:
-                    generated_answer, _ = await search_service.generate_chitchat_response(
-                        query=request.query,
-                        intent=intent,
-                        history=request.history,
-                    )
-                    generation_time = (datetime.now() - start_time).total_seconds()
-                except Exception:
-                    generated_answer = "您好，我主要负责标准检索、引用解读和相关文档查询。"
-            else:
-                generated_answer = None
-
-            return SearchResponse(
-                query=request.query,
-                results=[],
-                total_count=0,
-                search_time=(datetime.now() - start_time).total_seconds(),
-                search_mode=request.search_mode,
-                generated_answer=generated_answer if generation_allowed else None,
-                generation_time=generation_time if generation_allowed else None,
-                quota=_quota_status(quota_decision),
-            )
-
-        results = await _retrieve_results(request, search_service, asset_service, contract_service)
-
-        base_response = SearchResponse(
-            query=request.query,
-            results=results,
-            total_count=len(results),
-            search_time=(datetime.now() - start_time).total_seconds(),
-            search_mode=request.search_mode,
+        response = await application_service.execute(
+            request,
+            generation_allowed=generation_allowed,
         )
-
-        base_response.quota = _quota_status(quota_decision)
-
-        if not generation_allowed:
-            return base_response
-
-        try:
-            generated_answer, _ = await search_service.generate_answer(
-                query=request.query,
-                results=results,
-                top_context_docs=min(5, len(results)),
-                history=request.history,
-            )
-            base_response.generated_answer = generated_answer
-            base_response.generation_time = (datetime.now() - start_time).total_seconds()
-        except Exception as exc:
-            logger.error("Answer generation failed, returning search-only response: %s", exc)
-
-        return base_response
+        response.quota = _quota_status(quota_decision)
+        return response
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
 

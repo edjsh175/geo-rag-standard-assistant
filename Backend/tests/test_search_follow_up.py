@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from app.api.search_routes import search_documents
-from app.models.search_models import DocumentResult, FollowUpContext, SearchRequest
+from app.models.search_models import DocumentResult, FollowUpContext, SearchRequest, SearchResponse
 from app.services.search_service import SearchService
 
 
@@ -101,20 +101,14 @@ async def test_load_follow_up_document_result_returns_none_for_empty_content() -
 
 
 @pytest.mark.asyncio
-async def test_search_documents_uses_follow_up_context_before_regular_search() -> None:
-    detail = make_document_detail("14741")
-    follow_up_result = make_result("14741", "follow-up")
+async def test_search_documents_forwards_follow_up_context_to_application_layer() -> None:
+    class ApplicationServiceStub:
+        def __init__(self) -> None:
+            self.request = None
 
-    class SearchServiceStub:
-        async def load_follow_up_document_result(self, follow_up_context, asset_service):
-            return detail, follow_up_result
-
-        async def generate_document_follow_up_answer(self, query, document_detail, history=None):
-            assert document_detail["id"] == "14741"
-            return "这是该标准的主要内容摘要。", 0.12
-
-        async def detect_intent(self, query: str) -> str:  # pragma: no cover - should not run
-            raise AssertionError("detect_intent should not run for resolved follow-up questions")
+        async def execute(self, request, *, generation_allowed):
+            self.request = request
+            return SearchResponse(query=request.query)
 
     request = SearchRequest(
         query="第一个14741的主要内容是什么",
@@ -125,49 +119,27 @@ async def test_search_documents_uses_follow_up_context_before_regular_search() -
             resolution_source="explicit_text",
         ),
     )
+    application_service = ApplicationServiceStub()
 
     response = await search_documents(
         request,
-        search_service=SearchServiceStub(),
-        asset_service=AssetServiceStub(detail),
+        application_service=application_service,
     )
 
-    assert response.generated_answer == "这是该标准的主要内容摘要。"
-    assert response.total_count == 1
-    assert response.results[0].id == "14741"
+    assert response.query == request.query
+    assert application_service.request.follow_up_context.target_document_id == "14741"
 
 
 @pytest.mark.asyncio
-async def test_search_documents_falls_back_to_regular_search_when_follow_up_target_missing() -> None:
-    regular_result = make_result("22898", "regular-search")
-
-    class SearchServiceStub:
+async def test_search_documents_does_not_resolve_missing_follow_up_target_in_route() -> None:
+    class ApplicationServiceStub:
         def __init__(self) -> None:
-            self.search_called = False
+            self.request = None
 
-        async def load_follow_up_document_result(self, follow_up_context, asset_service):
-            return None, None
+        async def execute(self, request, *, generation_allowed):
+            self.request = request
+            return SearchResponse(query=request.query)
 
-        async def detect_intent(self, query: str) -> str:
-            return "search"
-
-        async def search(
-            self,
-            query,
-            top_k,
-            threshold,
-            spatial_filter=None,
-            metadata_filter=None,
-            search_mode="hybrid",
-            use_rerank=True,
-        ):
-            self.search_called = True
-            return [regular_result]
-
-        async def generate_answer(self, query, results, top_context_docs=5, history=None):
-            return "回退后的常规检索回答。", 0.23
-
-    search_service = SearchServiceStub()
     request = SearchRequest(
         query="14741的主要内容是什么",
         use_generation=True,
@@ -177,54 +149,38 @@ async def test_search_documents_falls_back_to_regular_search_when_follow_up_targ
             resolution_source="explicit_text",
         ),
     )
+    application_service = ApplicationServiceStub()
 
-    response = await search_documents(
+    await search_documents(
         request,
-        search_service=search_service,
-        asset_service=AssetServiceStub(None),
+        application_service=application_service,
     )
 
-    assert search_service.search_called is True
-    assert response.generated_answer == "回退后的常规检索回答。"
-    assert response.results[0].id == "22898"
+    assert application_service.request.follow_up_context.target_document_id == "14741"
 
 
 @pytest.mark.asyncio
-async def test_search_documents_extracts_explicit_document_id_without_follow_up_context() -> None:
-    detail = make_document_detail("7873")
-    follow_up_result = make_result("7873", "explicit-id-follow-up")
+async def test_search_documents_does_not_extract_document_id_semantics_in_route() -> None:
+    class ApplicationServiceStub:
+        def __init__(self) -> None:
+            self.request = None
 
-    class SearchServiceStub:
-        def _is_document_summary_query(self, query: str) -> bool:
-            return True
-
-        def extract_explicit_document_id(self, query: str) -> str | None:
-            return "7873"
-
-        async def load_follow_up_document_result(self, follow_up_context, asset_service):
-            assert follow_up_context.target_document_id == "7873"
-            assert follow_up_context.resolution_source == "explicit_text"
-            return detail, follow_up_result
-
-        async def generate_document_follow_up_answer(self, query, document_detail, history=None):
-            return "这是 7873 的文档摘要。", 0.08
-
-        async def detect_intent(self, query: str) -> str:  # pragma: no cover - should not run
-            raise AssertionError("detect_intent should not run when explicit document id is resolved")
+        async def execute(self, request, *, generation_allowed):
+            self.request = request
+            return SearchResponse(query=request.query)
 
     request = SearchRequest(
         query="7873的主要内容是什么？",
         use_generation=True,
     )
+    application_service = ApplicationServiceStub()
 
-    response = await search_documents(
+    await search_documents(
         request,
-        search_service=SearchServiceStub(),
-        asset_service=AssetServiceStub(detail),
+        application_service=application_service,
     )
 
-    assert response.generated_answer == "这是 7873 的文档摘要。"
-    assert response.results[0].id == "7873"
+    assert application_service.request.follow_up_context is None
 
 
 def test_build_document_follow_up_fallback_answer_uses_document_content() -> None:
