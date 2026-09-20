@@ -15,7 +15,9 @@ def test_document_lifecycle_migration_indexes_2048_vectors_with_halfvec_expressi
 
 
 def test_uploaded_document_vector_search_matches_halfvec_index_expression() -> None:
-    source = (ROOT / "app" / "services" / "search_service.py").read_text(encoding="utf-8")
+    source = (ROOT / "app" / "services" / "rag" / "postgres_adapter.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))" in source
 

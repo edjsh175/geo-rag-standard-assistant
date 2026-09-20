@@ -5,8 +5,8 @@ from datetime import datetime
 import pytest
 
 from app.models.search_models import DocumentResult
-from app.services.rag.retriever import RagRetriever
-from app.services.rag.types import SearchContext
+from app.services.rag.contracts import RetrievalQuery
+from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 
 
 def make_result(doc_id: str, similarity: float) -> DocumentResult:
@@ -38,24 +38,23 @@ async def test_retriever_keeps_exact_and_keyword_when_embedding_fails() -> None:
     async def vector_search(*args, **kwargs) -> list[DocumentResult]:
         raise AssertionError("vector search should not run without embedding")
 
-    retriever = RagRetriever(
-        get_query_embedding=get_query_embedding,
-        exact_standard_code_search=exact_search,
-        keyword_search=keyword_search,
-        vector_search=vector_search,
-    )
+    retriever = PostgresRetrievalAdapter()
+    retriever._get_query_embedding = get_query_embedding  # type: ignore[method-assign]
+    retriever._exact_standard_code_search = exact_search  # type: ignore[method-assign]
+    retriever._keyword_search = keyword_search  # type: ignore[method-assign]
+    retriever._vector_search = vector_search  # type: ignore[method-assign]
 
     retrieved = await retriever.retrieve(
-        SearchContext(
-            query="DB50/T 1846-2025",
+        RetrievalQuery(
+            query_text="DB50/T 1846-2025",
             top_k=10,
             threshold=0.7,
             search_mode="hybrid",
         )
     )
 
-    assert [result.id for result in retrieved.results] == ["exact", "keyword"]
+    assert [candidate.chunk_id for candidate in retrieved.candidates] == ["exact", "keyword"]
     assert retrieved.embedding_available is False
-    assert retrieved.exact_count == 1
-    assert retrieved.keyword_count == 1
-    assert retrieved.vector_count == 0
+    assert retrieved.diagnostics.exact_count == 1
+    assert retrieved.diagnostics.keyword_count == 1
+    assert retrieved.diagnostics.vector_count == 0

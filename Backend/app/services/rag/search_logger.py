@@ -11,7 +11,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 
 from app.core.database import db_manager
-from app.services.rag.types import SearchContext
+from app.services.rag.contracts import RetrievalQuery
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,14 @@ class RagSearchLogger:
 
     def build_payload(
         self,
-        context: SearchContext,
+        context: RetrievalQuery,
         results_count: int,
         duration_seconds: float,
         used_rerank: bool,
         embedding_available: Optional[bool],
     ) -> dict[str, Any]:
         return {
-            "query": context.query,
+            "query": context.query_text,
             "mode": context.mode,
             "top_k": context.top_k,
             "threshold": context.threshold,
@@ -49,7 +49,7 @@ class RagSearchLogger:
 
     async def log_search(
         self,
-        context: SearchContext,
+        context: RetrievalQuery,
         results_count: int,
         duration_seconds: float,
         used_rerank: bool,

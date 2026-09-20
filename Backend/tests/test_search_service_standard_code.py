@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.search_models import DocumentResult
-from app.services.search_service import SearchService
+from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 
 
 def make_result(
@@ -33,12 +33,12 @@ def make_result(
     )
 
 
-def build_service() -> SearchService:
-    return SearchService.__new__(SearchService)
+def build_adapter() -> PostgresRetrievalAdapter:
+    return PostgresRetrievalAdapter()
 
 
 def test_extract_keyword_terms_preserves_spaced_chinese_terms() -> None:
-    service = build_service()
+    service = build_adapter()
 
     terms = service._extract_keyword_terms("\u6ed1\u5761\u9632\u6cbb \u76d1\u6d4b")
 
@@ -47,7 +47,7 @@ def test_extract_keyword_terms_preserves_spaced_chinese_terms() -> None:
 
 
 def test_policy_chunk_result_carries_filterable_metadata() -> None:
-    service = build_service()
+    service = build_adapter()
     row = SimpleNamespace(
         id=1,
         standard_code="DB50_T 1846-2025",
@@ -76,7 +76,7 @@ def test_policy_chunk_result_carries_filterable_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_rerank_prioritizes_exact_standard_code_matches() -> None:
-    service = build_service()
+    service = build_adapter()
     results = [
         make_result("noise-1", "noise 1", "DB1310_T 365-2025", 0.95),
         make_result("target-1", "target 1", "DB50/T 1846-2025", 0.82),
@@ -94,7 +94,7 @@ async def test_rerank_prioritizes_exact_standard_code_matches() -> None:
 
 @pytest.mark.asyncio
 async def test_rerank_tolerates_standard_code_format_variants() -> None:
-    service = build_service()
+    service = build_adapter()
     results = [
         make_result("noise", "noise", "GB/T 11111-2020", 0.90),
         make_result("target", "target", "GB_T 38509-2020", 0.70),
@@ -108,7 +108,7 @@ async def test_rerank_tolerates_standard_code_format_variants() -> None:
 
 @pytest.mark.asyncio
 async def test_rerank_preserves_order_when_no_exact_standard_code_match() -> None:
-    service = build_service()
+    service = build_adapter()
     results = [
         make_result("first", "first", "DB50/T 1900-2025", 0.91),
         make_result("second", "second", "DB50/T 1846-2024", 0.88),
@@ -123,7 +123,7 @@ async def test_rerank_preserves_order_when_no_exact_standard_code_match() -> Non
 
 @pytest.mark.asyncio
 async def test_rerank_ignores_natural_language_queries() -> None:
-    service = build_service()
+    service = build_adapter()
     results = [
         make_result("first", "滑坡防治设计规范", "GB/T 38509-2020", 0.90),
         make_result("second", "其他规范", "DB50/T 1846-2025", 0.85),
