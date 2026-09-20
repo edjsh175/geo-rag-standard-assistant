@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.tools import ToolRegistry, build_default_tool_registry
+from app.models.search_models import MetadataFilter, SpatialFilter
 from app.services.rag.contracts import RetrievalPort, RetrievalQuery
 
 
@@ -33,6 +34,16 @@ class ToolObservation:
     status: str
     payload: Mapping[str, Any]
     is_terminal: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalRequestConstraints:
+    top_k: int = 10
+    threshold: float = 0.7
+    search_mode: str = "hybrid"
+    use_rerank: bool = True
+    metadata_filter: MetadataFilter | None = None
+    spatial_filter: SpatialFilter | None = None
 
 
 class ResourceFuse:
@@ -85,14 +96,24 @@ class ToolRuntime:
         evidence_ledger: EvidenceLedger,
         registry: ToolRegistry | None = None,
         resource_fuse: ResourceFuse | None = None,
+        retrieval_constraints: RetrievalRequestConstraints | None = None,
     ) -> None:
         self.retrieval_port = retrieval_port
         self.evidence_ledger = evidence_ledger
         self.registry = registry or build_default_tool_registry()
         self.resource_fuse = resource_fuse
+        self.retrieval_constraints = retrieval_constraints or RetrievalRequestConstraints()
 
     async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
-        self.registry.get(call.name)
+        try:
+            arguments = self.registry.validate(call.name, call.arguments)
+        except (KeyError, ValueError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+        call = ToolCall(
+            tool_call_id=call.tool_call_id,
+            name=call.name,
+            arguments=arguments,
+        )
         if self.resource_fuse is not None:
             self.resource_fuse.consume_step(tool_name=call.name)
 
@@ -104,6 +125,8 @@ class ToolRuntime:
             observation = self._compose_answer(turn_id=turn_id, call=call)
         elif call.name == "clarify":
             observation = self._clarify(call=call)
+        elif call.name == "limitation":
+            observation = self._limitation(call=call)
         else:  # pragma: no cover - registry.get() already rejects this branch.
             raise KeyError(f"unknown tool: {call.name}")
 
@@ -112,19 +135,18 @@ class ToolRuntime:
         return observation
 
     async def _retrieve_kb(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
-        query_text = self._required_text(call, "query")
-        top_k = self._positive_int(call.arguments.get("top_k", 10), name="top_k")
-        threshold = self._number(call.arguments.get("threshold", 0.7), name="threshold")
-        search_mode = str(call.arguments.get("search_mode", "hybrid") or "hybrid")
-        use_rerank = self._boolean(call.arguments.get("use_rerank", True), name="use_rerank")
+        query_text = str(call.arguments["query"]).strip()
+        constraints = self.retrieval_constraints
 
         result = await self.retrieval_port.retrieve(
             RetrievalQuery(
                 query_text=query_text,
-                top_k=top_k,
-                threshold=threshold,
-                search_mode=search_mode,
-                use_rerank=use_rerank,
+                top_k=constraints.top_k,
+                threshold=constraints.threshold,
+                search_mode=constraints.search_mode,
+                use_rerank=constraints.use_rerank,
+                metadata_filter=constraints.metadata_filter,
+                spatial_filter=constraints.spatial_filter,
             )
         )
         admitted = self.evidence_ledger.add_candidates(
@@ -145,8 +167,8 @@ class ToolRuntime:
         )
 
     def _reuse_evidence(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
-        query_text = self._required_text(call, "query")
-        limit = self._positive_int(call.arguments.get("limit", 8), name="limit")
+        query_text = str(call.arguments["query"]).strip()
+        limit = int(call.arguments["limit"])
         matches = self.evidence_ledger.search_memory(
             query=query_text,
             exclude_turn_id=turn_id,
@@ -184,7 +206,7 @@ class ToolRuntime:
         )
 
     def _clarify(self, *, call: ToolCall) -> ToolObservation:
-        question = self._required_text(call, "question")
+        question = str(call.arguments["question"]).strip()
         return ToolObservation(
             tool_call_id=call.tool_call_id,
             tool_name=call.name,
@@ -193,44 +215,21 @@ class ToolRuntime:
             is_terminal=True,
         )
 
-    @staticmethod
-    def _required_text(call: ToolCall, name: str) -> str:
-        value = call.arguments.get(name)
-        if not isinstance(value, str) or not value.strip():
-            raise ToolExecutionError(f"{name} must be a non-empty string")
-        return value.strip()
-
-    @staticmethod
-    def _positive_int(value: Any, *, name: str) -> int:
-        if isinstance(value, bool):
-            raise ToolExecutionError(f"{name} must be a positive integer")
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ToolExecutionError(f"{name} must be a positive integer") from exc
-        if parsed <= 0:
-            raise ToolExecutionError(f"{name} must be a positive integer")
-        return parsed
-
-    @staticmethod
-    def _number(value: Any, *, name: str) -> float:
-        if isinstance(value, bool):
-            raise ToolExecutionError(f"{name} must be a number")
-        try:
-            return float(value)
-        except (TypeError, ValueError) as exc:
-            raise ToolExecutionError(f"{name} must be a number") from exc
-
-    @staticmethod
-    def _boolean(value: Any, *, name: str) -> bool:
-        if not isinstance(value, bool):
-            raise ToolExecutionError(f"{name} must be a boolean")
-        return value
+    def _limitation(self, *, call: ToolCall) -> ToolObservation:
+        message = str(call.arguments["message"]).strip()
+        return ToolObservation(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            status="ok",
+            payload={"message": message},
+            is_terminal=True,
+        )
 
 
 __all__ = [
     "ResourceFuse",
     "ResourceFuseExceeded",
+    "RetrievalRequestConstraints",
     "ToolCall",
     "ToolExecutionError",
     "ToolObservation",

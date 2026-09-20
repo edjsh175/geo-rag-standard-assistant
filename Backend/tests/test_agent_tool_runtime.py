@@ -5,11 +5,14 @@ from datetime import datetime
 import pytest
 
 from app.models.search_models import DocumentResult
+from app.models.search_models import MetadataFilter, SpatialFilter
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.tool_runtime import (
+    RetrievalRequestConstraints,
     ResourceFuse,
     ResourceFuseExceeded,
     ToolCall,
+    ToolExecutionError,
     ToolRuntime,
     build_default_tool_registry,
 )
@@ -66,6 +69,7 @@ def test_default_registry_exposes_only_graph_free_agent_tools() -> None:
         "reuse_evidence",
         "compose_answer",
         "clarify",
+        "limitation",
     }
     serialized = " ".join(
         f"{spec.name} {spec.description}" for spec in registry.specs()
@@ -88,11 +92,7 @@ async def test_retrieve_kb_adds_candidates_to_current_working_evidence() -> None
         call=ToolCall(
             tool_call_id="call-1",
             name="retrieve_kb",
-            arguments={
-                "query": "重庆市滑坡监测要求",
-                "top_k": 6,
-                "search_mode": "keyword",
-            },
+            arguments={"query": "重庆市滑坡监测要求"},
         ),
     )
 
@@ -101,13 +101,50 @@ async def test_retrieve_kb_adds_candidates_to_current_working_evidence() -> None
     assert retrieval.queries == [
         RetrievalQuery(
             query_text="重庆市滑坡监测要求",
-            top_k=6,
-            search_mode="keyword",
         )
     ]
     working = ledger.working_evidence(turn_id="turn-1")
     assert len(working) == 1
     assert observation.payload["evidence_ids"] == [working[0].evidence_id]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_kb_preserves_request_level_retrieval_constraints() -> None:
+    retrieval = FakeRetrievalPort((make_candidate("chunk-1", "证据"),))
+    ledger = EvidenceLedger(session_id="session-1")
+    constraints = RetrievalRequestConstraints(
+        top_k=3,
+        threshold=0.82,
+        search_mode="semantic",
+        use_rerank=False,
+        metadata_filter=MetadataFilter(region="重庆"),
+        spatial_filter=SpatialFilter(
+            geometry={"type": "Point", "coordinates": [106.5, 29.5]},
+            distance=5000,
+        ),
+    )
+    runtime = ToolRuntime(
+        retrieval_port=retrieval,
+        evidence_ledger=ledger,
+        retrieval_constraints=constraints,
+    )
+
+    await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="call-constraints",
+            name="retrieve_kb",
+            arguments={"query": "重庆滑坡监测"},
+        ),
+    )
+
+    query = retrieval.queries[0]
+    assert query.top_k == 3
+    assert query.threshold == 0.82
+    assert query.search_mode == "semantic"
+    assert query.use_rerank is False
+    assert query.metadata_filter.region == "重庆"
+    assert query.spatial_filter.distance == 5000
 
 
 @pytest.mark.asyncio
@@ -181,6 +218,44 @@ async def test_clarify_returns_structured_terminal_observation() -> None:
     assert observation.status == "ok"
     assert observation.is_terminal is True
     assert observation.payload == {"question": "你指的是哪个行政区？"}
+
+
+@pytest.mark.asyncio
+async def test_limitation_is_a_structured_terminal_outcome() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-1"),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="call-limit",
+            name="limitation",
+            arguments={"message": "当前知识库没有足够证据支持结论。"},
+        ),
+    )
+
+    assert observation.is_terminal is True
+    assert observation.payload == {"message": "当前知识库没有足够证据支持结论。"}
+
+
+@pytest.mark.asyncio
+async def test_tool_arguments_are_validated_from_registry_schema() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-1"),
+    )
+
+    with pytest.raises(ToolExecutionError, match="invalid arguments"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="bad-call",
+                name="retrieve_kb",
+                arguments={"query": ""},
+            ),
+        )
 
 
 def test_resource_fuse_counts_all_steps_without_retrieval_specific_budget() -> None:

@@ -107,6 +107,7 @@ async def test_generation_false_uses_deterministic_search_without_agent() -> Non
     response = await service.execute(
         SearchRequest(query="规划标准", use_generation=False),
         generation_allowed=False,
+        principal_id="admin:test",
     )
 
     assert search.search_calls == 1
@@ -133,6 +134,7 @@ async def test_deterministic_search_preserves_single_relaxed_threshold_retry() -
             threshold=0.7,
         ),
         generation_allowed=False,
+        principal_id="admin:test",
     )
 
     assert search.thresholds == [0.7, 0.35]
@@ -161,6 +163,7 @@ async def test_generation_true_defaults_to_agent_runtime_without_intent_router()
             thinking=True,
         ),
         generation_allowed=True,
+        principal_id="admin:test",
     )
 
     assert search.search_calls == 0
@@ -168,6 +171,7 @@ async def test_generation_true_defaults_to_agent_runtime_without_intent_router()
     assert runtime.requests[0].session_id == "session-42"
     assert runtime.requests[0].reviewer_enabled is True
     assert runtime.requests[0].thinking is True
+    assert runtime.requests[0].principal_id == "admin:test"
     assert retrieval.fetch_calls == [("chunk-1",)]
     assert response.generated_answer == "agent answer"
     assert response.session_id == "session-42"
@@ -198,6 +202,7 @@ async def test_agent_request_forwards_follow_up_context_as_factual_runtime_conte
             ),
         ),
         generation_allowed=True,
+        principal_id="admin:test",
     )
 
     assert runtime.requests[0].request_context["follow_up_context"]["target_document_id"] == "14741"
@@ -218,9 +223,48 @@ async def test_explicit_linear_mode_is_compatibility_path_without_intent_detecti
     response = await service.execute(
         SearchRequest(query="规划标准", use_generation=True, mode="linear"),
         generation_allowed=True,
+        principal_id="admin:test",
     )
 
     assert search.search_calls == 1
     assert runtime.requests == []
     assert response.generated_answer == "linear answer"
     assert response.final_mode == "linear"
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_forwards_search_constraints_to_runtime() -> None:
+    runtime = AgentRuntimeStub()
+    service = SearchApplicationService(
+        search_service=SearchServiceStub(),
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=runtime,
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    await service.execute(
+        SearchRequest(
+            query="重庆标准",
+            use_generation=True,
+            top_k=4,
+            threshold=0.81,
+            search_mode="semantic",
+            use_rerank=False,
+            metadata_filter={"region": "重庆"},
+            spatial_filter={
+                "geometry": {"type": "Point", "coordinates": [106.5, 29.5]},
+                "distance": 3000,
+            },
+        ),
+        generation_allowed=True,
+        principal_id="admin:test",
+    )
+
+    constraints = runtime.requests[0].retrieval_constraints
+    assert constraints.top_k == 4
+    assert constraints.threshold == 0.81
+    assert constraints.search_mode == "semantic"
+    assert constraints.use_rerank is False
+    assert constraints.metadata_filter.region == "重庆"
+    assert constraints.spatial_filter.distance == 3000

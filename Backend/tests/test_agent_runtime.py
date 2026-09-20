@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 
 from app.models.search_models import DocumentResult
 from app.services.agent.answer_generator import GeneratedAnswer
+from app.services.agent.answer_generator import AnswerGenerationError
+from app.services.agent.controller import ControllerOutputError
 from app.services.agent.runtime import AgentRunRequest, AgentRuntime
 from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.tool_runtime import ToolCall
@@ -58,7 +61,7 @@ class RetrieveThenComposeController:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def decide(self, *, question, context_summary, observations, stage_policy):
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
         self.calls += 1
         if not observations:
             return ToolCall(
@@ -75,7 +78,7 @@ class RetrieveThenComposeController:
 
 
 class ReuseThenComposeController:
-    async def decide(self, *, question, context_summary, observations, stage_policy):
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
         if not observations:
             return ToolCall(
                 tool_call_id="reuse-1",
@@ -90,11 +93,33 @@ class ReuseThenComposeController:
 
 
 class ClarifyController:
-    async def decide(self, *, question, context_summary, observations, stage_policy):
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
         return ToolCall(
             tool_call_id="clarify-1",
             name="clarify",
             arguments={"question": "请明确行政区。"},
+        )
+
+
+class EndlessRetrieveController:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+        self.calls += 1
+        return ToolCall(
+            tool_call_id=f"retrieve-{self.calls}",
+            name="retrieve_kb",
+            arguments={"query": question},
+        )
+
+
+class InvalidArgumentsController:
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+        return ToolCall(
+            tool_call_id="invalid-args",
+            name="retrieve_kb",
+            arguments={"query": ""},
         )
 
 
@@ -128,6 +153,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
         AgentRunRequest(
             question="重庆市滑坡监测有什么要求？",
             session_id="session-1",
+            principal_id="admin:test",
         )
     )
 
@@ -163,7 +189,7 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
         session_store=store,
     )
     await first_runtime.run(
-        AgentRunRequest(question="滑坡监测要求", session_id="session-1")
+        AgentRunRequest(question="滑坡监测要求", session_id="session-1", principal_id="admin:test")
     )
 
     same_session_runtime = AgentRuntime(
@@ -173,7 +199,7 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
         session_store=store,
     )
     reused = await same_session_runtime.run(
-        AgentRunRequest(question="刚才那个要求呢？", session_id="session-1")
+        AgentRunRequest(question="刚才那个要求呢？", session_id="session-1", principal_id="admin:test")
     )
     assert reused.frozen_evidence.items[0].chunk_id == "chunk-history"
 
@@ -185,7 +211,7 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
     )
     with pytest.raises(ValueError, match="Frozen Evidence"):
         await other_session_runtime.run(
-            AgentRunRequest(question="刚才那个要求呢？", session_id="session-2")
+            AgentRunRequest(question="刚才那个要求呢？", session_id="session-2", principal_id="admin:test")
         )
 
 
@@ -199,7 +225,7 @@ async def test_runtime_can_end_with_structured_clarification_without_evidence() 
     )
 
     result = await runtime.run(
-        AgentRunRequest(question="查一下这个", session_id="session-1")
+        AgentRunRequest(question="查一下这个", session_id="session-1", principal_id="admin:test")
     )
 
     assert result.publication_state == "clarification"
@@ -227,12 +253,13 @@ async def test_reviewer_is_only_invoked_when_request_explicitly_enables_it() -> 
     )
 
     disabled = await runtime.run(
-        AgentRunRequest(question="问题一", session_id="session-1")
+        AgentRunRequest(question="问题一", session_id="session-1", principal_id="admin:test")
     )
     enabled = await runtime.run(
         AgentRunRequest(
             question="问题二",
             session_id="session-2",
+            principal_id="admin:test",
             reviewer_enabled=True,
         )
     )
@@ -240,3 +267,229 @@ async def test_reviewer_is_only_invoked_when_request_explicitly_enables_it() -> 
     assert disabled.review is None
     assert enabled.review == "reviewed"
     assert reviewer.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_reviewer_rejection_blocks_publication() -> None:
+    class RejectingReviewer:
+        async def review(self, **kwargs):
+            return SimpleNamespace(verdict="UNSUPPORTED", findings=())
+
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "证据")]),
+        controller=RetrieveThenComposeController(),
+        answer_generator=FakeAnswerGenerator(),
+        reviewer=RejectingReviewer(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="问题",
+            session_id="session-1",
+            principal_id="admin:test",
+            reviewer_enabled=True,
+        )
+    )
+
+    assert result.publication_state == "review_rejected"
+    assert result.answer is None
+    assert result.limitation
+
+
+@pytest.mark.asyncio
+async def test_legacy_history_seeds_only_a_new_session_and_then_session_is_authoritative() -> None:
+    class ContextCapturingController(ClarifyController):
+        def __init__(self) -> None:
+            self.contexts = []
+
+        async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+            self.contexts.append(context_summary)
+            return await super().decide(
+                question=question,
+                context_summary=context_summary,
+                working_evidence=working_evidence,
+                observations=observations,
+                stage_policy=stage_policy,
+            )
+
+    controller = ContextCapturingController()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=controller,
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    await runtime.run(
+        AgentRunRequest(
+            question="第二问",
+            session_id="session-1",
+            principal_id="admin:test",
+            legacy_history=({"role": "user", "content": "第一问"},),
+        )
+    )
+    await runtime.run(
+        AgentRunRequest(
+            question="第三问",
+            session_id="session-1",
+            principal_id="admin:test",
+            legacy_history=({"role": "user", "content": "伪造旧历史"},),
+        )
+    )
+
+    assert "第一问" in controller.contexts[0]
+    assert "伪造旧历史" not in controller.contexts[1]
+
+
+def test_session_store_isolates_same_session_id_by_principal() -> None:
+    store = InMemoryAgentSessionStore()
+    first = store.get_or_create("visitor:a", "same-session")
+    second = store.get_or_create("visitor:b", "same-session")
+
+    assert first is not second
+
+
+@pytest.mark.asyncio
+async def test_runtime_reports_resource_fuse_as_structured_failure() -> None:
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=EndlessRetrieveController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="一直检索",
+            session_id="session-fuse",
+            principal_id="admin:test",
+            max_steps=1,
+        )
+    )
+
+    assert result.publication_state == "resource_fuse"
+    assert result.answer is None
+    assert result.limitation == "Agent 运行达到资源保护上限，未发布答案。"
+    assert result.events[-1].payload["state"] == "resource_fuse"
+
+
+def test_session_store_evicts_oldest_session_when_capacity_is_reached() -> None:
+    store = InMemoryAgentSessionStore(max_sessions=2)
+    first = store.get_or_create("admin:test", "s1")
+    store.get_or_create("admin:test", "s2")
+    store.get_or_create("admin:test", "s3")
+
+    assert store.get("admin:test", "s1") is None
+    assert store.get("admin:test", "s2") is not None
+    assert store.get("admin:test", "s3") is not None
+    assert first.session_id == "s1"
+
+
+@pytest.mark.asyncio
+async def test_runtime_reports_invalid_controller_output_as_structured_failure() -> None:
+    class InvalidController:
+        async def decide(self, **kwargs):
+            raise ControllerOutputError("invalid controller output")
+
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=InvalidController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="问题",
+            session_id="session-invalid-controller",
+            principal_id="admin:test",
+        )
+    )
+
+    assert result.publication_state == "model_output_invalid"
+    assert result.answer is None
+    assert result.events[-1].payload["state"] == "model_output_invalid"
+
+
+@pytest.mark.asyncio
+async def test_runtime_reports_invalid_tool_arguments_as_structured_failure() -> None:
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=InvalidArgumentsController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="问题",
+            session_id="session-invalid-tool",
+            principal_id="admin:test",
+        )
+    )
+
+    assert result.publication_state == "model_output_invalid"
+
+
+@pytest.mark.asyncio
+async def test_runtime_reports_answer_generation_failure_as_structured_failure() -> None:
+    class FailingGenerator:
+        async def generate(self, **kwargs):
+            raise AnswerGenerationError("invalid structured answer")
+
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "证据")]),
+        controller=RetrieveThenComposeController(),
+        answer_generator=FailingGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="问题",
+            session_id="session-invalid-answer",
+            principal_id="admin:test",
+        )
+    )
+
+    assert result.publication_state == "model_output_invalid"
+
+
+@pytest.mark.asyncio
+async def test_runtime_derives_reasoning_capability_from_model_adapter_not_request() -> None:
+    class ReasoningAwareClarifyController(ClarifyController):
+        def __init__(self) -> None:
+            self.model_client = SimpleNamespace(supports_reasoning=True)
+            self.reasoning_flags = []
+
+        async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+            self.reasoning_flags.append(
+                stage_policy.for_stage("controller").request_reasoning
+            )
+            return await super().decide(
+                question=question,
+                context_summary=context_summary,
+                working_evidence=working_evidence,
+                observations=observations,
+                stage_policy=stage_policy,
+            )
+
+    controller = ReasoningAwareClarifyController()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=controller,
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    await runtime.run(
+        AgentRunRequest(
+            question="需要思考",
+            session_id="session-reasoning",
+            principal_id="admin:test",
+            thinking=True,
+        )
+    )
+
+    assert controller.reasoning_flags == [True]

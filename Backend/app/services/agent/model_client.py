@@ -20,6 +20,10 @@ class ModelResponse:
 
 
 class StageModelClient(Protocol):
+    @property
+    def supports_reasoning(self) -> bool:
+        """Whether this adapter can explicitly honor reasoning control."""
+
     async def complete(self, request: ModelRequest) -> ModelResponse:
         """Return provider output without interpreting stage semantics."""
 
@@ -34,6 +38,10 @@ class LLMConfigStageModelClient:
 
     def __init__(self, llm_config) -> None:
         self.llm_config = llm_config
+
+    @property
+    def supports_reasoning(self) -> bool:
+        return False
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         if request.request_reasoning:

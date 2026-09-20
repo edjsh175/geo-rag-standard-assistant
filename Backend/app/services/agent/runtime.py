@@ -8,14 +8,18 @@ import json
 from typing import Any, AsyncIterator, Callable, Mapping
 from uuid import uuid4
 
-from app.services.agent.answer_generator import GeneratedAnswer
+from app.services.agent.answer_generator import AnswerGenerationError, GeneratedAnswer
+from app.services.agent.controller import ControllerOutputError
 from app.services.agent.context import AgentContextBuilder
 from app.services.agent.contracts import FrozenEvidenceSnapshot
 from app.services.agent.events import AgentEvent
 from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
+    RetrievalRequestConstraints,
     ResourceFuse,
+    ResourceFuseExceeded,
+    ToolExecutionError,
     ToolObservation,
     ToolRuntime,
 )
@@ -26,12 +30,16 @@ from app.services.rag.contracts import RetrievalPort
 class AgentRunRequest:
     question: str
     session_id: str
+    principal_id: str
     reviewer_enabled: bool = False
     thinking: bool = False
-    endpoint_supports_reasoning: bool = False
     max_steps: int = 12
     max_elapsed_seconds: float = 60.0
     request_context: Mapping[str, Any] = field(default_factory=dict)
+    legacy_history: tuple[Mapping[str, str], ...] = ()
+    retrieval_constraints: RetrievalRequestConstraints = field(
+        default_factory=RetrievalRequestConstraints
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +50,7 @@ class AgentRunResult:
     publication_state: str
     answer: GeneratedAnswer | None
     clarification: str | None
+    limitation: str | None
     frozen_evidence: FrozenEvidenceSnapshot | None
     review: Any | None
     events: tuple[AgentEvent, ...]
@@ -70,6 +79,10 @@ class AgentRuntime:
         self.reviewer = reviewer
         self.session_store = session_store
         self.context_builder = context_builder or AgentContextBuilder()
+        model_client = getattr(controller, "model_client", None)
+        self.endpoint_supports_reasoning = bool(
+            getattr(model_client, "supports_reasoning", False)
+        )
 
     async def run(
         self,
@@ -81,10 +94,69 @@ class AgentRuntime:
         if not question:
             raise ValueError("question must not be empty")
 
-        session = self.session_store.get_or_create(request.session_id)
+        session = self.session_store.get_or_create(
+            request.principal_id,
+            request.session_id,
+        )
+        if not session.events and request.legacy_history:
+            self._seed_legacy_history(session.events, request.legacy_history, session.session_id)
         turn_id = session.new_turn_id()
         trace_id = str(uuid4())
         turn_events: list[AgentEvent] = []
+
+        def resource_fuse_result() -> AgentRunResult:
+            limitation = "Agent 运行达到资源保护上限，未发布答案。"
+            self._append_event(
+                session.events,
+                turn_events,
+                AgentEvent(
+                    event_type="publication_completed",
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    payload={"state": "resource_fuse"},
+                ),
+                event_listener,
+            )
+            return AgentRunResult(
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                publication_state="resource_fuse",
+                answer=None,
+                clarification=None,
+                limitation=limitation,
+                frozen_evidence=None,
+                review=None,
+                events=tuple(turn_events),
+            )
+
+        def model_output_failure_result() -> AgentRunResult:
+            limitation = "模型输出未满足 Agent 结构化协议，未发布答案。"
+            self._append_event(
+                session.events,
+                turn_events,
+                AgentEvent(
+                    event_type="publication_completed",
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    payload={"state": "model_output_invalid"},
+                ),
+                event_listener,
+            )
+            return AgentRunResult(
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                publication_state="model_output_invalid",
+                answer=None,
+                clarification=None,
+                limitation=limitation,
+                frozen_evidence=None,
+                review=None,
+                events=tuple(turn_events),
+            )
 
         self._append_event(
             session.events,
@@ -107,15 +179,19 @@ class AgentRuntime:
             retrieval_port=self.retrieval_port,
             evidence_ledger=session.evidence_ledger,
             resource_fuse=fuse,
+            retrieval_constraints=request.retrieval_constraints,
         )
         stage_policy = LLMStagePolicy(
             user_thinking=request.thinking,
-            endpoint_supports_reasoning=request.endpoint_supports_reasoning,
+            endpoint_supports_reasoning=self.endpoint_supports_reasoning,
         )
         observations: list[ToolObservation] = []
 
         while True:
-            fuse.ensure_within_limits()
+            try:
+                fuse.ensure_within_limits()
+            except ResourceFuseExceeded:
+                return resource_fuse_result()
             context = self.context_builder.build(
                 question=question,
                 prior_events=session.events[:-1],
@@ -124,21 +200,26 @@ class AgentRuntime:
                         "evidence_id": item.evidence_id,
                         "citation_id": item.citation_id,
                         "title": item.title,
+                        "excerpt": item.text[:800],
                     }
                     for item in session.evidence_ledger.working_evidence(
                         turn_id=turn_id
                     )
                 ),
             )
-            call = await self.controller.decide(
-                question=context.current_question,
-                context_summary=self._merge_request_context(
-                    context.summary,
-                    request.request_context,
-                ),
-                observations=tuple(observations),
-                stage_policy=stage_policy,
-            )
+            try:
+                call = await self.controller.decide(
+                    question=context.current_question,
+                    context_summary=self._merge_request_context(
+                        context.summary,
+                        request.request_context,
+                    ),
+                    working_evidence=context.working_evidence,
+                    observations=tuple(observations),
+                    stage_policy=stage_policy,
+                )
+            except ControllerOutputError:
+                return model_output_failure_result()
             self._append_event(
                 session.events,
                 turn_events,
@@ -164,7 +245,12 @@ class AgentRuntime:
                 event_listener,
             )
 
-            observation = await tool_runtime.execute(turn_id=turn_id, call=call)
+            try:
+                observation = await tool_runtime.execute(turn_id=turn_id, call=call)
+            except ResourceFuseExceeded:
+                return resource_fuse_result()
+            except ToolExecutionError:
+                return model_output_failure_result()
             if call.name == "compose_answer":
                 snapshot = observation.payload["snapshot"]
                 self._append_event(
@@ -225,6 +311,34 @@ class AgentRuntime:
                     publication_state="clarification",
                     answer=None,
                     clarification=clarification,
+                    limitation=None,
+                    frozen_evidence=None,
+                    review=None,
+                    events=tuple(turn_events),
+                )
+
+            if call.name == "limitation":
+                limitation = str(observation.payload["message"])
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="publication_completed",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={"state": "limitation"},
+                    ),
+                    event_listener,
+                )
+                return AgentRunResult(
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    publication_state="limitation",
+                    answer=None,
+                    clarification=None,
+                    limitation=limitation,
                     frozen_evidence=None,
                     review=None,
                     events=tuple(turn_events),
@@ -233,11 +347,14 @@ class AgentRuntime:
             snapshot = observation.payload["snapshot"]
             if not snapshot.items:
                 raise ValueError("knowledge publication requires Frozen Evidence")
-            answer = await self.answer_generator.generate(
-                question=question,
-                snapshot=snapshot,
-                stage_policy=stage_policy,
-            )
+            try:
+                answer = await self.answer_generator.generate(
+                    question=question,
+                    snapshot=snapshot,
+                    stage_policy=stage_policy,
+                )
+            except AnswerGenerationError:
+                return model_output_failure_result()
             self._append_event(
                 session.events,
                 turn_events,
@@ -255,12 +372,69 @@ class AgentRuntime:
             if request.reviewer_enabled:
                 if self.reviewer is None:
                     raise RuntimeError("reviewer_enabled but no reviewer is configured")
-                review = await self.reviewer.review(
-                    question=question,
-                    answer=answer,
-                    snapshot=snapshot,
-                    stage_policy=stage_policy,
-                )
+                try:
+                    review = await self.reviewer.review(
+                        question=question,
+                        answer=answer,
+                        snapshot=snapshot,
+                        stage_policy=stage_policy,
+                    )
+                except Exception as exc:
+                    limitation = "证据审查执行失败，答案未发布。"
+                    self._append_event(
+                        session.events,
+                        turn_events,
+                        AgentEvent(
+                            event_type="publication_completed",
+                            session_id=session.session_id,
+                            turn_id=turn_id,
+                            trace_id=trace_id,
+                            payload={
+                                "state": "review_failed",
+                                "error_type": type(exc).__name__,
+                            },
+                        ),
+                        event_listener,
+                    )
+                    return AgentRunResult(
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        publication_state="review_failed",
+                        answer=None,
+                        clarification=None,
+                        limitation=limitation,
+                        frozen_evidence=snapshot,
+                        review=None,
+                        events=tuple(turn_events),
+                    )
+                verdict = str(getattr(review, "verdict", "")).strip().upper()
+                if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
+                    limitation = "答案未通过证据审查，未发布。"
+                    self._append_event(
+                        session.events,
+                        turn_events,
+                        AgentEvent(
+                            event_type="publication_completed",
+                            session_id=session.session_id,
+                            turn_id=turn_id,
+                            trace_id=trace_id,
+                            payload={"state": "review_rejected", "verdict": verdict},
+                        ),
+                        event_listener,
+                    )
+                    return AgentRunResult(
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        publication_state="review_rejected",
+                        answer=None,
+                        clarification=None,
+                        limitation=limitation,
+                        frozen_evidence=snapshot,
+                        review=review,
+                        events=tuple(turn_events),
+                    )
 
             self._append_event(
                 session.events,
@@ -290,6 +464,7 @@ class AgentRuntime:
                 publication_state="published",
                 answer=answer,
                 clarification=None,
+                limitation=None,
                 frozen_evidence=snapshot,
                 review=review,
                 events=tuple(turn_events),
@@ -350,3 +525,24 @@ class AgentRuntime:
         if not summary:
             return f"request_context: {factual_context}"
         return f"{summary}\nrequest_context: {factual_context}"
+
+    @staticmethod
+    def _seed_legacy_history(
+        session_events: list[AgentEvent],
+        history: tuple[Mapping[str, str], ...],
+        session_id: str,
+    ) -> None:
+        for index, message in enumerate(history, start=1):
+            role = message.get("role")
+            content = message.get("content")
+            if role not in {"user", "assistant"} or not isinstance(content, str) or not content.strip():
+                continue
+            session_events.append(
+                AgentEvent(
+                    event_type="user_message" if role == "user" else "assistant_message",
+                    session_id=session_id,
+                    turn_id=f"legacy-{index}",
+                    trace_id="legacy-seed",
+                    payload={"text": content.strip()},
+                )
+            )

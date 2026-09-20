@@ -10,6 +10,18 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-georag-backend-rag-agent-adaptation-design.md`
 
+## Post-Review Closure Status
+
+2026-09-20 review pass closed the Task 4–8/12 gaps that were not covered by the
+first implementation pass: Controller now receives bounded Working Evidence,
+tool input models are the schema/validation source of truth, request-level
+retrieval constraints are preserved in Agent mode, limitation/resource/model
+failure outcomes are structured, Reviewer verdicts gate publication, Session
+state is principal-scoped with a hard in-memory capacity, legacy client history
+only seeds a new Session, and the duplicate route-level retrieval helper was
+removed. Task 13 real PostgreSQL + real LLM + frontend E2E remains pending and
+is still required before the whole PRD can be declared complete.
+
 ## Global Constraints
 
 - Python 运行时必须满足 `>=3.12`；不能用系统 Python 3.11 的失败结果判断代码测试状态。

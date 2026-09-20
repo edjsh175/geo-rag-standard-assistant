@@ -73,7 +73,7 @@ async def test_reviewer_checks_claims_against_frozen_evidence_with_reasoning_off
         stage_policy=LLMStagePolicy(True, True),
     )
 
-    assert result.verdict == "supported"
+    assert result.verdict == "SUPPORTED"
     assert result.findings[0].status == "SUPPORTED"
     assert client.calls[0].stage == "reviewer"
     assert client.calls[0].request_reasoning is False
