@@ -10,8 +10,10 @@ from minio import Minio
 
 from app.core.config import settings
 from app.core.llm_config import llm_config
+from app.services.document_chunker import DocumentChunker
+from app.services.document_parser import DocumentParser
 from app.services.document_repository import DocumentRepository
-from app.services.document_text_extractor import DocumentTextExtractor, UnsupportedDocumentParser
+from app.services.document_text_extractor import UnsupportedDocumentParser
 
 
 class IndexingRepository(Protocol):
@@ -67,12 +69,17 @@ class DocumentIndexingService:
         self,
         repository: IndexingRepository | None = None,
         storage: Any | None = None,
-        extractor: DocumentTextExtractor | None = None,
+        parser: DocumentParser | None = None,
+        chunker: DocumentChunker | None = None,
         embedding_provider: Any | None = None,
     ) -> None:
         self.repository = repository or DocumentRepository()
         self.storage = storage or MinioDocumentVersionStorage()
-        self.extractor = extractor or DocumentTextExtractor()
+        self.parser = parser or DocumentParser()
+        self.chunker = chunker or DocumentChunker(
+            chunk_size=settings.DOCUMENT_CHUNK_SIZE,
+            chunk_overlap=settings.DOCUMENT_CHUNK_OVERLAP,
+        )
         self.embedding_provider = embedding_provider or LLMEmbeddingProvider()
 
     async def run_job(self, job_id: str, *, retrying_on_error: bool = False) -> None:
@@ -87,37 +94,40 @@ class DocumentIndexingService:
         try:
             await self.repository.mark_job_running(job_id, "parsing")
             local_path = await self.storage.download_version_to_temp(payload)
-            extracted = self.extractor.extract(local_path, payload.get("mime_type"))
-            if not extracted.text.strip():
+            parsed = self.parser.parse(local_path, payload.get("mime_type"))
+            if not parsed.markdown.strip():
                 raise UnsupportedDocumentParser("No indexable text was extracted from the document.")
 
             await self.repository.update_job_stage(job_id, "chunking")
-            text_chunks = self._split_text(extracted.text)
-            if not text_chunks:
+            document_chunks = self.chunker.chunk(parsed)
+            if not document_chunks:
                 raise UnsupportedDocumentParser("No indexable chunks were produced from the document.")
 
             await self.repository.update_job_stage(job_id, "embedding")
-            embedding_inputs = [self._build_embedding_input(payload, chunk) for chunk in text_chunks]
+            embedding_inputs = [
+                self._build_embedding_input(payload, chunk.content)
+                for chunk in document_chunks
+            ]
             embeddings = await self.embedding_provider.embed_texts(embedding_inputs)
-            if len(embeddings) != len(text_chunks):
+            if len(embeddings) != len(document_chunks):
                 raise RuntimeError("Embedding provider returned a mismatched number of vectors.")
 
             base_metadata = dict(payload.get("metadata") or {})
             chunks = [
                 {
                     "chunk_index": index,
-                    "header_path": None,
-                    "page_number": None,
-                    "content": chunk,
+                    "header_path": chunk.header_path,
+                    "page_number": chunk.page_number,
+                    "content": chunk.content,
                     "metadata": {
                         **base_metadata,
-                        **dict(extracted.metadata or {}),
+                        **dict(parsed.metadata or {}),
                         "title": payload.get("title") or base_metadata.get("title"),
                         "filename": payload.get("filename"),
                     },
                     "embedding": embeddings[index],
                 }
-                for index, chunk in enumerate(text_chunks)
+                for index, chunk in enumerate(document_chunks)
             ]
             await self.repository.replace_chunks(
                 document_id=payload["document_id"],
@@ -137,37 +147,3 @@ class DocumentIndexingService:
     def _build_embedding_input(payload: dict[str, Any], chunk: str) -> str:
         title = payload.get("title") or payload.get("filename") or ""
         return f"[Title: {title}]\n\n{chunk}" if title else chunk
-
-    @staticmethod
-    def _split_text(text: str) -> list[str]:
-        cleaned = text.strip()
-        if not cleaned:
-            return []
-
-        try:
-            from langchain_text_splitters import RecursiveCharacterTextSplitter
-        except Exception:
-            return DocumentIndexingService._simple_split(cleaned)
-
-        try:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=settings.DOCUMENT_CHUNK_SIZE,
-                chunk_overlap=settings.DOCUMENT_CHUNK_OVERLAP,
-            )
-            return [chunk.strip() for chunk in splitter.split_text(cleaned) if chunk.strip()]
-        except Exception:
-            return DocumentIndexingService._simple_split(cleaned)
-
-    @staticmethod
-    def _simple_split(text: str) -> list[str]:
-        chunk_size = max(1, settings.DOCUMENT_CHUNK_SIZE)
-        overlap = max(0, min(settings.DOCUMENT_CHUNK_OVERLAP, chunk_size - 1))
-        chunks: list[str] = []
-        start = 0
-        while start < len(text):
-            end = min(len(text), start + chunk_size)
-            chunks.append(text[start:end].strip())
-            if end >= len(text):
-                break
-            start = end - overlap
-        return [chunk for chunk in chunks if chunk]
