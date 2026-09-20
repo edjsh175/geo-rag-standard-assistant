@@ -621,6 +621,7 @@ export default function App() {
 
   // 聊天加载状态
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const conversationIdRef = useRef<string | undefined>(undefined);
   // AbortController引用（用于中断请求）
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -809,11 +810,12 @@ export default function App() {
       const queryForBackend = buildRegionAwareQuery(content, regionContext);
       const response = await chatService.sendMessage(
         queryForBackend,
-        undefined,
+        conversationIdRef.current,
         history,
         abortController.signal,
         followUpContext
       );
+      conversationIdRef.current = response.conversation_id;
       if (response.quota) {
         updateQuota(response.quota);
       }
@@ -834,8 +836,12 @@ export default function App() {
       // 转换references为文档
       const documents = (response.references || []).map(toFrontendDocumentFromResult);
 
-      // 提取ADCODE并净化消息内容
-      const { purifiedContent, adcode, name } = extractAdcodeAndPurify(response.message);
+      // 优先使用结构化 MapAction；Markdown JSON 仅作为迁移期兼容回退。
+      const legacyMap = extractAdcodeAndPurify(response.message);
+      const structuredMap = response.map_action;
+      const purifiedContent = structuredMap ? response.message.trim() : legacyMap.purifiedContent;
+      const adcode = structuredMap?.adcode ?? legacyMap.adcode;
+      const name = structuredMap?.name ?? legacyMap.name;
 
       // 如果提取到有效的ADCODE，写入全局 Store（双引擎自动响应）
       if (adcode) {
