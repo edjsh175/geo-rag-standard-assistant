@@ -50,6 +50,7 @@ export const chatService = {
         top_k: 5,
         use_generation: true,
         search_mode: 'semantic',
+        session_id: conversationId,
         history,
         follow_up_context: followUpContext,
       };
@@ -67,7 +68,7 @@ export const chatService = {
 
       return {
         message: searchResponse.generated_answer || fallbackMessage,
-        conversation_id: conversationId || `conv_${Date.now()}`,
+        conversation_id: searchResponse.session_id || conversationId || `conv_${Date.now()}`,
         references: searchResponse.results || [],
         timestamp: new Date().toISOString(),
         quota,

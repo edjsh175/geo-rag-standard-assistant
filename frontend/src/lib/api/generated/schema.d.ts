@@ -767,15 +767,18 @@ export interface components {
         /** Body_calculate_intersection_api_spatial_intersection_post */
         Body_calculate_intersection_api_spatial_intersection_post: {
             /** Geometry1 */
-            geometry1: Record<string, unknown>;
+            geometry1: {
+                [key: string]: unknown;
+            };
             /** Geometry2 */
-            geometry2: Record<string, unknown>;
+            geometry2: {
+                [key: string]: unknown;
+            };
         };
         /** Body_upload_document_api_documents_upload_post */
         Body_upload_document_api_documents_upload_post: {
             /**
              * File
-             * Format: binary
              * @description Document to upload.
              */
             file: string;
@@ -927,9 +930,13 @@ export interface components {
             /** Content */
             content: string;
             /** Metadata */
-            metadata: Record<string, unknown>;
+            metadata: {
+                [key: string]: unknown;
+            };
             /** Spatial Info */
-            spatial_info?: Record<string, unknown> | null;
+            spatial_info?: {
+                [key: string]: unknown;
+            } | null;
             file_info: components["schemas"]["DocumentFileInfo"];
             standard_info?: components["schemas"]["StandardInfo"] | null;
             /**
@@ -1110,7 +1117,9 @@ export interface components {
              * Metadata
              * @description 文档元数据
              */
-            metadata?: Record<string, unknown>;
+            metadata?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * DocumentListResponse
@@ -1167,12 +1176,16 @@ export interface components {
              * Metadata
              * @description Metadata payload.
              */
-            metadata?: Record<string, unknown>;
+            metadata?: {
+                [key: string]: unknown;
+            };
             /**
              * Spatial Info
              * @description Optional spatial metadata.
              */
-            spatial_info?: Record<string, unknown> | null;
+            spatial_info?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * File Type
              * @description File extension or logical type.
@@ -1217,14 +1230,18 @@ export interface components {
              */
             metadata?: {
                 [key: string]: unknown;
-            } | Record<string, unknown> | null;
+            } | {
+                [key: string]: unknown;
+            } | null;
             /**
              * Spatial Metadata
              * @description 空间元数据局部更新
              */
             spatial_metadata?: {
                 [key: string]: unknown;
-            } | Record<string, unknown> | null;
+            } | {
+                [key: string]: unknown;
+            } | null;
             /**
              * Reindex
              * @description 是否重新索引
@@ -1372,7 +1389,9 @@ export interface components {
             /** Keywords */
             keywords?: string[] | null;
             /** Custom Filters */
-            custom_filters?: Record<string, unknown> | null;
+            custom_filters?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** PresignedRequest */
         PresignedRequest: {
@@ -1439,6 +1458,27 @@ export interface components {
              */
             use_generation?: boolean;
             /**
+             * Session Id
+             * @description Server-side Agent session identifier.
+             */
+            session_id?: string | null;
+            /**
+             * Mode
+             * @description Generation mode. Agent is the default when generation is enabled.
+             */
+            mode?: ("agent" | "linear") | null;
+            /**
+             * Reviewer Enabled
+             * @description Whether to run the optional grounding reviewer for this request.
+             * @default false
+             */
+            reviewer_enabled?: boolean;
+            /**
+             * Thinking
+             * @description User preference for Controller reasoning when the endpoint supports it.
+             */
+            thinking?: boolean | null;
+            /**
              * History
              * @description Conversation history.
              */
@@ -1496,6 +1536,26 @@ export interface components {
             generation_time?: number | null;
             /** @description Visitor demo quota status. */
             quota?: components["schemas"]["DemoQuotaStatus"] | null;
+            /**
+             * Session Id
+             * @description Agent session identifier.
+             */
+            session_id?: string | null;
+            /**
+             * Trace Id
+             * @description Runtime trace identifier for this turn.
+             */
+            trace_id?: string | null;
+            /**
+             * Final Mode
+             * @description Generation mode that produced the final answer.
+             */
+            final_mode?: ("agent" | "linear") | null;
+            /**
+             * Publication State
+             * @description Runtime publication state such as published or clarification.
+             */
+            publication_state?: string | null;
         };
         /**
          * SpatialFilter
@@ -1503,7 +1563,9 @@ export interface components {
          */
         SpatialFilter: {
             /** Geometry */
-            geometry?: Record<string, unknown> | null;
+            geometry?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Distance
              * @description Distance in meters.
@@ -1522,7 +1584,9 @@ export interface components {
          */
         SpatialQuery: {
             /** Geometry */
-            geometry: Record<string, unknown>;
+            geometry: {
+                [key: string]: unknown;
+            };
             /**
              * Distance
              * @default 1000
@@ -1595,6 +1659,10 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, unknown>;
         };
     };
     responses: never;
