@@ -46,3 +46,16 @@ class FrozenEvidenceSnapshot:
     @property
     def evidence_ids(self) -> tuple[str, ...]:
         return tuple(item.evidence_id for item in self.items)
+
+
+@dataclass(frozen=True, slots=True)
+class MapAction:
+    type: str
+    target: str
+    adcode: str | None = None
+    name: str | None = None
+    payload: Mapping[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.payload is not None:
+            object.__setattr__(self, "payload", freeze_json(self.payload))

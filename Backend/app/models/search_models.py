@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.services.demo_quota_service import DemoQuotaStatus
+from app.services.agent.contracts import MapAction
 
 
 class SpatialFilter(BaseModel):
@@ -135,6 +136,7 @@ class SearchResponse(BaseModel):
         None,
         description="Runtime publication state such as published or clarification.",
     )
+    map_action: Optional[MapAction] = Field(None, description="Structured map action for the frontend.")
 
 
 class SearchHistory(BaseModel):
