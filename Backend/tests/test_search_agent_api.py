@@ -42,6 +42,19 @@ class SearchServiceStub:
         return "linear answer", 0.1
 
 
+class RelaxedSearchServiceStub(SearchServiceStub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.thresholds: list[float] = []
+
+    async def search(self, **kwargs):
+        self.search_calls += 1
+        self.thresholds.append(float(kwargs["threshold"]))
+        if len(self.thresholds) == 1:
+            return []
+        return [make_result()]
+
+
 class AssetServiceStub:
     async def enrich_search_results(self, results):
         return results
@@ -100,6 +113,30 @@ async def test_generation_false_uses_deterministic_search_without_agent() -> Non
     assert search.search_calls == 1
     assert runtime.requests == []
     assert response.generated_answer is None
+    assert response.results[0].id == "chunk-1"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_search_preserves_single_relaxed_threshold_retry() -> None:
+    search = RelaxedSearchServiceStub()
+    service = SearchApplicationService(
+        search_service=search,
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=AgentRuntimeStub(),
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    response = await service.execute(
+        SearchRequest(
+            query="规划标准",
+            use_generation=False,
+            threshold=0.7,
+        ),
+        generation_allowed=False,
+    )
+
+    assert search.thresholds == [0.7, 0.35]
     assert response.results[0].id == "chunk-1"
 
 

@@ -28,7 +28,10 @@ from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService,
 from app.services.document_contract_service import DocumentContractService
 from app.services.document_asset_service import DocumentAssetService
 from app.services.search_feedback_service import SearchFeedbackService
-from app.services.search_application_service import SearchApplicationService
+from app.services.search_application_service import (
+    RELAXED_VECTOR_THRESHOLD,
+    SearchApplicationService,
+)
 from app.services.search_service import SearchService
 
 logger = logging.getLogger(__name__)
@@ -36,7 +39,6 @@ logger = logging.getLogger(__name__)
 public_router = APIRouter()
 router = APIRouter()
 
-RELAXED_VECTOR_THRESHOLD = 0.35
 _agent_session_store = InMemoryAgentSessionStore()
 
 
