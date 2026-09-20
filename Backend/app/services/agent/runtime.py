@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.context import AgentContextBuilder
@@ -34,6 +35,7 @@ class AgentRunRequest:
 class AgentRunResult:
     session_id: str
     turn_id: str
+    trace_id: str
     publication_state: str
     answer: GeneratedAnswer | None
     clarification: str | None
@@ -67,6 +69,7 @@ class AgentRuntime:
 
         session = self.session_store.get_or_create(request.session_id)
         turn_id = session.new_turn_id()
+        trace_id = str(uuid4())
         turn_events: list[AgentEvent] = []
 
         self._append_event(
@@ -76,6 +79,7 @@ class AgentRuntime:
                 event_type="user_message",
                 session_id=session.session_id,
                 turn_id=turn_id,
+                trace_id=trace_id,
                 payload={"text": question},
             ),
         )
@@ -124,6 +128,7 @@ class AgentRuntime:
                     event_type="controller_decision",
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     payload={"tool_name": call.name, "tool_call_id": call.tool_call_id},
                 ),
             )
@@ -134,6 +139,7 @@ class AgentRuntime:
                     event_type="tool_started",
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     payload={"tool_name": call.name, "tool_call_id": call.tool_call_id},
                 ),
             )
@@ -148,6 +154,7 @@ class AgentRuntime:
                         event_type="evidence_frozen",
                         session_id=session.session_id,
                         turn_id=turn_id,
+                        trace_id=trace_id,
                         payload={
                             "snapshot_id": snapshot.snapshot_id,
                             "evidence_ids": list(snapshot.evidence_ids),
@@ -163,6 +170,7 @@ class AgentRuntime:
                     event_type="tool_completed",
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     payload={
                         "tool_name": observation.tool_name,
                         "tool_call_id": observation.tool_call_id,
@@ -183,12 +191,14 @@ class AgentRuntime:
                         event_type="publication_completed",
                         session_id=session.session_id,
                         turn_id=turn_id,
+                        trace_id=trace_id,
                         payload={"state": "clarification"},
                     ),
                 )
                 return AgentRunResult(
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     publication_state="clarification",
                     answer=None,
                     clarification=clarification,
@@ -212,6 +222,7 @@ class AgentRuntime:
                     event_type="answer_generated",
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     payload={"kind": answer.kind, "citations": list(answer.citations)},
                 ),
             )
@@ -234,6 +245,7 @@ class AgentRuntime:
                     event_type="publication_completed",
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     payload={"state": "published"},
                 ),
             )
@@ -242,12 +254,14 @@ class AgentRuntime:
                     event_type="assistant_message",
                     session_id=session.session_id,
                     turn_id=turn_id,
+                    trace_id=trace_id,
                     payload={"text": answer.answer},
                 )
             )
             return AgentRunResult(
                 session_id=session.session_id,
                 turn_id=turn_id,
+                trace_id=trace_id,
                 publication_state="published",
                 answer=answer,
                 clarification=None,

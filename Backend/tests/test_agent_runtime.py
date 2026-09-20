@@ -132,6 +132,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
     )
 
     assert result.publication_state == "published"
+    assert result.trace_id
     assert result.answer.answer == "基于冻结证据回答"
     assert result.frozen_evidence is generator.snapshots[0]
     assert result.frozen_evidence.items[0].chunk_id == "chunk-1"
@@ -147,6 +148,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
         "answer_generated",
         "publication_completed",
     ]
+    assert {event.trace_id for event in result.events} == {result.trace_id}
 
 
 @pytest.mark.asyncio

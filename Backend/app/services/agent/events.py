@@ -12,6 +12,7 @@ class AgentEvent:
     event_type: str
     session_id: str
     turn_id: str
+    trace_id: str = ""
     payload: Mapping[str, Any] = field(default_factory=dict)
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
