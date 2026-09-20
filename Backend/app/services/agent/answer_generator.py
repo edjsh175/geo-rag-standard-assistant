@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
-from app.services.agent.contracts import FrozenEvidenceSnapshot
+from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.stage_policy import LLMStagePolicy
 
@@ -19,6 +19,7 @@ class GeneratedAnswer:
     kind: str
     answer: str
     citations: tuple[str, ...] = ()
+    map_action: MapAction | None = None
 
 
 class AnswerGenerator:
@@ -76,7 +77,9 @@ class AnswerGenerator:
                 "role": "system",
                 "content": (
                     "Generate only a grounded answer from the provided Frozen Evidence. "
-                    "Return JSON with kind, answer, citations. Do not introduce external facts."
+                    "Return JSON with kind, answer, citations, and optional map_action. "
+                    "map_action may be null or an object with type, target, adcode, name, payload. "
+                    "Do not introduce external facts."
                 ),
             },
             {
@@ -120,8 +123,28 @@ class AnswerGenerator:
         allowed = {item.citation_id for item in snapshot.items}
         if not citations or any(citation not in allowed for citation in citations):
             return None
+        map_action = None
+        raw_map_action = payload.get("map_action")
+        if raw_map_action is not None:
+            if not isinstance(raw_map_action, dict):
+                return None
+            action_type = raw_map_action.get("type")
+            target = raw_map_action.get("target")
+            if not isinstance(action_type, str) or not isinstance(target, str):
+                return None
+            raw_payload = raw_map_action.get("payload")
+            if raw_payload is not None and not isinstance(raw_payload, dict):
+                return None
+            map_action = MapAction(
+                type=action_type,
+                target=target,
+                adcode=(str(raw_map_action["adcode"]) if raw_map_action.get("adcode") is not None else None),
+                name=(str(raw_map_action["name"]) if raw_map_action.get("name") is not None else None),
+                payload=raw_payload,
+            )
         return GeneratedAnswer(
             kind="knowledge_answer",
             answer=answer.strip(),
             citations=tuple(citations),
+            map_action=map_action,
         )

@@ -7,6 +7,14 @@ export type FollowUpContext = components['schemas']['FollowUpContext'];
 export type SearchResponse = components['schemas']['SearchResponse'];
 export type DemoQuotaStatus = components['schemas']['DemoQuotaStatus'];
 
+export interface MapAction {
+  type: string;
+  target: string;
+  adcode?: string | null;
+  name?: string | null;
+  payload?: Record<string, unknown> | null;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -27,6 +35,7 @@ export interface ChatResponse {
   references?: DocumentResult[];
   timestamp: string;
   quota?: DemoQuotaStatus;
+  map_action?: MapAction;
 }
 
 /**
@@ -58,6 +67,7 @@ export const chatService = {
       const searchResponse: SearchResponse = await apiPost('/api/search/query', searchRequest, {
         config: { signal },
       });
+      const structuredResponse = searchResponse as SearchResponse & { map_action?: MapAction | null };
       const quota = searchResponse.quota;
 
       const fallbackMessage = quota?.exhausted
@@ -72,6 +82,7 @@ export const chatService = {
         references: searchResponse.results || [],
         timestamp: new Date().toISOString(),
         quota,
+        map_action: structuredResponse.map_action ?? undefined,
       };
     } catch (error) {
       console.error('发送聊天消息失败:', error);

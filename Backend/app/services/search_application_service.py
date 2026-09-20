@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.models.search_models import SearchRequest, SearchResponse
 from app.services.agent.runtime import AgentRunRequest
+from app.services.map_action_adapter import LegacyMapActionAdapter
 
 
 RELAXED_VECTOR_THRESHOLD = 0.35
@@ -58,6 +59,7 @@ class SearchApplicationService:
                 top_context_docs=min(5, len(results)),
                 history=request.history,
             )
+            adapted = LegacyMapActionAdapter().adapt(generated_answer)
             elapsed = (datetime.now() - started_at).total_seconds()
             return SearchResponse(
                 query=request.query,
@@ -65,10 +67,11 @@ class SearchApplicationService:
                 total_count=len(results),
                 search_time=elapsed,
                 search_mode=request.search_mode,
-                generated_answer=generated_answer,
+                generated_answer=adapted.answer,
                 generation_time=elapsed,
                 final_mode="linear",
                 publication_state="published",
+                map_action=adapted.map_action,
             )
 
         session_id = request.session_id or f"session-{uuid4()}"
@@ -110,6 +113,11 @@ class SearchApplicationService:
             trace_id=run_result.trace_id,
             final_mode="agent",
             publication_state=run_result.publication_state,
+            map_action=(
+                getattr(run_result.answer, "map_action", None)
+                if run_result.answer is not None
+                else None
+            ),
         )
 
     async def _deterministic_search(self, request: SearchRequest):
