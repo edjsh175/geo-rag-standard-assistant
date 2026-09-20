@@ -548,19 +548,19 @@ git commit -m "feat: add structured map actions"
 **Interfaces:**
 - Produces ordered runtime events with stable `session_id`, `trace_id`, `turn_id`, event type and payload.
 
-- [ ] **Step 1: Write failing event-order tests**
+- [x] **Step 1: Write failing event-order tests**
 
 For a simple retrieval answer, assert observable order such as controller decision → tool started/completed → evidence frozen → answer generated → publication completed. Tests verify ordering/identity, not hidden chain-of-thought text.
 
-- [ ] **Step 2: Implement a runtime event iterator/bridge**
+- [x] **Step 2: Implement a runtime event iterator/bridge**
 
 Events expose stage/status/tool/evidence facts and readable summaries only. Do not stream raw private reasoning or rely on provider-specific reasoning payloads.
 
-- [ ] **Step 3: Adapt SSE route/client without creating a second execution path**
+- [x] **Step 3: Adapt SSE route/client without creating a second execution path**
 
 Streaming and non-streaming requests must call the same Runtime. SSE is only a projection of the same events/result.
 
-- [ ] **Step 4: Run tests/build and commit**
+- [x] **Step 4: Run tests/build and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests\test_agent_stream_events.py -q
@@ -583,7 +583,7 @@ git commit -m "feat: stream agent runtime events"
 **Interfaces:**
 - Produces one deterministic retrieval/search core and one Agent generation core; no parallel semantic router/generator remains.
 
-- [ ] **Step 1: Extend architecture guards to fail while legacy core remains**
+- [x] **Step 1: Extend architecture guards to fail while legacy core remains**
 
 Guard against definitions/references for:
 
@@ -598,19 +598,19 @@ legacy answer map JSON prompt
 NON_SEARCH_INTENTS
 ```
 
-- [ ] **Step 2: Delete old semantic ownership from `SearchService`**
+- [x] **Step 2: Delete old semantic ownership from `SearchService`**
 
 Remove both duplicate `detect_intent()` definitions and all methods now owned by Controller/Session/Answer Generator. Retain only deterministic search/data helpers that have not already moved into `PostgresRetrievalAdapter`.
 
-- [ ] **Step 3: Remove the old frontend Markdown JSON extractor after structured MapAction is the primary path**
+- [x] **Step 3: Remove the old frontend Markdown JSON extractor after structured MapAction is the primary path**
 
 Delete `extractAdcodeAndPurify` (or its current equivalent) only after the Task 10 structured path is covered by tests/build.
 
-- [ ] **Step 4: Run a repository-wide residue audit**
+- [x] **Step 4: Run a repository-wide residue audit**
 
 Search for: `Chroma`, `GraphWorkingSet`, `GraphBudget`, `expand_graph_scope`, `detect_intent`, `generate_chitchat_response`, duplicate answer prompts, `reasoning_content` answer recovery, old map JSON parsing and unused reviewer/graph settings. Every hit must be either required by unrelated product code or removed; document justified survivors.
 
-- [ ] **Step 5: Run full automated verification and commit**
+- [x] **Step 5: Run full automated verification and commit**
 
 ```bat
 .venv\Scripts\python.exe -m pytest Backend\tests -q

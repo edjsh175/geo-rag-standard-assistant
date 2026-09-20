@@ -1,4 +1,4 @@
-import { apiPost } from '../lib/api/contractClient';
+import { apiPost, apiPostSse } from '../lib/api/contractClient';
 import type { components } from '../lib/api/generated/schema';
 
 export type ChatHistoryMessage = components['schemas']['ChatHistoryMessage'];
@@ -130,8 +130,40 @@ export const chatService = {
     followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
-      void onChunk;
-      return await this.sendMessage(message, conversationId, history, undefined, followUpContext);
+      let finalResponse: SearchResponse | null = null;
+      await apiPostSse('/api/search/query/stream', {
+          query: message,
+          search_mode: 'hybrid',
+          top_k: 10,
+          threshold: 0.6,
+          use_rerank: true,
+          use_generation: true,
+          session_id: conversationId,
+          history,
+          follow_up_context: followUpContext,
+        }, (eventType, data) => {
+        if (eventType === 'result') {
+          finalResponse = JSON.parse(data) as SearchResponse;
+        } else {
+          onChunk?.(data);
+        }
+      });
+      if (!finalResponse) throw new Error('stream completed without result event');
+
+      const quota = finalResponse.quota;
+      const fallbackMessage = quota?.exhausted
+        ? `${quota.contact_text}\n\n您仍可继续查看检索结果、引用文档和地图联动内容。`
+        : (finalResponse.results?.length ?? 0) > 0
+          ? '已检索到相关标准，请查看下方参考文档。'
+          : '未在库中检索到相关标准规定。';
+      return {
+        message: finalResponse.generated_answer || fallbackMessage,
+        conversation_id: finalResponse.session_id || conversationId || `conv_${Date.now()}`,
+        references: finalResponse.results || [],
+        timestamp: new Date().toISOString(),
+        quota,
+        map_action: finalResponse.map_action ?? undefined,
+      };
     } catch (error) {
       console.error('流式聊天失败:', error);
       return {

@@ -127,13 +127,10 @@ async def search_documents(
 async def stream_search_documents(
     request: SearchRequest,
     current_user: UserIdentity = Depends(require_authenticated_user),
-    search_service: SearchService = Depends(SearchService),
-    asset_service: DocumentAssetService = Depends(DocumentAssetService),
-    contract_service: DocumentContractService = Depends(DocumentContractService),
+    application_service: SearchApplicationService = Depends(get_search_application_service),
     quota_service: DemoQuotaService = Depends(get_demo_quota_service),
 ):
     try:
-        start_time = datetime.now()
         quota_decision = await _consume_visitor_generation_quota(
             request,
             current_user,
@@ -142,30 +139,31 @@ async def stream_search_documents(
         generation_allowed = request.use_generation and (
             quota_decision is None or quota_decision.allowed
         )
-        results = await _retrieve_results(request, search_service, asset_service, contract_service)
-        base_response = SearchResponse(
-            query=request.query,
-            results=results,
-            total_count=len(results),
-            search_time=(datetime.now() - start_time).total_seconds(),
-            search_mode=request.search_mode,
-            quota=_quota_status(quota_decision),
-        )
 
         async def event_generator():
-            context_payload = json.dumps(base_response.model_dump(), ensure_ascii=False)
-            yield f"event: context\ndata: {context_payload}\n\n"
-
-            if not generation_allowed:
-                return
-
-            async for event_chunk in search_service.generate_stream_answer(
-                query=request.query,
-                results=results,
-                top_context_docs=min(5, len(results)),
-                history=request.history,
+            async for frame in application_service.stream(
+                request,
+                generation_allowed=generation_allowed,
             ):
-                yield event_chunk
+                if frame.event is not None:
+                    event = frame.event
+                    payload = {
+                        "session_id": event.session_id,
+                        "turn_id": event.turn_id,
+                        "trace_id": event.trace_id,
+                        "payload": dict(event.payload),
+                        "created_at": event.created_at.isoformat(),
+                    }
+                    yield (
+                        f"event: {event.event_type}\n"
+                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    )
+                    continue
+
+                if frame.response is not None:
+                    frame.response.quota = _quota_status(quota_decision)
+                    payload = json.dumps(frame.response.model_dump(), ensure_ascii=False, default=str)
+                    yield f"event: result\ndata: {payload}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as exc:

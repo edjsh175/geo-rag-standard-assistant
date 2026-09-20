@@ -31,15 +31,10 @@ def make_result(doc_id: str = "chunk-1") -> DocumentResult:
 class SearchServiceStub:
     def __init__(self) -> None:
         self.search_calls = 0
-        self.generate_calls = 0
 
     async def search(self, **kwargs):
         self.search_calls += 1
         return [make_result()]
-
-    async def generate_answer(self, **kwargs):
-        self.generate_calls += 1
-        return "linear answer", 0.1
 
 
 class RelaxedSearchServiceStub(SearchServiceStub):
@@ -77,6 +72,10 @@ class RetrievalPortStub:
 class AgentRuntimeStub:
     def __init__(self) -> None:
         self.requests = []
+        self.answer_generator = SimpleNamespace(generate=self._generate)
+
+    async def _generate(self, **kwargs):
+        return SimpleNamespace(answer="linear answer", map_action=None)
 
     async def run(self, request):
         self.requests.append(request)
@@ -165,7 +164,6 @@ async def test_generation_true_defaults_to_agent_runtime_without_intent_router()
     )
 
     assert search.search_calls == 0
-    assert search.generate_calls == 0
     assert len(runtime.requests) == 1
     assert runtime.requests[0].session_id == "session-42"
     assert runtime.requests[0].reviewer_enabled is True
@@ -223,7 +221,6 @@ async def test_explicit_linear_mode_is_compatibility_path_without_intent_detecti
     )
 
     assert search.search_calls == 1
-    assert search.generate_calls == 1
     assert runtime.requests == []
     assert response.generated_answer == "linear answer"
     assert response.final_mode == "linear"

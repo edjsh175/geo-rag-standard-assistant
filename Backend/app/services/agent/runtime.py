@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 import json
-from typing import Any, Mapping
+from typing import Any, AsyncIterator, Callable, Mapping
 from uuid import uuid4
 
 from app.services.agent.answer_generator import GeneratedAnswer
@@ -46,6 +47,12 @@ class AgentRunResult:
     events: tuple[AgentEvent, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class AgentStreamFrame:
+    event: AgentEvent | None = None
+    result: AgentRunResult | None = None
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -64,7 +71,12 @@ class AgentRuntime:
         self.session_store = session_store
         self.context_builder = context_builder or AgentContextBuilder()
 
-    async def run(self, request: AgentRunRequest) -> AgentRunResult:
+    async def run(
+        self,
+        request: AgentRunRequest,
+        *,
+        event_listener: Callable[[AgentEvent], None] | None = None,
+    ) -> AgentRunResult:
         question = request.question.strip()
         if not question:
             raise ValueError("question must not be empty")
@@ -84,6 +96,7 @@ class AgentRuntime:
                 trace_id=trace_id,
                 payload={"text": question},
             ),
+            event_listener,
         )
 
         fuse = ResourceFuse(
@@ -136,6 +149,7 @@ class AgentRuntime:
                     trace_id=trace_id,
                     payload={"tool_name": call.name, "tool_call_id": call.tool_call_id},
                 ),
+                event_listener,
             )
             self._append_event(
                 session.events,
@@ -147,6 +161,7 @@ class AgentRuntime:
                     trace_id=trace_id,
                     payload={"tool_name": call.name, "tool_call_id": call.tool_call_id},
                 ),
+                event_listener,
             )
 
             observation = await tool_runtime.execute(turn_id=turn_id, call=call)
@@ -165,6 +180,7 @@ class AgentRuntime:
                             "evidence_ids": list(snapshot.evidence_ids),
                         },
                     ),
+                    event_listener,
                 )
 
             observations.append(observation)
@@ -182,6 +198,7 @@ class AgentRuntime:
                         "status": observation.status,
                     },
                 ),
+                event_listener,
             )
 
             if not observation.is_terminal:
@@ -199,6 +216,7 @@ class AgentRuntime:
                         trace_id=trace_id,
                         payload={"state": "clarification"},
                     ),
+                    event_listener,
                 )
                 return AgentRunResult(
                     session_id=session.session_id,
@@ -230,6 +248,7 @@ class AgentRuntime:
                     trace_id=trace_id,
                     payload={"kind": answer.kind, "citations": list(answer.citations)},
                 ),
+                event_listener,
             )
 
             review = None
@@ -253,6 +272,7 @@ class AgentRuntime:
                     trace_id=trace_id,
                     payload={"state": "published"},
                 ),
+                event_listener,
             )
             session.events.append(
                 AgentEvent(
@@ -275,14 +295,44 @@ class AgentRuntime:
                 events=tuple(turn_events),
             )
 
+    async def stream(self, request: AgentRunRequest) -> AsyncIterator[AgentStreamFrame]:
+        """Project observable events from the exact same ``run`` execution path."""
+
+        queue: asyncio.Queue[AgentEvent | object] = asyncio.Queue()
+        sentinel = object()
+        result_holder: list[AgentRunResult] = []
+
+        async def execute() -> None:
+            try:
+                result = await self.run(
+                    request,
+                    event_listener=queue.put_nowait,
+                )
+                result_holder.append(result)
+            finally:
+                queue.put_nowait(sentinel)
+
+        task = asyncio.create_task(execute())
+        while True:
+            item = await queue.get()
+            if item is sentinel:
+                break
+            yield AgentStreamFrame(event=item)  # type: ignore[arg-type]
+
+        await task
+        yield AgentStreamFrame(result=result_holder[0])
+
     @staticmethod
     def _append_event(
         session_events: list[AgentEvent],
         turn_events: list[AgentEvent],
         event: AgentEvent,
+        event_listener: Callable[[AgentEvent], None] | None = None,
     ) -> None:
         session_events.append(event)
         turn_events.append(event)
+        if event_listener is not None:
+            event_listener(event)
 
     @staticmethod
     def _merge_request_context(

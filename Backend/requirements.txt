@@ -35,7 +35,6 @@ langchain-text-splitters==0.0.1
 
 # Embeddings and vector stores
 sentence-transformers==2.2.2
-chromadb==0.4.22
 
 # Geospatial processing
 geopandas==0.14.1
