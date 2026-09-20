@@ -6,76 +6,20 @@ import logging
 import inspect
 import json
 import re
-import string
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from app.core.llm_config import llm_config
 from app.core.database import db_manager
 from app.services.document_asset_service import DocumentAssetService
-from sqlalchemy import text
 from app.models.search_models import (
     DocumentResult, FollowUpContext, MetadataFilter, SpatialFilter
 )
-from app.services.rag.filters import RagFilterEngine
-from app.services.rag.reranker import RagReranker
-from app.services.rag.retriever import RagRetriever
+from app.services.rag.contracts import RetrievalQuery
+from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 from app.services.rag.search_logger import RagSearchLogger
-from app.services.rag.types import SearchContext
 
 logger = logging.getLogger(__name__)
-
-PROVINCE_STANDARD_PREFIXES = {
-    "北京市": "DB11",
-    "天津市": "DB12",
-    "河北省": "DB13",
-    "山西省": "DB14",
-    "内蒙古自治区": "DB15",
-    "辽宁省": "DB21",
-    "吉林省": "DB22",
-    "黑龙江省": "DB23",
-    "上海市": "DB31",
-    "江苏省": "DB32",
-    "浙江省": "DB33",
-    "安徽省": "DB34",
-    "福建省": "DB35",
-    "江西省": "DB36",
-    "山东省": "DB37",
-    "河南省": "DB41",
-    "湖北省": "DB42",
-    "湖南省": "DB43",
-    "广东省": "DB44",
-    "广西壮族自治区": "DB45",
-    "海南省": "DB46",
-    "重庆市": "DB50",
-    "四川省": "DB51",
-    "贵州省": "DB52",
-    "云南省": "DB53",
-    "西藏自治区": "DB54",
-    "陕西省": "DB61",
-    "甘肃省": "DB62",
-    "青海省": "DB63",
-    "宁夏回族自治区": "DB64",
-    "新疆维吾尔自治区": "DB65",
-}
-
-QUERY_STOP_WORDS = {
-    "查一下", "查询", "检索", "有哪些", "哪些", "相关", "标准", "规范",
-    "一下", "请", "的", "有", "吗", "？", "?", "和", "与",
-}
-
-STANDARD_CODE_QUERY_PATTERN = re.compile(
-    r"""
-    (?P<code>
-        [A-Z]{1,6}\d{0,4}
-        (?:\s*[/_]\s*[A-Z])?
-        (?:\s*[-_/]?\s*\d+(?:\.\d+)*)+
-        \s*[-—]\s*\d{4}
-    )
-    """,
-    re.VERBOSE,
-)
-COMPACT_STANDARD_CODE_PATTERN = re.compile(r"^[A-Z]{2,10}\d{6,}$")
 DOCUMENT_FOLLOW_UP_SUMMARY_HINTS = (
     "主要内容",
     "讲了什么",
@@ -146,20 +90,6 @@ def _normalize_query_text(query: str) -> str:
     return cleaned_query
 
 
-def _region_aliases(name: str) -> List[str]:
-    aliases = {
-        name,
-        name.removesuffix("省"),
-        name.removesuffix("市"),
-        name.removesuffix("特别行政区"),
-        name.removesuffix("壮族自治区"),
-        name.removesuffix("回族自治区"),
-        name.removesuffix("维吾尔自治区"),
-        name.removesuffix("自治区"),
-    }
-    return [alias for alias in aliases if alias]
-
-
 class SearchService:
     """智能检索服务
 
@@ -178,35 +108,21 @@ class SearchService:
         self.vector_service = None  # 将在后面初始化
         self.spatial_service = None  # 将在后面初始化
         self.postgres_available = False
-        self.rag_filter_engine = RagFilterEngine()
-        self.rag_reranker = RagReranker()
         self.rag_search_logger = RagSearchLogger()
+        self.retrieval_adapter = PostgresRetrievalAdapter()
 
         # 检查数据库连接状态
         self._check_database_status()
-
-    def _get_rag_filter_engine(self) -> RagFilterEngine:
-        if not hasattr(self, "rag_filter_engine"):
-            self.rag_filter_engine = RagFilterEngine()
-        return self.rag_filter_engine
-
-    def _get_rag_reranker(self) -> RagReranker:
-        if not hasattr(self, "rag_reranker"):
-            self.rag_reranker = RagReranker()
-        return self.rag_reranker
 
     def _get_rag_search_logger(self) -> RagSearchLogger:
         if not hasattr(self, "rag_search_logger"):
             self.rag_search_logger = RagSearchLogger()
         return self.rag_search_logger
 
-    def _get_rag_retriever(self) -> RagRetriever:
-        return RagRetriever(
-            get_query_embedding=self._get_query_embedding,
-            exact_standard_code_search=self._exact_standard_code_search,
-            keyword_search=self._keyword_search,
-            vector_search=self._vector_search,
-        )
+    def _get_retrieval_adapter(self) -> PostgresRetrievalAdapter:
+        if not hasattr(self, "retrieval_adapter"):
+            self.retrieval_adapter = PostgresRetrievalAdapter()
+        return self.retrieval_adapter
 
     def _check_database_status(self):
         """检查数据库连接状态"""
@@ -252,32 +168,8 @@ class SearchService:
             start_time = datetime.now()
             logger.info(f"开始搜索: query='{query}', top_k={top_k}, threshold={threshold}")
 
-            # 防御性检查：如果查询是明显的闲聊/问候语，直接返回空结果
-            # 这是最后一道防线，防止路由层短路失效时仍然执行向量检索
-            common_greetings = {
-                "你好", "您好", "hello", "hi", "hey", "嗨",
-                "早上好", "下午好", "晚上好", "晚安",
-                "在吗", "在吗？", "有人吗", "有人吗？", "你好啊",
-                "您好啊", "hello there", "hi there",
-                "喂", "喂？", "哈喽", "嘿"
-            }
-            cleaned_query = query.strip().lower()
-            # 移除常见标点符号
-            import string
-            punct_set = set("。，！？；：“”‘’、（）【】《》" + string.punctuation)
-            for punct in punct_set:
-                cleaned_query = cleaned_query.replace(punct, '')
-
-            if cleaned_query in common_greetings:
-                logger.error(
-                    f"安全防护触发：闲聊查询 '{query}' 试图执行向量检索！"
-                    f"这表明路由层意图短路可能失效，请立即检查。"
-                )
-                # 绝对禁止执行向量检索，直接返回空结果
-                return []
-
-            context = SearchContext(
-                query=query,
+            retrieval_query = RetrievalQuery(
+                query_text=query,
                 top_k=top_k,
                 threshold=threshold,
                 search_mode=search_mode,
@@ -285,42 +177,15 @@ class SearchService:
                 spatial_filter=spatial_filter,
                 metadata_filter=metadata_filter,
             )
-
-            retrieved = await self._get_rag_retriever().retrieve(context)
-            candidate_results = retrieved.results
-
-            # 3. 应用空间过滤器
-            if spatial_filter:
-                candidate_results = await self._apply_spatial_filter(
-                    results=candidate_results,
-                    spatial_filter=spatial_filter
-                )
-
-            # 4. 应用元数据过滤器
-            if metadata_filter:
-                candidate_results = await self._apply_metadata_filter(
-                    results=candidate_results,
-                    metadata_filter=metadata_filter
-                )
-
-            # 5. 重排序和截断
-            if use_rerank:
-                final_results = await self._rerank_results(
-                    query=query,
-                    results=candidate_results,
-                    top_k=top_k,
-                    metadata_filter=metadata_filter,
-                    spatial_filter=spatial_filter,
-                )
-            else:
-                final_results = candidate_results[:top_k]
+            retrieved = await self._get_retrieval_adapter().retrieve(retrieval_query)
+            final_results = [candidate.source_result for candidate in retrieved.candidates]
 
             # 6. 记录搜索日志
             log_result = self._log_search(
                 query=query,
                 results_count=len(final_results),
                 search_time=(datetime.now() - start_time).total_seconds(),
-                search_mode=context.mode,
+                search_mode=retrieval_query.mode,
                 top_k=top_k,
                 threshold=threshold,
                 metadata_filter=metadata_filter,
@@ -336,440 +201,6 @@ class SearchService:
         except Exception as e:
             logger.error(f"检索失败: {e}", exc_info=True)
             raise
-
-    def _extract_keyword_terms(self, query: str) -> List[str]:
-        """从自然语言查询中提取适合数据库 LIKE 检索的关键词。"""
-        compact_query = re.sub(r"\s+", "", query)
-        terms: List[str] = []
-
-        for region_name, standard_prefix in PROVINCE_STANDARD_PREFIXES.items():
-            matched_aliases = [alias for alias in _region_aliases(region_name) if alias in compact_query]
-            if matched_aliases:
-                terms.extend([*matched_aliases, standard_prefix])
-
-        cleaned = compact_query
-        for word in QUERY_STOP_WORDS:
-            cleaned = cleaned.replace(word, "")
-
-        for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{2,}", cleaned):
-            if token and token not in QUERY_STOP_WORDS:
-                terms.append(token)
-
-        spaced_cleaned = query
-        for word in QUERY_STOP_WORDS:
-            spaced_cleaned = spaced_cleaned.replace(word, " ")
-
-        for token in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]{2,}", spaced_cleaned):
-            if token and token not in QUERY_STOP_WORDS:
-                terms.append(token)
-
-        deduped_terms: List[str] = []
-        for term in terms:
-            if term not in deduped_terms:
-                deduped_terms.append(term)
-        return deduped_terms[:6]
-
-    def _infer_file_type(self, document_name: Optional[str]) -> str:
-        if not document_name or "." not in document_name:
-            return "unknown"
-        suffix = document_name.rsplit(".", 1)[-1].strip().lower()
-        return suffix or "unknown"
-
-    def _build_policy_chunk_result(
-        self,
-        row,
-        similarity: float,
-        match_type: str,
-        extra_metadata: Optional[Dict[str, Any]] = None,
-    ) -> DocumentResult:
-        document_name = row.document_name
-        metadata: Dict[str, Any] = {
-            "standard_code": row.standard_code,
-            "document_name": document_name,
-            "document_type": "标准规范",
-            "match_type": match_type,
-        }
-
-        for key in (
-            "category",
-            "keyword",
-            "chinese_name",
-            "english_name",
-            "release_date",
-            "implement_date",
-            "standard_status",
-            "release_unit",
-            "charge_unit",
-            "draft_unit",
-            "application_scope",
-        ):
-            value = getattr(row, key, None)
-            if value is not None:
-                metadata[key] = value
-
-        if metadata.get("keyword"):
-            metadata["keywords"] = metadata["keyword"]
-        if metadata.get("release_unit") and not metadata.get("source"):
-            metadata["source"] = metadata["release_unit"]
-        if extra_metadata:
-            metadata.update(extra_metadata)
-
-        file_type = self._infer_file_type(document_name)
-        return DocumentResult(
-            id=row.id,
-            title=document_name,
-            content=row.content[:500] if row.content else "",
-            similarity=float(similarity),
-            metadata=metadata,
-            spatial_info=None,
-            file_type=file_type,
-            file_size=0,
-            upload_time=datetime.now(),
-            source_url=None,
-        )
-
-    def _build_uploaded_chunk_result(
-        self,
-        row,
-        similarity: float,
-        match_type: str,
-    ) -> DocumentResult:
-        metadata = self._coerce_json_dict(getattr(row, "metadata", None))
-        metadata.update(
-            {
-                "chunk_id": str(row.chunk_id),
-                "document_name": row.title or row.filename,
-                "original_filename": row.filename,
-                "document_type": "上传文档",
-                "match_type": match_type,
-            }
-        )
-        spatial_info = self._coerce_json_dict(getattr(row, "spatial_metadata", None)) or None
-        download_url = getattr(row, "download_url", None)
-        return DocumentResult(
-            id=str(row.document_id),
-            title=row.title or row.filename,
-            content=row.content[:500] if row.content else "",
-            similarity=float(similarity),
-            metadata=metadata,
-            spatial_info=spatial_info,
-            file_type=row.file_type or self._infer_file_type(row.filename),
-            file_size=int(row.file_size or 0),
-            upload_time=row.created_at or datetime.now(),
-            source_url=download_url,
-            download_available=bool(download_url),
-            download_url=download_url,
-        )
-
-    @staticmethod
-    def _coerce_json_dict(value: Any) -> Dict[str, Any]:
-        if isinstance(value, dict):
-            return dict(value)
-        if isinstance(value, str):
-            try:
-                parsed = json.loads(value)
-                return parsed if isinstance(parsed, dict) else {}
-            except json.JSONDecodeError:
-                return {}
-        return {}
-
-    async def _keyword_search(self, query: str, top_k: int) -> List[DocumentResult]:
-        """关键词兜底检索，用于地区编号和明确主题词。"""
-        terms = self._extract_keyword_terms(query)
-        if not terms or not db_manager.postgres_sessionmaker:
-            return []
-
-        try:
-            conditions = []
-            params: Dict[str, Any] = {"limit": top_k}
-            score_parts = []
-
-            for i, term in enumerate(terms):
-                param_name = f"kw_{i}"
-                params[param_name] = f"%{term}%"
-                conditions.append(
-                    f"(standard_code ILIKE :{param_name} OR document_name ILIKE :{param_name} OR content ILIKE :{param_name})"
-                )
-                score_parts.append(
-                    f"(CASE WHEN standard_code ILIKE :{param_name} THEN 0.20 ELSE 0 END)"
-                    f" + (CASE WHEN document_name ILIKE :{param_name} THEN 0.12 ELSE 0 END)"
-                    f" + (CASE WHEN content ILIKE :{param_name} THEN 0.04 ELSE 0 END)"
-                )
-
-            sql = f"""
-                WITH matched AS (
-                    SELECT DISTINCT ON (document_name)
-                        id, standard_code, document_name, content,
-                        category, keyword, chinese_name, english_name,
-                        release_date, implement_date, standard_status,
-                        release_unit, charge_unit, draft_unit, application_scope,
-                        LEAST(0.95, 0.55 + ({' + '.join(score_parts)})) AS similarity
-                    FROM policy_chunks
-                    WHERE {' OR '.join(conditions)}
-                    ORDER BY document_name, similarity DESC, id
-                )
-                SELECT
-                    id, standard_code, document_name, content,
-                    category, keyword, chinese_name, english_name,
-                    release_date, implement_date, standard_status,
-                    release_unit, charge_unit, draft_unit, application_scope,
-                    similarity
-                FROM matched
-                ORDER BY similarity DESC, document_name
-                LIMIT :limit
-            """
-
-            async with db_manager.get_postgres_session() as session:
-                result = await session.execute(text(sql), params)
-                rows = result.fetchall()
-
-            keyword_results = []
-            for row in rows:
-                keyword_results.append(
-                    self._build_policy_chunk_result(
-                        row,
-                        similarity=float(row.similarity),
-                        match_type="keyword",
-                    )
-                )
-
-            uploaded_results = await self._uploaded_keyword_search(query, top_k, terms)
-            merged_results = self._merge_and_dedupe_results(keyword_results, uploaded_results, top_k)
-            logger.info("关键词检索命中 %s 条: query='%s', terms=%s", len(merged_results), query, terms)
-            return merged_results
-        except Exception as e:
-            logger.warning("关键词检索失败，回退到向量检索结果: %s", e, exc_info=True)
-            return []
-
-    async def _uploaded_keyword_search(
-        self,
-        query: str,
-        top_k: int,
-        terms: Optional[List[str]] = None,
-    ) -> List[DocumentResult]:
-        terms = terms if terms is not None else self._extract_keyword_terms(query)
-        if not terms or not db_manager.postgres_sessionmaker:
-            return []
-
-        try:
-            conditions = []
-            params: Dict[str, Any] = {"limit": top_k}
-            score_parts = []
-            for index, term in enumerate(terms):
-                param_name = f"uploaded_kw_{index}"
-                params[param_name] = f"%{term}%"
-                conditions.append(
-                    f"(d.title ILIKE :{param_name} OR d.filename ILIKE :{param_name} OR c.content ILIKE :{param_name})"
-                )
-                score_parts.append(
-                    f"(CASE WHEN d.title ILIKE :{param_name} THEN 0.18 ELSE 0 END)"
-                    f" + (CASE WHEN d.filename ILIKE :{param_name} THEN 0.12 ELSE 0 END)"
-                    f" + (CASE WHEN c.content ILIKE :{param_name} THEN 0.05 ELSE 0 END)"
-                )
-
-            sql = f"""
-                WITH matched AS (
-                    SELECT DISTINCT ON (d.id)
-                        c.id::text AS chunk_id,
-                        d.id::text AS document_id,
-                        d.title,
-                        d.filename,
-                        d.file_type,
-                        d.file_size,
-                        d.created_at,
-                        d.metadata,
-                        d.spatial_metadata,
-                        v.access_url AS download_url,
-                        c.content,
-                        LEAST(0.95, 0.52 + ({' + '.join(score_parts)})) AS similarity
-                    FROM document_chunks c
-                    JOIN documents d ON d.id = c.document_id
-                    LEFT JOIN document_versions v ON v.id = d.current_version_id
-                    WHERE d.deleted_at IS NULL
-                      AND d.index_status = 'indexed'
-                      AND ({' OR '.join(conditions)})
-                    ORDER BY d.id, similarity DESC, c.chunk_index
-                )
-                SELECT *
-                FROM matched
-                ORDER BY similarity DESC, title
-                LIMIT :limit
-            """
-
-            async with db_manager.get_postgres_session() as session:
-                result = await session.execute(text(sql), params)
-                rows = result.fetchall()
-
-            return [
-                self._build_uploaded_chunk_result(
-                    row,
-                    similarity=float(row.similarity),
-                    match_type="uploaded_keyword",
-                )
-                for row in rows
-            ]
-        except Exception as exc:
-            logger.warning("上传文档关键词检索不可用: %s", exc)
-            return []
-
-    def _merge_and_dedupe_results(
-        self,
-        primary_results: List[DocumentResult],
-        secondary_results: List[DocumentResult],
-        top_k: int,
-    ) -> List[DocumentResult]:
-        """合并多路检索结果，并按文档名去重。"""
-        merged: Dict[str, DocumentResult] = {}
-
-        for result in [*primary_results, *secondary_results]:
-            key = result.metadata.get("document_name") or result.title or result.id
-            existing = merged.get(key)
-            if not existing or result.similarity > existing.similarity:
-                merged[key] = result
-
-        return sorted(merged.values(), key=lambda item: item.similarity, reverse=True)[:top_k]
-
-    def _extract_standard_code_query(self, query: str) -> Optional[str]:
-        """Extract and normalize a standard-code-like query when present."""
-        upper_query = (query or "").upper().strip()
-        if not upper_query:
-            return None
-
-        match = STANDARD_CODE_QUERY_PATTERN.search(upper_query)
-        if match:
-            normalized = DocumentAssetService.normalize_standard_code(match.group("code"))
-            if normalized:
-                return normalized
-
-        compact_query = re.sub(r"[^0-9A-Z]+", "", upper_query)
-        if (
-            COMPACT_STANDARD_CODE_PATTERN.fullmatch(compact_query)
-            and compact_query[-4:].isdigit()
-        ):
-            normalized = DocumentAssetService.normalize_standard_code(compact_query)
-            if normalized:
-                return normalized
-
-        return None
-
-    def _get_standard_code_match_type(
-        self,
-        query_standard_code: Optional[str],
-        result_standard_code: Optional[str],
-    ) -> str:
-        if not query_standard_code or not result_standard_code:
-            return "none"
-
-        normalized_result_code = DocumentAssetService.normalize_standard_code(result_standard_code)
-        if not normalized_result_code:
-            return "none"
-
-        if normalized_result_code == query_standard_code:
-            return "exact"
-
-        if (
-            query_standard_code in normalized_result_code
-            or normalized_result_code in query_standard_code
-        ):
-            return "partial"
-
-        return "none"
-
-    def _prioritize_exact_standard_code_matches(
-        self,
-        query: str,
-        results: List[DocumentResult],
-    ) -> List[DocumentResult]:
-        query_standard_code = self._extract_standard_code_query(query)
-        if not query_standard_code:
-            return results
-
-        exact_matches: List[DocumentResult] = []
-        other_results: List[DocumentResult] = []
-
-        for result in results:
-            standard_code = result.metadata.get("standard_code")
-            match_type = self._get_standard_code_match_type(
-                query_standard_code,
-                str(standard_code).strip() if standard_code else None,
-            )
-            result.metadata["standard_code_match_type"] = match_type
-
-            if match_type == "exact":
-                exact_matches.append(result)
-            else:
-                other_results.append(result)
-
-        if not exact_matches:
-            return results
-
-        logger.info(
-            "Prioritized %s exact standard-code matches for query=%r",
-            len(exact_matches),
-            query,
-        )
-        return [*exact_matches, *other_results]
-
-    async def _exact_standard_code_search(
-        self,
-        query: str,
-        top_k: int,
-    ) -> List[DocumentResult]:
-        query_standard_code = self._extract_standard_code_query(query)
-        if not query_standard_code or not db_manager.postgres_sessionmaker:
-            return []
-
-        sql = text(
-            """
-            SELECT
-                id,
-                standard_code,
-                document_name,
-                content,
-                category,
-                keyword,
-                chinese_name,
-                english_name,
-                release_date,
-                implement_date,
-                standard_status,
-                release_unit,
-                charge_unit,
-                draft_unit,
-                application_scope
-            FROM policy_chunks
-            WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
-            ORDER BY document_name, id
-            LIMIT :limit
-            """
-        )
-
-        async with db_manager.get_postgres_session() as session:
-            result = await session.execute(
-                sql,
-                {"standard_code": query_standard_code, "limit": top_k},
-            )
-            rows = result.fetchall()
-
-        exact_results = [
-            self._build_policy_chunk_result(
-                row,
-                similarity=1.0,
-                match_type="standard_code_exact",
-                extra_metadata={"standard_code_match_type": "exact"},
-            )
-            for row in rows
-        ]
-
-        if exact_results:
-            logger.info(
-                "Exact standard-code search matched %s rows for query=%r",
-                len(exact_results),
-                query,
-            )
-
-        return exact_results
-
     async def hybrid_search(
         self,
         text_query: str,
@@ -796,8 +227,10 @@ class SearchService:
 
             # 2. 如果提供了空间查询，进行空间搜索
             if spatial_query:
-                # 地理编码
-                spatial_results = await self._spatial_search(spatial_query, top_k)
+                spatial_results = await self._get_retrieval_adapter().spatial_search(
+                    spatial_query,
+                    top_k,
+                )
 
                 # 3. 合并和重排序结果
                 combined_results = await self._combine_results(
@@ -819,261 +252,10 @@ class SearchService:
         doc_id: str,
         top_k: int = 5
     ) -> List[DocumentResult]:
-        """
-        查找相似文档
-
-        Args:
-            doc_id: 文档ID
-            top_k: 相似文档数量
-
-        Returns:
-            相似文档列表
-        """
-        try:
-            # 1. 获取文档的向量嵌入
-            doc_embedding = await self._get_document_embedding(doc_id)
-
-            if not doc_embedding:
-                return []
-
-            # 2. 向量相似度搜索
-            similar_docs = await self._vector_search(
-                query_embedding=doc_embedding,
-                top_k=top_k + 1,  # 包含自身
-                exclude_doc_id=doc_id
-            )
-
-            return similar_docs[:top_k]
-
-        except Exception as e:
-            logger.error(f"查找相似文档失败: {e}", exc_info=True)
-            raise
-
-    async def _get_query_embedding(self, query: str) -> List[float]:
-        """获取查询的向量嵌入"""
-        try:
-            embeddings = await llm_config.get_embeddings([query])
-            if embeddings:
-                logger.debug(f"查询嵌入获取成功，维度: {len(embeddings[0])}")
-                return embeddings[0]
-            else:
-                logger.warning("查询嵌入返回空列表")
-                return []
-        except Exception as e:
-            logger.error(f"获取查询嵌入失败: {e}", exc_info=True)
-            raise
-
-    async def _get_document_embedding(self, doc_id: str) -> Optional[List[float]]:
-        """获取文档的向量嵌入"""
-        try:
-            # TODO: 从向量数据库获取文档嵌入
-            return None
-        except Exception as e:
-            logger.error(f"获取文档嵌入失败: {e}")
-            return None
-
-    async def _vector_search(
-        self,
-        query_embedding: List[float],
-        top_k: int,
-        threshold: float = 0.7,
-        exclude_doc_id: Optional[str] = None
-    ) -> List[DocumentResult]:
-        """向量相似度搜索"""
-        try:
-            # 检查 PostgreSQL 连接是否已初始化
-            if not db_manager.postgres_sessionmaker:
-                logger.error("PostgreSQL 连接未初始化，向量搜索功能不可用。请检查数据库服务及 .env 配置。")
-                return []
-
-            if not query_embedding:
-                logger.warning("查询嵌入为空，返回空结果")
-                return []
-
-            # 将嵌入列表转换为字符串表示
-            embedding_str = str(query_embedding)
-            logger.debug(f"查询嵌入维度: {len(query_embedding)}, 字符串表示前100字符: {embedding_str[:100]}...")
-
-            async with db_manager.get_postgres_session() as session:
-                # 构建SQL查询
-                sql = """
-                    SELECT
-                        id, standard_code, document_name, content,
-                        category, keyword, chinese_name, english_name,
-                        release_date, implement_date, standard_status,
-                        release_unit, charge_unit, draft_unit, application_scope,
-                        1 - (embedding <=> CAST(:embedding_str AS vector)) AS similarity
-                    FROM policy_chunks
-                """
-                params = {"embedding_str": embedding_str, "limit": top_k}
-                logger.debug(f"SQL查询参数: embedding_str长度={len(embedding_str)}, limit={top_k}")
-
-                # 添加排除条件
-                if exclude_doc_id:
-                    sql += " WHERE id != :exclude_doc_id "
-                    params["exclude_doc_id"] = exclude_doc_id
-
-                # 排序和限制
-                sql += " ORDER BY embedding <=> CAST(:embedding_str AS vector) LIMIT :limit"
-
-                # 执行查询
-                logger.debug(f"执行SQL查询: {sql[:200]}...")
-                result = await session.execute(text(sql), params)
-                rows = result.fetchall()
-                logger.debug(f"数据库返回 {len(rows)} 行数据")
-
-                # 转换为DocumentResult对象
-                results = []
-                logger.debug(f"查询返回 {len(rows)} 行数据，阈值: {threshold}")
-
-                for i, row in enumerate(rows):
-                    # 过滤阈值
-                    similarity = row.similarity
-                    logger.debug(f"行 {i+1}: 相似度 = {similarity:.6f}, 标准号: {row.standard_code}, 文档名: {row.document_name}")
-                    # 向量搜索命中日志（调试级别，生产环境不显示）
-                    logger.debug(f"[VectorSearch] 命中 | doc={row.document_name} | score={similarity:.4f}")
-
-                    if similarity < threshold:
-                        logger.debug(f"  低于阈值 {threshold}，跳过")
-                        continue
-
-
-                    doc_result = self._build_policy_chunk_result(
-                        row,
-                        similarity=float(similarity),
-                        match_type="vector",
-                    )
-                    results.append(doc_result)
-
-                uploaded_results = await self._uploaded_vector_search(
-                    query_embedding=query_embedding,
-                    top_k=top_k,
-                    threshold=threshold,
-                    exclude_doc_id=exclude_doc_id,
-                )
-                merged_results = self._merge_and_dedupe_results(results, uploaded_results, top_k)
-                logger.debug(f"向量搜索返回 {len(merged_results)} 条结果")
-                return merged_results
-
-        except Exception as e:
-            logger.error(f"向量搜索失败: {e}", exc_info=True)
-            return []
-
-    async def _uploaded_vector_search(
-        self,
-        query_embedding: List[float],
-        top_k: int,
-        threshold: float = 0.7,
-        exclude_doc_id: Optional[str] = None,
-    ) -> List[DocumentResult]:
-        if not db_manager.postgres_sessionmaker or not query_embedding:
-            return []
-
-        embedding_str = str(query_embedding)
-        params: Dict[str, Any] = {"embedding_str": embedding_str, "limit": top_k}
-        exclude_clause = ""
-        if exclude_doc_id:
-            exclude_clause = "AND d.id::text != :exclude_doc_id"
-            params["exclude_doc_id"] = str(exclude_doc_id)
-
-        sql = f"""
-            SELECT
-                c.id::text AS chunk_id,
-                d.id::text AS document_id,
-                d.title,
-                d.filename,
-                d.file_type,
-                d.file_size,
-                d.created_at,
-                d.metadata,
-                d.spatial_metadata,
-                v.access_url AS download_url,
-                c.content,
-                1 - (
-                    CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))
-                ) AS similarity
-            FROM document_chunks c
-            JOIN documents d ON d.id = c.document_id
-            LEFT JOIN document_versions v ON v.id = d.current_version_id
-            WHERE d.deleted_at IS NULL
-              AND d.index_status = 'indexed'
-              AND c.embedding IS NOT NULL
-              {exclude_clause}
-            ORDER BY CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))
-            LIMIT :limit
-        """
-
-        try:
-            async with db_manager.get_postgres_session() as session:
-                result = await session.execute(text(sql), params)
-                rows = result.fetchall()
-
-            results: list[DocumentResult] = []
-            for row in rows:
-                if float(row.similarity) < threshold:
-                    continue
-                results.append(
-                    self._build_uploaded_chunk_result(
-                        row,
-                        similarity=float(row.similarity),
-                        match_type="uploaded_vector",
-                    )
-                )
-            return results
-        except Exception as exc:
-            logger.warning("上传文档向量检索不可用: %s", exc)
-            return []
-
-    async def _apply_spatial_filter(
-        self,
-        results: List[DocumentResult],
-        spatial_filter: SpatialFilter
-    ) -> List[DocumentResult]:
-        """应用空间过滤器"""
-        try:
-            return await self._get_rag_filter_engine().apply_spatial_filter(
-                results,
-                spatial_filter,
-            )
-        except Exception as e:
-            logger.error(f"空间过滤失败: {e}")
-            return []
-
-    async def _apply_metadata_filter(
-        self,
-        results: List[DocumentResult],
-        metadata_filter: MetadataFilter
-    ) -> List[DocumentResult]:
-        """应用元数据过滤器"""
-        try:
-            return self._get_rag_filter_engine().apply_metadata_filter(
-                results,
-                metadata_filter,
-            )
-        except Exception as e:
-            logger.error(f"元数据过滤失败: {e}")
-            return []
-
-    def _matches_metadata_filter(
-        self,
-        metadata: Dict[str, Any],
-        filter_: MetadataFilter
-    ) -> bool:
-        """检查文档是否匹配元数据过滤器"""
-        return self._get_rag_filter_engine().matches_metadata_filter(metadata, filter_)
-
-    async def _spatial_search(
-        self,
-        spatial_query: str,
-        top_k: int
-    ) -> List[DocumentResult]:
-        """空间搜索"""
-        try:
-            return await self._get_rag_filter_engine().spatial_search(spatial_query, top_k)
-        except Exception as e:
-            logger.error(f"空间搜索失败: {e}")
-            return []
-
+        return await self._get_retrieval_adapter().find_similar_documents(
+            doc_id=doc_id,
+            top_k=top_k,
+        )
     async def _combine_results(
         self,
         text_results: List[DocumentResult],
@@ -1102,31 +284,6 @@ class SearchService:
             logger.error(f"合并结果失败: {e}")
             return text_results[:top_k]
 
-    async def _rerank_results(
-        self,
-        query: str,
-        results: List[DocumentResult],
-        top_k: int,
-        metadata_filter: Optional[MetadataFilter] = None,
-        spatial_filter: Optional[SpatialFilter] = None,
-    ) -> List[DocumentResult]:
-        """使用大模型对结果进行重排序"""
-        try:
-            if not results:
-                return results
-
-            prioritized_results = self._get_rag_reranker().rerank(
-                query,
-                results,
-                top_k=top_k,
-                metadata_filter=metadata_filter,
-                spatial_filter=spatial_filter,
-            )
-            return prioritized_results
-
-        except Exception as e:
-            logger.error(f"重排序失败: {e}")
-            return results[:top_k]
 
     async def _log_search(
         self,
@@ -1143,8 +300,8 @@ class SearchService:
     ):
         """记录搜索日志"""
         try:
-            context = SearchContext(
-                query=query,
+            context = RetrievalQuery(
+                query_text=query,
                 top_k=top_k,
                 threshold=threshold,
                 search_mode=search_mode,

@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 
-from app.services.search_service import SearchService
+from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 
 
 def test_uploaded_chunk_result_uses_document_id_and_exposes_chunk_id() -> None:
-    service = SearchService()
+    service = PostgresRetrievalAdapter()
     row = SimpleNamespace(
         chunk_id="chunk-1",
         document_id="doc-1",
@@ -27,6 +27,7 @@ def test_uploaded_chunk_result_uses_document_id_and_exposes_chunk_id() -> None:
     assert result.id == "doc-1"
     assert result.title == "规划文档"
     assert result.metadata["chunk_id"] == "chunk-1"
+    assert result.metadata["document_id"] == "doc-1"
     assert result.metadata["document_type"] == "上传文档"
     assert result.download_available is True
     assert result.download_url == "/api/documents/doc-1/download"
