@@ -98,6 +98,32 @@ class SearchApplicationService:
                     endpoint_supports_reasoning=False,
                 ),
             )
+            publication_state = "published"
+            generated_answer = answer.answer
+            if request.reviewer_enabled:
+                reviewer = getattr(self.agent_runtime, "reviewer", None)
+                if reviewer is None:
+                    publication_state = "review_failed"
+                    generated_answer = "证据审查执行失败，答案未发布。"
+                else:
+                    try:
+                        review = await reviewer.review(
+                            question=request.query,
+                            answer=answer,
+                            snapshot=snapshot,
+                            stage_policy=LLMStagePolicy(
+                                user_thinking=False,
+                                endpoint_supports_reasoning=False,
+                            ),
+                        )
+                    except Exception:
+                        publication_state = "review_failed"
+                        generated_answer = "证据审查执行失败，答案未发布。"
+                    else:
+                        verdict = str(getattr(review, "verdict", "")).strip().upper()
+                        if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
+                            publication_state = "review_rejected"
+                            generated_answer = "答案未通过证据审查，未发布。"
             elapsed = (datetime.now() - started_at).total_seconds()
             return SearchResponse(
                 query=request.query,
@@ -105,12 +131,12 @@ class SearchApplicationService:
                 total_count=len(results),
                 search_time=elapsed,
                 search_mode=request.search_mode,
-                generated_answer=answer.answer,
+                generated_answer=generated_answer,
                 generation_time=elapsed,
                 session_id=session_id,
                 final_mode="linear",
-                publication_state="published",
-                map_action=answer.map_action,
+                publication_state=publication_state,
+                map_action=(answer.map_action if publication_state == "published" else None),
             )
 
         session_id = request.session_id or f"session-{uuid4()}"

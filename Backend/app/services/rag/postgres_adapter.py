@@ -21,6 +21,7 @@ from app.models.search_models import DocumentResult
 from app.services.document_asset_service import DocumentAssetService
 from app.services.rag.contracts import (
     RetrievalCandidate,
+    RetrievalChannelDiagnostic,
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
@@ -127,18 +128,45 @@ class PostgresRetrievalAdapter:
         keyword_results: list[DocumentResult] = []
         vector_results: list[DocumentResult] = []
         embedding_available = False
+        channels: list[RetrievalChannelDiagnostic] = []
 
         if mode in {"hybrid", "keyword", "exact"}:
-            exact_results = await self._exact_standard_code_search(
-                query.query_text,
-                expanded_top_k,
-            )
+            try:
+                exact_results = await self._exact_standard_code_search(
+                    query.query_text,
+                    expanded_top_k,
+                )
+                channels.append(
+                    RetrievalChannelDiagnostic(channel="exact", state="succeeded")
+                )
+            except Exception as exc:
+                logger.warning("Exact retrieval unavailable: %s", exc, exc_info=True)
+                channels.append(
+                    RetrievalChannelDiagnostic(
+                        channel="exact",
+                        state="unavailable",
+                        detail=type(exc).__name__,
+                    )
+                )
 
         if mode in {"hybrid", "keyword"}:
-            keyword_results = await self._keyword_search(
-                query.query_text,
-                expanded_top_k,
-            )
+            try:
+                keyword_results = await self._keyword_search(
+                    query.query_text,
+                    expanded_top_k,
+                )
+                channels.append(
+                    RetrievalChannelDiagnostic(channel="keyword", state="succeeded")
+                )
+            except Exception as exc:
+                logger.warning("Keyword retrieval unavailable: %s", exc, exc_info=True)
+                channels.append(
+                    RetrievalChannelDiagnostic(
+                        channel="keyword",
+                        state="unavailable",
+                        detail=type(exc).__name__,
+                    )
+                )
 
         if mode in {"hybrid", "semantic"}:
             try:
@@ -149,14 +177,34 @@ class PostgresRetrievalAdapter:
                     exc,
                 )
                 query_embedding = []
+                channels.append(
+                    RetrievalChannelDiagnostic(
+                        channel="vector",
+                        state="unavailable",
+                        detail=type(exc).__name__,
+                    )
+                )
 
             if query_embedding:
                 embedding_available = True
-                vector_results = await self._vector_search(
-                    query_embedding=query_embedding,
-                    top_k=expanded_top_k,
-                    threshold=query.threshold,
-                )
+                try:
+                    vector_results = await self._vector_search(
+                        query_embedding=query_embedding,
+                        top_k=expanded_top_k,
+                        threshold=query.threshold,
+                    )
+                    channels.append(
+                        RetrievalChannelDiagnostic(channel="vector", state="succeeded")
+                    )
+                except Exception as exc:
+                    logger.warning("Vector retrieval unavailable: %s", exc, exc_info=True)
+                    channels.append(
+                        RetrievalChannelDiagnostic(
+                            channel="vector",
+                            state="unavailable",
+                            detail=type(exc).__name__,
+                        )
+                    )
 
         candidate_results = self._merge_and_dedupe_results(
             exact_results,
@@ -197,6 +245,7 @@ class PostgresRetrievalAdapter:
                 exact_count=len(exact_results),
                 keyword_count=len(keyword_results),
                 vector_count=len(vector_results),
+                channels=tuple(channels),
             ),
         )
 
@@ -497,8 +546,7 @@ class PostgresRetrievalAdapter:
             uploaded_results = await self._uploaded_keyword_search(query, top_k, terms)
             return self._merge_source_results(policy_results, uploaded_results, top_k)
         except Exception as exc:
-            logger.warning("Keyword retrieval unavailable: %s", exc, exc_info=True)
-            return []
+            raise RuntimeError("keyword retrieval unavailable") from exc
 
     async def _uploaded_keyword_search(
         self,
@@ -560,8 +608,7 @@ class PostgresRetrievalAdapter:
                 for row in rows
             ]
         except Exception as exc:
-            logger.warning("Uploaded-document keyword retrieval unavailable: %s", exc)
-            return []
+            raise RuntimeError("uploaded-document keyword retrieval unavailable") from exc
 
     async def _get_query_embedding(self, query: str) -> list[float]:
         embeddings = await llm_config.get_embeddings([query])
@@ -644,8 +691,7 @@ class PostgresRetrievalAdapter:
             )
             return self._merge_source_results(policy_results, uploaded_results, top_k)
         except Exception as exc:
-            logger.warning("Vector retrieval unavailable: %s", exc, exc_info=True)
-            return []
+            raise RuntimeError("vector retrieval unavailable") from exc
 
     async def _uploaded_vector_search(
         self,
@@ -698,8 +744,7 @@ class PostgresRetrievalAdapter:
                 if float(row.similarity) >= threshold
             ]
         except Exception as exc:
-            logger.warning("Uploaded-document vector retrieval unavailable: %s", exc)
-            return []
+            raise RuntimeError("uploaded-document vector retrieval unavailable") from exc
 
     async def fetch_chunks(self, chunk_ids: list[str]) -> list[RetrievalCandidate]:
         normalized_ids = [str(chunk_id) for chunk_id in chunk_ids if str(chunk_id).strip()]

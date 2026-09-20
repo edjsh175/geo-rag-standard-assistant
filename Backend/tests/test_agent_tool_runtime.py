@@ -9,6 +9,7 @@ from app.models.search_models import MetadataFilter, SpatialFilter
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.tool_runtime import (
     RetrievalRequestConstraints,
+    RetrievalUnavailableError,
     ResourceFuse,
     ResourceFuseExceeded,
     ToolCall,
@@ -18,6 +19,7 @@ from app.services.agent.tool_runtime import (
 )
 from app.services.rag.contracts import (
     RetrievalCandidate,
+    RetrievalChannelDiagnostic,
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
@@ -145,6 +147,41 @@ async def test_retrieve_kb_preserves_request_level_retrieval_constraints() -> No
     assert query.use_rerank is False
     assert query.metadata_filter.region == "重庆"
     assert query.spatial_filter.distance == 5000
+
+
+@pytest.mark.asyncio
+async def test_retrieve_kb_surfaces_total_retrieval_unavailability() -> None:
+    class UnavailableRetrievalPort(FakeRetrievalPort):
+        async def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
+            self.queries.append(query)
+            return RetrievalResult(
+                candidates=(),
+                embedding_available=False,
+                diagnostics=RetrievalDiagnostics(
+                    channels=(
+                        RetrievalChannelDiagnostic(
+                            channel="keyword",
+                            state="unavailable",
+                            detail="postgres unavailable",
+                        ),
+                    ),
+                ),
+            )
+
+    runtime = ToolRuntime(
+        retrieval_port=UnavailableRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-1"),
+    )
+
+    with pytest.raises(RetrievalUnavailableError, match="RETRIEVAL_UNAVAILABLE"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="call-unavailable",
+                name="retrieve_kb",
+                arguments={"query": "规划标准"},
+            ),
+        )
 
 
 @pytest.mark.asyncio

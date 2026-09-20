@@ -69,6 +69,11 @@ class LLMConfig:
             raise RuntimeError("OpenAI 客户端未初始化")
         return self.openai_client
 
+    @property
+    def supports_reasoning(self) -> bool:
+        """Whether a dedicated reasoning-capable model is explicitly configured."""
+        return bool(settings.LLM_REASONING_MODEL)
+
     async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
         """
         获取文本的向量嵌入
@@ -119,6 +124,7 @@ class LLMConfig:
         messages: list[Dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.7,
+        request_reasoning: bool = False,
         **kwargs
     ) -> str:
         """
@@ -134,13 +140,18 @@ class LLMConfig:
             模型响应文本
         """
         provider = settings.LLM_PROVIDER
+        selected_model = model
+        if request_reasoning:
+            if not self.supports_reasoning:
+                raise RuntimeError("reasoning was requested but no reasoning model is configured")
+            selected_model = settings.LLM_REASONING_MODEL
 
         if provider == LLMProvider.OPENAI:
-            return await self._openai_chat_completion(messages, model, temperature, **kwargs)
+            return await self._openai_chat_completion(messages, selected_model, temperature, **kwargs)
         elif provider == LLMProvider.ZHIPU:
-            return await self._zhipu_chat_completion(messages, model, temperature, **kwargs)
+            return await self._zhipu_chat_completion(messages, selected_model, temperature, **kwargs)
         elif provider == LLMProvider.DEEPSEEK:
-            return await self._deepseek_chat_completion(messages, model, temperature, **kwargs)
+            return await self._deepseek_chat_completion(messages, selected_model, temperature, **kwargs)
         else:
             raise ValueError(f"不支持的 LLM 提供商: {provider}")
 

@@ -26,7 +26,6 @@ class EvidenceLedger:
         self.session_id = session_id
         self._items: dict[str, EvidenceItem] = {}
         self._working_by_turn: dict[str, list[str]] = {}
-        self._seen_turns: dict[str, set[str]] = {}
         self._next_citation_ordinal = 1
 
     def add_candidates(
@@ -179,7 +178,6 @@ class EvidenceLedger:
         working = self._working_by_turn.setdefault(turn_id, [])
         if evidence_id not in working:
             working.append(evidence_id)
-        self._seen_turns.setdefault(evidence_id, set()).add(turn_id)
 
     @staticmethod
     def _is_structurally_admissible(candidate: RetrievalCandidate) -> bool:

@@ -31,9 +31,8 @@ class StageModelClient(Protocol):
 class LLMConfigStageModelClient:
     """Adapter over the repository's existing LLMConfig text-completion API.
 
-    The current LLMConfig contract has no provider-neutral switch for explicit
-    reasoning control. Therefore this adapter rejects reasoning requests rather
-    than silently pretending that the endpoint honored them.
+    Reasoning capability is declared by LLMConfig. Stage policy remains
+    provider-neutral; provider/model selection stays inside the LLM adapter.
     """
 
     def __init__(self, llm_config) -> None:
@@ -41,15 +40,12 @@ class LLMConfigStageModelClient:
 
     @property
     def supports_reasoning(self) -> bool:
-        return False
+        return bool(getattr(self.llm_config, "supports_reasoning", False))
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
-        if request.request_reasoning:
-            raise RuntimeError(
-                "configured LLM adapter does not support explicit reasoning control"
-            )
         content = await self.llm_config.chat_completion(
             messages=[dict(message) for message in request.messages],
             temperature=0.2,
+            request_reasoning=request.request_reasoning,
         )
         return ModelResponse(content=content)
