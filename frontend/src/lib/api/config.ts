@@ -11,10 +11,15 @@ const isLoopbackPage =
   typeof window !== 'undefined' &&
   /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/i.test(window.location.hostname);
 
-const API_BASE_URL =
+export const API_BASE_URL =
   envApiBaseUrl && (!isLoopbackOrigin(envApiBaseUrl) || isLoopbackPage)
     ? envApiBaseUrl
     : '/api';
+
+export const resolveApiUrl = (path: string): string => {
+  const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
+  return `${API_BASE_URL.replace(/\/$/, '')}/${normalizedPath.replace(/^\//, '')}`;
+};
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

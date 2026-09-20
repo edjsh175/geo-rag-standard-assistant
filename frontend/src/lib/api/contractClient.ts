@@ -1,6 +1,6 @@
 import type { AxiosRequestConfig, RawAxiosResponseHeaders } from 'axios';
 
-import { apiClient } from './config';
+import { apiClient, resolveApiUrl } from './config';
 import type { paths } from './generated/schema';
 
 type Method = 'get' | 'post' | 'patch' | 'delete';
@@ -128,4 +128,40 @@ export async function apiDelete<P extends PathsWithMethod<'delete'>>(
   const config = toAxiosConfig(String(path), options);
   const response = await apiClient.delete<SuccessBody<Operation<P, 'delete'>>>(config.url!, config);
   return response.data;
+}
+
+export async function apiPostSse<P extends PathsWithMethod<'post'>>(
+  path: P,
+  body?: MaybeBody<Operation<P, 'post'>>,
+  onEvent?: (eventType: string, data: string) => void
+): Promise<void> {
+  const response = await fetch(resolveApiUrl(String(path)), {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`stream request failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const consumeFrame = (frame: string) => {
+    const lines = frame.split(/\r?\n/);
+    const eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+    const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+    if (eventType && data) onEvent?.(eventType, data);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = frames.pop() ?? '';
+    frames.forEach(consumeFrame);
+    if (done) break;
+  }
+  if (buffer.trim()) consumeFrame(buffer);
 }

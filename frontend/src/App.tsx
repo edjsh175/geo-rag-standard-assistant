@@ -715,41 +715,6 @@ export default function App() {
     }
   };
 
-  /**
-   * 从大模型回复中提取行政区划代码（ADCODE）并净化消息
-   * @param content 原始消息内容
-   * @returns 包含净化后内容和adcode的对象
-   */
-  const extractAdcodeAndPurify = (content: string): { purifiedContent: string; adcode?: string; name?: string } => {
-    // 正则表达式匹配Markdown JSON代码块，增强容错性
-    const regex = /```json\s*([\s\S]*?)\s*```/;
-    const match = content.match(regex);
-
-    if (!match) {
-      return { purifiedContent: content.trim() };
-    }
-
-    try {
-      const jsonStr = match[1];
-      const parsed = JSON.parse(jsonStr);
-      const adcode = parsed.adcode || parsed.ADCODE;
-      // 兼容多种可能的名称键名
-      const name = parsed.name || parsed.NAME || parsed.province || parsed.city || parsed.region_name;
-
-      if (adcode && /^\d{6}$/.test(String(adcode))) {
-        // 移除JSON代码块，净化内容
-        const purifiedContent = content.replace(regex, '').trim();
-        return { purifiedContent, adcode: String(adcode), name: name ? String(name) : undefined };
-      }
-    } catch (error) {
-      console.warn('解析ADCODE JSON失败:', error);
-    }
-
-    // 如果解析失败，只移除代码块
-    const purifiedContent = content.replace(regex, '').trim();
-    return { purifiedContent };
-  };
-
   // 聊天函数（集成AbortController）
   const handleChatSubmit = async (content: string) => {
     if (!content.trim()) return;
@@ -836,12 +801,10 @@ export default function App() {
       // 转换references为文档
       const documents = (response.references || []).map(toFrontendDocumentFromResult);
 
-      // 优先使用结构化 MapAction；Markdown JSON 仅作为迁移期兼容回退。
       const structuredMap = response.map_action;
-      const legacyMap = structuredMap ? null : extractAdcodeAndPurify(response.message);
-      const purifiedContent = structuredMap ? response.message.trim() : legacyMap!.purifiedContent;
-      const adcode = structuredMap?.adcode ?? legacyMap?.adcode;
-      const name = structuredMap?.name ?? legacyMap?.name;
+      const purifiedContent = response.message.trim();
+      const adcode = structuredMap?.adcode;
+      const name = structuredMap?.name;
 
       // 如果提取到有效的ADCODE，写入全局 Store（双引擎自动响应）
       if (adcode) {

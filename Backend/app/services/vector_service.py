@@ -107,7 +107,7 @@ class VectorService:
         """
         try:
             # TODO: 实现向量相似度搜索
-            # 使用 pgvector 或 chromadb 进行搜索
+            # 向量检索统一由 PostgreSQL/pgvector 实现。
             results = []
 
             # 模拟实现
