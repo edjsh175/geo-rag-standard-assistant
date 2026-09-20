@@ -1373,6 +1373,21 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** MapAction */
+        MapAction: {
+            /** Type */
+            type: string;
+            /** Target */
+            target: string;
+            /** Adcode */
+            adcode?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Payload */
+            payload?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /**
          * MetadataFilter
          * @description Metadata filtering for search results.
@@ -1556,6 +1571,8 @@ export interface components {
              * @description Runtime publication state such as published or clarification.
              */
             publication_state?: string | null;
+            /** @description Structured map action for the frontend. */
+            map_action?: components["schemas"]["MapAction"] | null;
         };
         /**
          * SpatialFilter
