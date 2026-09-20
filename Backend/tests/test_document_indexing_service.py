@@ -7,7 +7,9 @@ from typing import Any
 import pytest
 
 from app.services.document_indexing_service import DocumentIndexingService
-from app.services.document_text_extractor import ExtractedDocumentText, UnsupportedDocumentParser
+from app.services.document_chunker import DocumentChunk
+from app.services.document_parser import ParsedDocument
+from app.services.document_text_extractor import UnsupportedDocumentParser
 
 
 @dataclass
@@ -19,16 +21,31 @@ class FakeStorage:
         return self.local_path
 
 
-class FakeExtractor:
-    def extract(self, path: Path, content_type: str):
+class FakeParser:
+    def parse(self, path: Path, content_type: str):
         assert path.name == "planning.md"
         assert content_type == "text/markdown"
-        return ExtractedDocumentText(text="# 第一章\n\n规划文本需要进入检索。")
+        return ParsedDocument(
+            markdown="# 第一章\n\n规划文本需要进入检索。",
+            metadata={"parser": "fake"},
+        )
 
 
-class FakeUnsupportedExtractor:
-    def extract(self, path: Path, content_type: str):
+class FakeUnsupportedParser:
+    def parse(self, path: Path, content_type: str):
         raise UnsupportedDocumentParser("Legacy .doc parsing is not supported.")
+
+
+class FakeChunker:
+    def chunk(self, document: ParsedDocument) -> list[DocumentChunk]:
+        assert document.metadata["parser"] == "fake"
+        return [
+            DocumentChunk(
+                content=document.markdown,
+                header_path="第一章",
+                page_number=None,
+            )
+        ]
 
 
 class FakeEmbeddings:
@@ -84,7 +101,8 @@ async def test_indexing_service_extracts_chunks_embeds_and_marks_success(tmp_pat
     service = DocumentIndexingService(
         repository=repository,
         storage=FakeStorage(local_path),
-        extractor=FakeExtractor(),
+        parser=FakeParser(),
+        chunker=FakeChunker(),
         embedding_provider=FakeEmbeddings(),
     )
 
@@ -94,7 +112,9 @@ async def test_indexing_service_extracts_chunks_embeds_and_marks_success(tmp_pat
     assert repository.succeeded is True
     assert repository.chunks
     assert repository.chunks[0]["content"] == "# 第一章\n\n规划文本需要进入检索。"
+    assert repository.chunks[0]["header_path"] == "第一章"
     assert repository.chunks[0]["metadata"]["title"] == "规划文本"
+    assert repository.chunks[0]["metadata"]["parser"] == "fake"
     assert repository.chunks[0]["embedding"] == [0.1, 0.2, 0.3]
 
 
@@ -106,7 +126,8 @@ async def test_indexing_service_does_not_retry_unsupported_parser(tmp_path) -> N
     service = DocumentIndexingService(
         repository=repository,
         storage=FakeStorage(local_path),
-        extractor=FakeUnsupportedExtractor(),
+        parser=FakeUnsupportedParser(),
+        chunker=FakeChunker(),
         embedding_provider=FakeEmbeddings(),
     )
 
