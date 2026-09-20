@@ -93,6 +93,19 @@ class SearchRequest(BaseModel):
     use_rerank: bool = Field(True, description="Whether to rerank results.")
     search_mode: str = Field("hybrid", description="semantic, keyword, or hybrid")
     use_generation: bool = Field(False, description="Whether to generate a natural-language answer.")
+    session_id: Optional[str] = Field(None, description="Server-side Agent session identifier.")
+    mode: Optional[Literal["agent", "linear"]] = Field(
+        None,
+        description="Generation mode. Agent is the default when generation is enabled.",
+    )
+    reviewer_enabled: bool = Field(
+        False,
+        description="Whether to run the optional grounding reviewer for this request.",
+    )
+    thinking: Optional[bool] = Field(
+        None,
+        description="User preference for Controller reasoning when the endpoint supports it.",
+    )
     history: Optional[List[ChatHistoryMessage]] = Field(default_factory=list, description="Conversation history.")
     follow_up_context: Optional[FollowUpContext] = Field(
         None,
@@ -112,6 +125,16 @@ class SearchResponse(BaseModel):
     generated_answer: Optional[str] = Field(None, description="Generated answer, if requested.")
     generation_time: Optional[float] = Field(None, description="Generation duration in seconds.")
     quota: Optional[DemoQuotaStatus] = Field(None, description="Visitor demo quota status.")
+    session_id: Optional[str] = Field(None, description="Agent session identifier.")
+    trace_id: Optional[str] = Field(None, description="Runtime trace identifier for this turn.")
+    final_mode: Optional[Literal["agent", "linear"]] = Field(
+        None,
+        description="Generation mode that produced the final answer.",
+    )
+    publication_state: Optional[str] = Field(
+        None,
+        description="Runtime publication state such as published or clarification.",
+    )
 
 
 class SearchHistory(BaseModel):

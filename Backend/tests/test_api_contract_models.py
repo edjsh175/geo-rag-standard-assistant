@@ -32,6 +32,15 @@ def test_search_request_accepts_user_and_assistant_history_roles() -> None:
     assert [message.role for message in request.history] == ["user", "assistant"]
 
 
+def test_search_request_agent_fields_are_optional_and_reviewer_defaults_off() -> None:
+    request = SearchRequest(query="规划标准")
+
+    assert request.session_id is None
+    assert request.mode is None
+    assert request.reviewer_enabled is False
+    assert request.thinking is None
+
+
 def test_feedback_request_rejects_unknown_feedback_type() -> None:
     with pytest.raises(ValidationError):
         FeedbackRequest(
