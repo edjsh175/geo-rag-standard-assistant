@@ -145,3 +145,35 @@ async def test_invalid_structured_output_retries_only_once() -> None:
         )
 
     assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_answer_units_have_stable_ids_and_clean_retry_uses_same_model() -> None:
+    snapshot = make_snapshot()
+    client = FakeModelClient(
+        [
+            ModelResponse(content='{"kind":"knowledge_answer","answer":"bad","citations":["E9"]}'),
+            ModelResponse(
+                content=(
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"应按本标准执行。","citations":["E1"]}'
+                    ']}'
+                )
+            ),
+        ]
+    )
+    generator = AnswerGenerator(model_client=client)
+
+    answer = await generator.generate(
+        question="要求？",
+        snapshot=snapshot,
+        stage_policy=LLMStagePolicy(True, True),
+        model_name="stable-main",
+    )
+
+    assert answer.answer == "应按本标准执行。"
+    assert answer.units[0].unit_id == "u1"
+    assert answer.citations == ("E1",)
+    assert len(client.calls) == 2
+    assert [call.model_name for call in client.calls] == ["stable-main", "stable-main"]
+    assert client.calls[1].request_reasoning is False

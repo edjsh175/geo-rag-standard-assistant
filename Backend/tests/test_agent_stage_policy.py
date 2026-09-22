@@ -88,3 +88,43 @@ async def test_production_model_adapter_keeps_answer_stage_reasoning_off() -> No
     )
 
     assert llm.calls[0]["request_reasoning"] is False
+
+
+@pytest.mark.asyncio
+async def test_resolved_main_model_identity_stays_stable_across_stages() -> None:
+    class FakeLLMConfig:
+        supports_reasoning = True
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        def resolve_main_model(self, *, thinking: bool) -> str:
+            return "reasoning-main" if thinking else "default-main"
+
+        async def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return "{}"
+
+    llm = FakeLLMConfig()
+    client = LLMConfigStageModelClient(llm)
+    model_name = client.resolve_main_model(thinking=True)
+
+    await client.complete(
+        ModelRequest(
+            stage="controller",
+            messages=({"role": "user", "content": "问题"},),
+            request_reasoning=True,
+            model_name=model_name,
+        )
+    )
+    await client.complete(
+        ModelRequest(
+            stage="answer_generation",
+            messages=({"role": "user", "content": "问题"},),
+            request_reasoning=False,
+            model_name=model_name,
+        )
+    )
+
+    assert [call["model"] for call in llm.calls] == ["reasoning-main", "reasoning-main"]
+    assert [call["request_reasoning"] for call in llm.calls] == [True, False]

@@ -179,6 +179,98 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
 
 
 @pytest.mark.asyncio
+async def test_runtime_resolves_main_model_once_and_preserves_identity_across_stages() -> None:
+    class IdentityModelClient:
+        supports_reasoning = True
+
+        def __init__(self) -> None:
+            self.resolve_calls = 0
+
+        def resolve_main_model(self, *, thinking: bool) -> str:
+            self.resolve_calls += 1
+            assert thinking is True
+            return "stable-main"
+
+    class IdentityController:
+        def __init__(self, model_client) -> None:
+            self.model_client = model_client
+            self.calls = 0
+            self.model_names = []
+
+        async def decide(
+            self,
+            *,
+            question,
+            context_summary,
+            working_evidence,
+            observations,
+            stage_policy,
+            model_name=None,
+        ):
+            self.model_names.append(model_name)
+            self.calls += 1
+            if self.calls == 1:
+                return ToolCall(
+                    tool_call_id="retrieve-identity",
+                    name="retrieve_kb",
+                    arguments={"query": question},
+                )
+            return ToolCall(
+                tool_call_id="compose-identity",
+                name="compose_answer",
+                arguments={"evidence_ids": observations[-1].payload["evidence_ids"]},
+            )
+
+    class IdentityAnswerGenerator:
+        def __init__(self) -> None:
+            self.model_names = []
+
+        async def generate(self, *, question, snapshot, stage_policy, model_name=None):
+            self.model_names.append(model_name)
+            return GeneratedAnswer(
+                kind="knowledge_answer",
+                answer="稳定模型身份回答",
+                citations=tuple(item.citation_id for item in snapshot.items),
+            )
+
+    class IdentityReviewer:
+        def __init__(self) -> None:
+            self.model_names = []
+
+        async def review(self, *, model_name=None, **kwargs):
+            self.model_names.append(model_name)
+            return SimpleNamespace(verdict="SUPPORTED", findings=())
+
+    model_client = IdentityModelClient()
+    controller = IdentityController(model_client)
+    generator = IdentityAnswerGenerator()
+    reviewer = IdentityReviewer()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-identity", "证据")]),
+        controller=controller,
+        answer_generator=generator,
+        reviewer=reviewer,
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="要求？",
+            session_id="session-identity",
+            principal_id="admin:test",
+            reviewer_enabled=True,
+            thinking=True,
+        )
+    )
+
+    assert result.publication_state == "published"
+    assert model_client.resolve_calls == 1
+    assert controller.model_names == ["stable-main", "stable-main"]
+    assert generator.model_names == ["stable-main"]
+    assert reviewer.model_names == ["stable-main"]
+
+
+@pytest.mark.asyncio
 async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cannot() -> None:
     store = InMemoryAgentSessionStore()
     first_runtime = AgentRuntime(

@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from app.models.search_models import DocumentResult
-from app.services.agent.answer_generator import GeneratedAnswer
+from app.services.agent.answer_generator import AnswerUnit, GeneratedAnswer
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.model_client import ModelResponse
 from app.services.agent.reviewer import GroundingReviewer
@@ -55,7 +55,7 @@ async def test_reviewer_checks_claims_against_frozen_evidence_with_reasoning_off
         ModelResponse(
             content=(
                 '{"verdict":"supported","findings":['
-                '{"claim":"应按本标准执行","status":"SUPPORTED","citations":["E1"]}'
+                '{"unit_id":"u1","status":"SUPPORTED","citations":["E1"]}'
                 ']}'
             )
         )
@@ -68,6 +68,7 @@ async def test_reviewer_checks_claims_against_frozen_evidence_with_reasoning_off
             kind="knowledge_answer",
             answer="应按本标准执行",
             citations=("E1",),
+            units=(AnswerUnit(unit_id="u1", text="应按本标准执行", citations=("E1",)),),
         ),
         snapshot=snapshot,
         stage_policy=LLMStagePolicy(True, True),
@@ -82,3 +83,57 @@ async def test_reviewer_checks_claims_against_frozen_evidence_with_reasoning_off
 def test_reviewer_is_not_a_retrieval_or_planning_surface() -> None:
     assert not hasattr(GroundingReviewer, "retrieve")
     assert not hasattr(GroundingReviewer, "plan")
+
+
+@pytest.mark.asyncio
+async def test_reviewer_requires_exactly_one_review_per_answer_unit() -> None:
+    snapshot = make_snapshot()
+
+    class SequenceModelClient:
+        def __init__(self) -> None:
+            self.calls = []
+            self.responses = [
+                ModelResponse(
+                    content=(
+                        '{"verdict":"SUPPORTED","findings":['
+                        '{"unit_id":"u1","status":"SUPPORTED","citations":["E1"]}'
+                        ']}'
+                    )
+                ),
+                ModelResponse(
+                    content=(
+                        '{"verdict":"SUPPORTED","findings":['
+                        '{"unit_id":"u1","status":"SUPPORTED","citations":["E1"]},'
+                        '{"unit_id":"u2","status":"SUPPORTED","citations":["E1"]}'
+                        ']}'
+                    )
+                ),
+            ]
+
+        async def complete(self, request):
+            self.calls.append(request)
+            return self.responses.pop(0)
+
+    client = SequenceModelClient()
+    reviewer = GroundingReviewer(model_client=client)
+    answer = GeneratedAnswer(
+        kind="knowledge_answer",
+        answer="第一点。\n第二点。",
+        citations=("E1",),
+        units=(
+            AnswerUnit(unit_id="u1", text="第一点。", citations=("E1",)),
+            AnswerUnit(unit_id="u2", text="第二点。", citations=("E1",)),
+        ),
+    )
+
+    result = await reviewer.review(
+        question="要求？",
+        answer=answer,
+        snapshot=snapshot,
+        stage_policy=LLMStagePolicy(True, True),
+        model_name="stable-main",
+    )
+
+    assert [finding.unit_id for finding in result.findings] == ["u1", "u2"]
+    assert len(client.calls) == 2
+    assert [call.model_name for call in client.calls] == ["stable-main", "stable-main"]

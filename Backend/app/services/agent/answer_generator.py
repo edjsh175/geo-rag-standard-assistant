@@ -8,10 +8,21 @@ import json
 from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.stage_policy import LLMStagePolicy
+from app.services.agent.structured_candidate import (
+    StructuredCandidateProtocolError,
+    execute_structured_candidate,
+)
 
 
 class AnswerGenerationError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerUnit:
+    unit_id: str
+    text: str
+    citations: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +31,7 @@ class GeneratedAnswer:
     answer: str
     citations: tuple[str, ...] = ()
     map_action: MapAction | None = None
+    units: tuple[AnswerUnit, ...] = ()
 
 
 class AnswerGenerator:
@@ -32,6 +44,7 @@ class AnswerGenerator:
         question: str,
         snapshot: FrozenEvidenceSnapshot | None,
         stage_policy: LLMStagePolicy,
+        model_name: str | None = None,
     ) -> GeneratedAnswer:
         if snapshot is None or not snapshot.items:
             raise AnswerGenerationError(
@@ -43,23 +56,29 @@ class AnswerGenerator:
             snapshot=snapshot,
             stage_policy=stage_policy,
         )
-        first = await self.model_client.complete(request)
-        parsed = self._try_parse(first.content, snapshot=snapshot)
-        if parsed is not None:
-            return parsed
+        async def generate_candidate(attempt):
+            call = ModelRequest(
+                stage="answer_generation",
+                messages=request.messages,
+                request_reasoning=(
+                    request.request_reasoning
+                    if attempt.request_reasoning is None
+                    else attempt.request_reasoning
+                ),
+                model_name=model_name,
+                temperature=(0.2 if attempt.temperature is None else attempt.temperature),
+            )
+            return (await self.model_client.complete(call)).content
 
-        retry_request = ModelRequest(
-            stage="answer_generation",
-            messages=request.messages,
-            request_reasoning=False,
-        )
-        second = await self.model_client.complete(retry_request)
-        parsed = self._try_parse(second.content, snapshot=snapshot)
-        if parsed is None:
+        try:
+            return await execute_structured_candidate(
+                generate=generate_candidate,
+                validate=lambda content: self._parse(content, snapshot=snapshot),
+            )
+        except StructuredCandidateProtocolError as exc:
             raise AnswerGenerationError(
                 "answer generation failed to produce valid structured output"
-            )
-        return parsed
+            ) from exc
 
     def _build_request(
         self,
@@ -77,7 +96,8 @@ class AnswerGenerator:
                 "role": "system",
                 "content": (
                     "Generate only a grounded answer from the provided Frozen Evidence. "
-                    "Return JSON with kind, answer, citations, and optional map_action. "
+                    "Return JSON with kind, units, and optional map_action. Each unit must "
+                    "contain a stable unit_id, text, and citations. "
                     "map_action may be null or an object with type, target, adcode, name, payload. "
                     "Do not introduce external facts."
                 ),
@@ -93,48 +113,86 @@ class AnswerGenerator:
             request_reasoning=stage_policy.for_stage(
                 "answer_generation"
             ).request_reasoning,
+            model_name=None,
         )
 
     @staticmethod
-    def _try_parse(
+    def _parse(
         content: str | None,
         *,
         snapshot: FrozenEvidenceSnapshot,
-    ) -> GeneratedAnswer | None:
+    ) -> GeneratedAnswer:
         if not content or not content.strip():
-            return None
+            raise ValueError("empty structured output")
         try:
             payload = json.loads(content)
         except (TypeError, json.JSONDecodeError):
-            return None
+            raise ValueError("invalid structured output")
         if not isinstance(payload, dict):
-            return None
+            raise ValueError("invalid structured output")
 
         kind = payload.get("kind")
-        answer = payload.get("answer")
-        citations = payload.get("citations", [])
-        if kind != "knowledge_answer" or not isinstance(answer, str) or not answer.strip():
-            return None
-        if not isinstance(citations, list) or not all(
-            isinstance(value, str) for value in citations
-        ):
-            return None
+        if kind != "knowledge_answer":
+            raise ValueError("invalid answer kind")
 
         allowed = {item.citation_id for item in snapshot.items}
-        if not citations or any(citation not in allowed for citation in citations):
-            return None
+        raw_units = payload.get("units")
+        units: list[AnswerUnit] = []
+        if isinstance(raw_units, list) and raw_units:
+            seen_ids: set[str] = set()
+            for raw_unit in raw_units:
+                if not isinstance(raw_unit, dict):
+                    raise ValueError("invalid answer unit")
+                unit_id = raw_unit.get("unit_id")
+                text = raw_unit.get("text")
+                citations = raw_unit.get("citations")
+                if (
+                    not isinstance(unit_id, str)
+                    or not unit_id.strip()
+                    or unit_id in seen_ids
+                    or not isinstance(text, str)
+                    or not text.strip()
+                    or not isinstance(citations, list)
+                    or not citations
+                    or not all(isinstance(value, str) and value in allowed for value in citations)
+                ):
+                    raise ValueError("invalid answer unit")
+                seen_ids.add(unit_id)
+                units.append(
+                    AnswerUnit(
+                        unit_id=unit_id.strip(),
+                        text=text.strip(),
+                        citations=tuple(citations),
+                    )
+                )
+            answer = "\n".join(unit.text for unit in units)
+            citations = tuple(dict.fromkeys(citation for unit in units for citation in unit.citations))
+        else:
+            answer = payload.get("answer")
+            raw_citations = payload.get("citations", [])
+            if not isinstance(answer, str) or not answer.strip():
+                raise ValueError("invalid answer text")
+            if (
+                not isinstance(raw_citations, list)
+                or not raw_citations
+                or not all(isinstance(value, str) and value in allowed for value in raw_citations)
+            ):
+                raise ValueError("invalid citations")
+            answer = answer.strip()
+            citations = tuple(raw_citations)
+            units = [AnswerUnit(unit_id="u1", text=answer, citations=citations)]
         map_action = None
         raw_map_action = payload.get("map_action")
         if raw_map_action is not None:
             if not isinstance(raw_map_action, dict):
-                return None
+                raise ValueError("invalid map action")
             action_type = raw_map_action.get("type")
             target = raw_map_action.get("target")
             if not isinstance(action_type, str) or not isinstance(target, str):
-                return None
+                raise ValueError("invalid map action")
             raw_payload = raw_map_action.get("payload")
             if raw_payload is not None and not isinstance(raw_payload, dict):
-                return None
+                raise ValueError("invalid map action")
             map_action = MapAction(
                 type=action_type,
                 target=target,
@@ -144,7 +202,8 @@ class AnswerGenerator:
             )
         return GeneratedAnswer(
             kind="knowledge_answer",
-            answer=answer.strip(),
-            citations=tuple(citations),
+            answer=answer,
+            citations=citations,
             map_action=map_action,
+            units=tuple(units),
         )

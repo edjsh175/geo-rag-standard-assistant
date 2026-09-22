@@ -9,11 +9,15 @@ from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.contracts import FrozenEvidenceSnapshot
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.stage_policy import LLMStagePolicy
+from app.services.agent.structured_candidate import (
+    StructuredCandidateProtocolError,
+    execute_structured_candidate,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ReviewFinding:
-    claim: str
+    unit_id: str
     status: str
     citations: tuple[str, ...]
 
@@ -35,40 +39,63 @@ class GroundingReviewer:
         answer: GeneratedAnswer,
         snapshot: FrozenEvidenceSnapshot,
         stage_policy: LLMStagePolicy,
+        model_name: str | None = None,
     ) -> ReviewResult:
         evidence_text = "\n\n".join(
             f"[{item.citation_id}] {item.text}" for item in snapshot.items
         )
-        request = ModelRequest(
-            stage="reviewer",
-            messages=(
+        messages = (
                 {
                     "role": "system",
                     "content": (
-                        "Validate only whether answer claims are supported by the provided "
-                        "Frozen Evidence. Return JSON with verdict and findings. Do not plan "
+                        "Validate every answer unit against the provided Frozen Evidence. "
+                        "Return JSON with verdict and findings. Each finding must reference "
+                        "exactly one unit_id and every answer unit must appear exactly once. Do not plan "
                         "retrieval and do not add external knowledge."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Question:\n{question}\n\nAnswer:\n{answer.answer}\n\n"
-                        f"Answer Citations:\n{json.dumps(list(answer.citations), ensure_ascii=False)}\n\n"
+                        f"Question:\n{question}\n\nAnswer Units:\n"
+                        f"{json.dumps([{'unit_id': unit.unit_id, 'text': unit.text, 'citations': list(unit.citations)} for unit in answer.units], ensure_ascii=False)}\n\n"
                         f"Frozen Evidence:\n{evidence_text}"
                     ),
                 },
-            ),
-            request_reasoning=stage_policy.for_stage("reviewer").request_reasoning,
         )
-        response = await self.model_client.complete(request)
-        return self._parse(response.content, snapshot=snapshot)
+        async def generate_candidate(attempt):
+            request = ModelRequest(
+                stage="reviewer",
+                messages=messages,
+                request_reasoning=(
+                    stage_policy.for_stage("reviewer").request_reasoning
+                    if attempt.request_reasoning is None
+                    else attempt.request_reasoning
+                ),
+                model_name=model_name,
+                temperature=(0.2 if attempt.temperature is None else attempt.temperature),
+            )
+            return (await self.model_client.complete(request)).content
+
+        expected_unit_ids = tuple(unit.unit_id for unit in answer.units)
+        try:
+            return await execute_structured_candidate(
+                generate=generate_candidate,
+                validate=lambda content: self._parse(
+                    content,
+                    snapshot=snapshot,
+                    expected_unit_ids=expected_unit_ids,
+                ),
+            )
+        except StructuredCandidateProtocolError as exc:
+            raise ValueError("reviewer returned invalid structured output") from exc
 
     @staticmethod
     def _parse(
         content: str | None,
         *,
         snapshot: FrozenEvidenceSnapshot,
+        expected_unit_ids: tuple[str, ...],
     ) -> ReviewResult:
         if not content:
             raise ValueError("reviewer returned empty structured output")
@@ -89,14 +116,17 @@ class GroundingReviewer:
 
         allowed = {item.citation_id for item in snapshot.items}
         findings: list[ReviewFinding] = []
+        seen_unit_ids: set[str] = set()
         for raw in raw_findings:
             if not isinstance(raw, dict):
                 raise ValueError("reviewer returned invalid structured output")
-            claim = raw.get("claim")
+            unit_id = raw.get("unit_id")
             status = raw.get("status")
             citations = raw.get("citations", [])
             if (
-                not isinstance(claim, str)
+                not isinstance(unit_id, str)
+                or unit_id not in expected_unit_ids
+                or unit_id in seen_unit_ids
                 or not isinstance(status, str)
                 or not isinstance(citations, list)
                 or not all(isinstance(value, str) for value in citations)
@@ -106,11 +136,14 @@ class GroundingReviewer:
             normalized_status = status.strip().upper()
             if normalized_status not in {"SUPPORTED", "UNSUPPORTED", "OVERSTATED"}:
                 raise ValueError("reviewer returned invalid finding status")
+            seen_unit_ids.add(unit_id)
             findings.append(
                 ReviewFinding(
-                    claim=claim,
+                    unit_id=unit_id,
                     status=normalized_status,
                     citations=tuple(citations),
                 )
             )
+        if seen_unit_ids != set(expected_unit_ids):
+            raise ValueError("reviewer must cover every answer unit exactly once")
         return ReviewResult(verdict=normalized_verdict, findings=tuple(findings))
