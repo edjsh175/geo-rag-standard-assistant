@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+from time import monotonic
 from typing import Mapping, Sequence, Any
+from uuid import uuid4
 
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.stage_policy import LLMStagePolicy
+from app.services.agent.structured_candidate import (
+    StructuredCandidateProtocolError,
+    execute_structured_candidate,
+)
 from app.services.agent.tool_runtime import ToolCall, ToolObservation
 from app.services.agent.tools import ToolRegistry
 
@@ -51,9 +57,7 @@ class MainController:
             default=str,
             sort_keys=True,
         )
-        request = ModelRequest(
-            stage="controller",
-            messages=(
+        messages = (
                 {
                     "role": "system",
                     "content": (
@@ -71,12 +75,40 @@ class MainController:
                         f"Observations:\n{observation_text}"
                     ),
                 },
-            ),
-            request_reasoning=stage_policy.for_stage("controller").request_reasoning,
-            model_name=model_name,
         )
-        response = await self.model_client.complete(request)
-        return self._parse_tool_call(response.content)
+        execution = stage_policy.for_stage("controller")
+        call_id = str(uuid4())
+        deadline_at = monotonic() + execution.timeout_seconds
+
+        async def generate_candidate(attempt):
+            remaining = deadline_at - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("controller model call deadline exceeded")
+            request = ModelRequest(
+                stage="controller",
+                messages=messages,
+                request_reasoning=(
+                    execution.request_reasoning
+                    if attempt.request_reasoning is None
+                    else attempt.request_reasoning
+                ),
+                model_name=model_name,
+                temperature=(0.2 if attempt.temperature is None else attempt.temperature),
+                call_id=call_id,
+                attempt=attempt.protocol_attempt,
+                timeout_seconds=remaining,
+            )
+            return (await self.model_client.complete(request)).content
+
+        try:
+            return await execute_structured_candidate(
+                generate=generate_candidate,
+                validate=self._parse_tool_call,
+            )
+        except StructuredCandidateProtocolError as exc:
+            raise ControllerOutputError(
+                "controller must return a structured tool call"
+            ) from exc
 
     def _parse_tool_call(self, content: str | None) -> ToolCall:
         if not content:

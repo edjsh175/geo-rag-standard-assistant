@@ -78,6 +78,10 @@ class ResourceFuse:
     def steps(self) -> int:
         return self._steps
 
+    @property
+    def deadline_at(self) -> float:
+        return self._started_at + self.max_elapsed_seconds
+
     def consume_step(self, *, tool_name: str) -> None:
         self.ensure_within_limits()
         if self._steps >= self.max_steps:

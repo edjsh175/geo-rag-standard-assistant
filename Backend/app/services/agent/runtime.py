@@ -259,6 +259,7 @@ class AgentRuntime:
         stage_policy = LLMStagePolicy(
             user_thinking=request.thinking,
             endpoint_supports_reasoning=self.endpoint_supports_reasoning,
+            runtime_deadline_at=fuse.deadline_at,
         )
         model_client = getattr(self.controller, "model_client", None)
         resolve_main_model = getattr(model_client, "resolve_main_model", None)
@@ -303,6 +304,8 @@ class AgentRuntime:
                 if main_model_name is not None:
                     controller_kwargs["model_name"] = main_model_name
                 call = await self.controller.decide(**controller_kwargs)
+            except TimeoutError:
+                return resource_fuse_result()
             except ControllerOutputError:
                 return model_output_failure_result()
             self._append_event(
@@ -457,6 +460,8 @@ class AgentRuntime:
                 if main_model_name is not None:
                     answer_kwargs["model_name"] = main_model_name
                 answer = await self.answer_generator.generate(**answer_kwargs)
+            except TimeoutError:
+                return resource_fuse_result()
             except AnswerGenerationError:
                 return model_output_failure_result()
             self._append_event(
@@ -486,6 +491,8 @@ class AgentRuntime:
                     if main_model_name is not None:
                         reviewer_kwargs["model_name"] = main_model_name
                     review = await self.reviewer.review(**reviewer_kwargs)
+                except TimeoutError:
+                    return resource_fuse_result()
                 except Exception as exc:
                     limitation = "证据审查执行失败，答案未发布。"
                     self._append_event(

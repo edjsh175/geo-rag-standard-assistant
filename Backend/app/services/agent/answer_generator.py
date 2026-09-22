@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from time import monotonic
+from uuid import uuid4
 
 from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.model_client import ModelRequest, StageModelClient
@@ -56,7 +58,13 @@ class AnswerGenerator:
             snapshot=snapshot,
             stage_policy=stage_policy,
         )
+        execution = stage_policy.for_stage("answer_generation")
+        call_id = str(uuid4())
+        deadline_at = monotonic() + execution.timeout_seconds
         async def generate_candidate(attempt):
+            remaining = deadline_at - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("answer generation model call deadline exceeded")
             call = ModelRequest(
                 stage="answer_generation",
                 messages=request.messages,
@@ -67,6 +75,9 @@ class AnswerGenerator:
                 ),
                 model_name=model_name,
                 temperature=(0.2 if attempt.temperature is None else attempt.temperature),
+                call_id=call_id,
+                attempt=attempt.protocol_attempt,
+                timeout_seconds=remaining,
             )
             return (await self.model_client.complete(call)).content
 
@@ -138,49 +149,38 @@ class AnswerGenerator:
         allowed = {item.citation_id for item in snapshot.items}
         raw_units = payload.get("units")
         units: list[AnswerUnit] = []
-        if isinstance(raw_units, list) and raw_units:
-            seen_ids: set[str] = set()
-            for raw_unit in raw_units:
-                if not isinstance(raw_unit, dict):
-                    raise ValueError("invalid answer unit")
-                unit_id = raw_unit.get("unit_id")
-                text = raw_unit.get("text")
-                citations = raw_unit.get("citations")
-                if (
-                    not isinstance(unit_id, str)
-                    or not unit_id.strip()
-                    or unit_id in seen_ids
-                    or not isinstance(text, str)
-                    or not text.strip()
-                    or not isinstance(citations, list)
-                    or not citations
-                    or not all(isinstance(value, str) and value in allowed for value in citations)
-                ):
-                    raise ValueError("invalid answer unit")
-                seen_ids.add(unit_id)
-                units.append(
-                    AnswerUnit(
-                        unit_id=unit_id.strip(),
-                        text=text.strip(),
-                        citations=tuple(citations),
-                    )
-                )
-            answer = "\n".join(unit.text for unit in units)
-            citations = tuple(dict.fromkeys(citation for unit in units for citation in unit.citations))
-        else:
-            answer = payload.get("answer")
-            raw_citations = payload.get("citations", [])
-            if not isinstance(answer, str) or not answer.strip():
-                raise ValueError("invalid answer text")
+        if not isinstance(raw_units, list) or not raw_units:
+            raise ValueError("answer units are required")
+        seen_ids: set[str] = set()
+        for raw_unit in raw_units:
+            if not isinstance(raw_unit, dict):
+                raise ValueError("invalid answer unit")
+            unit_id = raw_unit.get("unit_id")
+            text = raw_unit.get("text")
+            citations = raw_unit.get("citations")
             if (
-                not isinstance(raw_citations, list)
-                or not raw_citations
-                or not all(isinstance(value, str) and value in allowed for value in raw_citations)
+                not isinstance(unit_id, str)
+                or not unit_id.strip()
+                or unit_id in seen_ids
+                or not isinstance(text, str)
+                or not text.strip()
+                or not isinstance(citations, list)
+                or not citations
+                or not all(isinstance(value, str) and value in allowed for value in citations)
             ):
-                raise ValueError("invalid citations")
-            answer = answer.strip()
-            citations = tuple(raw_citations)
-            units = [AnswerUnit(unit_id="u1", text=answer, citations=citations)]
+                raise ValueError("invalid answer unit")
+            seen_ids.add(unit_id)
+            units.append(
+                AnswerUnit(
+                    unit_id=unit_id.strip(),
+                    text=text.strip(),
+                    citations=tuple(citations),
+                )
+            )
+        answer = "\n".join(unit.text for unit in units)
+        citations = tuple(
+            dict.fromkeys(citation for unit in units for citation in unit.citations)
+        )
         map_action = None
         raw_map_action = payload.get("map_action")
         if raw_map_action is not None:

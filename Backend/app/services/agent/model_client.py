@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+from time import monotonic
 from typing import Mapping, Protocol
 
 
@@ -13,6 +15,20 @@ class ModelRequest:
     request_reasoning: bool = False
     model_name: str | None = None
     temperature: float = 0.2
+    call_id: str | None = None
+    attempt: int = 1
+    timeout_seconds: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCallAudit:
+    call_id: str | None
+    stage: str
+    attempt: int
+    model_name: str | None
+    timeout_seconds: float | None
+    elapsed_seconds: float
+    outcome: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +58,7 @@ class LLMConfigStageModelClient:
 
     def __init__(self, llm_config) -> None:
         self.llm_config = llm_config
+        self.audit_log: deque[ModelCallAudit] = deque(maxlen=1000)
 
     @property
     def supports_reasoning(self) -> bool:
@@ -54,10 +71,27 @@ class LLMConfigStageModelClient:
         return None
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
-        content = await self.llm_config.chat_completion(
-            messages=[dict(message) for message in request.messages],
-            model=request.model_name,
-            temperature=request.temperature,
-            request_reasoning=request.request_reasoning,
-        )
-        return ModelResponse(content=content)
+        started_at = monotonic()
+        outcome = "error"
+        try:
+            content = await self.llm_config.chat_completion(
+                messages=[dict(message) for message in request.messages],
+                model=request.model_name,
+                temperature=request.temperature,
+                request_reasoning=request.request_reasoning,
+                timeout_seconds=request.timeout_seconds,
+            )
+            outcome = "success"
+            return ModelResponse(content=content)
+        finally:
+            self.audit_log.append(
+                ModelCallAudit(
+                    call_id=request.call_id,
+                    stage=request.stage,
+                    attempt=request.attempt,
+                    model_name=request.model_name,
+                    timeout_seconds=request.timeout_seconds,
+                    elapsed_seconds=max(0.0, monotonic() - started_at),
+                    outcome=outcome,
+                )
+            )
