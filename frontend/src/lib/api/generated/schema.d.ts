@@ -1500,6 +1500,20 @@ export interface components {
             history?: components["schemas"]["ChatHistoryMessage"][] | null;
             /** @description Optional document follow-up context resolved on the client. */
             follow_up_context?: components["schemas"]["FollowUpContext"] | null;
+            /**
+             * Map Context
+             * @description Browser-authoritative WebGIS state snapshot for Agent planning.
+             */
+            map_context?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Continuation Token
+             * @description Opaque server-issued token used only to resume a pending browser GIS tool call.
+             */
+            continuation_token?: string | null;
+            /** @description Receipt for the browser GIS tool call identified by continuation_token. */
+            browser_tool_receipt?: components["schemas"]["BrowserToolReceipt"] | null;
         };
         /**
          * SearchResponse
@@ -1573,6 +1587,16 @@ export interface components {
             publication_state?: string | null;
             /** @description Structured map action for the frontend. */
             map_action?: components["schemas"]["MapAction"] | null;
+            /**
+             * Pending Tool Call Id
+             * @description Tool call identifier when browser execution is required before Agent continuation.
+             */
+            pending_tool_call_id?: string | null;
+            /**
+             * Continuation Token
+             * @description Opaque token required to resume a pending browser GIS tool call.
+             */
+            continuation_token?: string | null;
         };
         /**
          * SpatialFilter
@@ -1680,6 +1704,35 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, unknown>;
+        };
+        /**
+         * BrowserToolReceipt
+         * @description Browser-authoritative result for one pending GIS tool call.
+         */
+        BrowserToolReceipt: {
+            /** Tool Call Id */
+            tool_call_id: string;
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "succeeded" | "failed";
+            /** Output */
+            output?: {
+                [key: string]: unknown;
+            } | null;
+            /** Error */
+            error?: string | null;
+            /** Effect */
+            effect?: {
+                [key: string]: unknown;
+            };
+            /** Map Context */
+            map_context: {
+                [key: string]: unknown;
+            };
         };
     };
     responses: never;

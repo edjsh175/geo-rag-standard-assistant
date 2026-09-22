@@ -62,17 +62,20 @@ class ResourceFuse:
         *,
         max_steps: int,
         max_elapsed_seconds: float,
+        initial_steps: int = 0,
         clock: Callable[[], float] = monotonic,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps must be positive")
         if max_elapsed_seconds <= 0:
             raise ValueError("max_elapsed_seconds must be positive")
+        if initial_steps < 0 or initial_steps > max_steps:
+            raise ValueError("initial_steps must be between 0 and max_steps")
         self.max_steps = max_steps
         self.max_elapsed_seconds = max_elapsed_seconds
         self._clock = clock
         self._started_at = clock()
-        self._steps = 0
+        self._steps = initial_steps
 
     @property
     def steps(self) -> int:
@@ -81,6 +84,10 @@ class ResourceFuse:
     @property
     def deadline_at(self) -> float:
         return self._started_at + self.max_elapsed_seconds
+
+    @property
+    def remaining_seconds(self) -> float:
+        return max(0.0, self.deadline_at - self._clock())
 
     def consume_step(self, *, tool_name: str) -> None:
         self.ensure_within_limits()
@@ -135,12 +142,36 @@ class ToolRuntime:
             observation = self._clarify(call=call)
         elif call.name == "limitation":
             observation = self._limitation(call=call)
+        elif call.name in {
+            "import_vector_dataset",
+            "set_layer_visibility",
+            "set_vector_style",
+            "fit_vector_layer",
+            "locate_map",
+        }:
+            observation = self._browser_action(call=call)
         else:  # pragma: no cover - registry.get() already rejects this branch.
             raise KeyError(f"unknown tool: {call.name}")
 
         if self.resource_fuse is not None:
             self.resource_fuse.ensure_within_limits()
         return observation
+
+    @staticmethod
+    def _browser_action(*, call: ToolCall) -> ToolObservation:
+        return ToolObservation(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            status="browser_execution_required",
+            payload={
+                "map_action": {
+                    "type": call.name,
+                    "target": "browser_map",
+                    "payload": dict(call.arguments),
+                }
+            },
+            is_terminal=True,
+        )
 
     async def _retrieve_kb(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
         query_text = str(call.arguments["query"]).strip()

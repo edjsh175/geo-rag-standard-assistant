@@ -29,6 +29,48 @@ class LimitationInput(BaseModel):
     message: str = Field(..., min_length=1)
 
 
+class ImportVectorDatasetInput(BaseModel):
+    file_ref: str = Field(..., min_length=1)
+    name: str | None = Field(None, min_length=1, max_length=200)
+
+
+class SetLayerVisibilityInput(BaseModel):
+    layer_ref: str = Field(..., min_length=1)
+    visible: bool
+
+
+class VectorStrokeStyle(BaseModel):
+    color: str | None = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    width: float | None = Field(None, ge=0, le=64)
+    opacity: float | None = Field(None, ge=0, le=1)
+
+
+class VectorFillStyle(BaseModel):
+    color: str | None = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    opacity: float | None = Field(None, ge=0, le=1)
+
+
+class VectorStylePatch(BaseModel):
+    stroke: VectorStrokeStyle | None = None
+    fill: VectorFillStyle | None = None
+    radius: float | None = Field(None, ge=1, le=128)
+
+
+class SetVectorStyleInput(BaseModel):
+    layer_ref: str = Field(..., min_length=1)
+    style: VectorStylePatch
+
+
+class FitVectorLayerInput(BaseModel):
+    layer_ref: str = Field(..., min_length=1)
+
+
+class LocateMapInput(BaseModel):
+    longitude: float = Field(..., ge=-180, le=180)
+    latitude: float = Field(..., ge=-90, le=90)
+    zoom: float | None = Field(None, ge=1, le=22)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
     name: str
@@ -112,6 +154,31 @@ def build_default_tool_registry() -> ToolRegistry:
                     "from the user would resolve that evidence gap."
                 ),
                 input_model=LimitationInput,
+            ),
+            ToolSpec(
+                name="import_vector_dataset",
+                description="Request browser execution to import a referenced SHP or GeoJSON dataset into the active WebGIS map.",
+                input_model=ImportVectorDatasetInput,
+            ),
+            ToolSpec(
+                name="set_layer_visibility",
+                description="Request browser execution to change visibility of a stable layer_ref.",
+                input_model=SetLayerVisibilityInput,
+            ),
+            ToolSpec(
+                name="set_vector_style",
+                description="Request browser execution to update display style of a stable user vector layer_ref.",
+                input_model=SetVectorStyleInput,
+            ),
+            ToolSpec(
+                name="fit_vector_layer",
+                description="Request browser execution to fit the active map viewport to a stable user vector layer_ref.",
+                input_model=FitVectorLayerInput,
+            ),
+            ToolSpec(
+                name="locate_map",
+                description="Request browser execution to move the active map viewport to a coordinate.",
+                input_model=LocateMapInput,
             ),
         )
     )

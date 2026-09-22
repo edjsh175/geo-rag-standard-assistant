@@ -47,6 +47,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
+import { registerVectorDataset } from './gis/fileReferenceStore';
 
 type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
 
@@ -872,6 +873,11 @@ export default function App() {
     }
   };
 
+  const handleVectorFilesSelected = useCallback(async (files: File[]) => {
+    const registered = await registerVectorDataset(files);
+    return registered.name;
+  }, []);
+
   // 获取文档详情
   const fetchDocumentDetails = async (documentId: string) => {
     if (!documentId) return null;
@@ -1237,6 +1243,7 @@ export default function App() {
             <Chat
               messages={messages}
               onSendMessage={handleChatSubmit}
+              onVectorFilesSelected={handleVectorFilesSelected}
               isLoading={isChatLoading}
               onStopGeneration={handleStopGeneration}
               inputValue={chatInput}
