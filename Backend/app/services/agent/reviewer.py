@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from time import monotonic
+from uuid import uuid4
 
 from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.contracts import FrozenEvidenceSnapshot
@@ -63,7 +65,14 @@ class GroundingReviewer:
                     ),
                 },
         )
+        execution = stage_policy.for_stage("reviewer")
+        call_id = str(uuid4())
+        deadline_at = monotonic() + execution.timeout_seconds
+
         async def generate_candidate(attempt):
+            remaining = deadline_at - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("reviewer model call deadline exceeded")
             request = ModelRequest(
                 stage="reviewer",
                 messages=messages,
@@ -74,6 +83,9 @@ class GroundingReviewer:
                 ),
                 model_name=model_name,
                 temperature=(0.2 if attempt.temperature is None else attempt.temperature),
+                call_id=call_id,
+                attempt=attempt.protocol_attempt,
+                timeout_seconds=remaining,
             )
             return (await self.model_client.complete(request)).content
 
@@ -136,6 +148,8 @@ class GroundingReviewer:
             normalized_status = status.strip().upper()
             if normalized_status not in {"SUPPORTED", "UNSUPPORTED", "OVERSTATED"}:
                 raise ValueError("reviewer returned invalid finding status")
+            if normalized_status == "SUPPORTED" and not citations:
+                raise ValueError("supported review finding requires citations")
             seen_unit_ids.add(unit_id)
             findings.append(
                 ReviewFinding(
@@ -146,4 +160,11 @@ class GroundingReviewer:
             )
         if seen_unit_ids != set(expected_unit_ids):
             raise ValueError("reviewer must cover every answer unit exactly once")
+        finding_statuses = {finding.status for finding in findings}
+        if normalized_verdict == "SUPPORTED" and finding_statuses != {"SUPPORTED"}:
+            raise ValueError("supported verdict conflicts with review findings")
+        if normalized_verdict == "UNSUPPORTED" and "UNSUPPORTED" not in finding_statuses:
+            raise ValueError("unsupported verdict conflicts with review findings")
+        if normalized_verdict == "OVERSTATED" and "OVERSTATED" not in finding_statuses:
+            raise ValueError("overstated verdict conflicts with review findings")
         return ReviewResult(verdict=normalized_verdict, findings=tuple(findings))

@@ -8,7 +8,6 @@ from typing import Optional, Dict, Any, AsyncGenerator
 from enum import Enum
 import asyncio
 
-from fastapi import HTTPException
 from openai import AsyncOpenAI
 import httpx
 
@@ -137,6 +136,7 @@ class LLMConfig:
         model: Optional[str] = None,
         temperature: float = 0.7,
         request_reasoning: bool = False,
+        timeout_seconds: Optional[float] = None,
         **kwargs
     ) -> str:
         """
@@ -160,11 +160,23 @@ class LLMConfig:
             selected_model = self.resolve_main_model(thinking=request_reasoning)
 
         if provider == LLMProvider.OPENAI:
-            return await self._openai_chat_completion(messages, selected_model, temperature, **kwargs)
+            return await self._openai_chat_completion(
+                messages,
+                selected_model,
+                temperature,
+                timeout_seconds=timeout_seconds,
+                **kwargs,
+            )
         elif provider == LLMProvider.ZHIPU:
             return await self._zhipu_chat_completion(messages, selected_model, temperature, **kwargs)
         elif provider == LLMProvider.DEEPSEEK:
-            return await self._deepseek_chat_completion(messages, selected_model, temperature, **kwargs)
+            return await self._deepseek_chat_completion(
+                messages,
+                selected_model,
+                temperature,
+                timeout_seconds=timeout_seconds,
+                **kwargs,
+            )
         else:
             raise ValueError(f"不支持的 LLM 提供商: {provider}")
 
@@ -173,6 +185,7 @@ class LLMConfig:
         messages: list[Dict[str, str]],
         model: Optional[str],
         temperature: float,
+        timeout_seconds: Optional[float] = None,
         **kwargs
     ) -> str:
         """OpenAI 聊天补全"""
@@ -186,11 +199,11 @@ class LLMConfig:
                 temperature=temperature,
                 **kwargs
             )
-            response = await asyncio.wait_for(coro, timeout=30.0)
+            response = await asyncio.wait_for(coro, timeout=timeout_seconds or 30.0)
             return response.choices[0].message.content
         except asyncio.TimeoutError:
             logger.error("OpenAI 聊天请求超时 (Circuit Breaker触发)")
-            raise HTTPException(status_code=504, detail="大模型上游服务响应超时")
+            raise TimeoutError("大模型上游服务响应超时")
         except Exception as e:
             logger.error(f"OpenAI 聊天请求失败: {e}")
             raise
@@ -215,6 +228,7 @@ class LLMConfig:
         messages: list[Dict[str, str]],
         model: Optional[str],
         temperature: float,
+        timeout_seconds: Optional[float] = None,
         **kwargs
     ) -> str:
         """DeepSeek 聊天补全"""
@@ -234,12 +248,11 @@ class LLMConfig:
                 temperature=temperature,
                 **kwargs
             )
-            response = await asyncio.wait_for(coro, timeout=30.0)
+            response = await asyncio.wait_for(coro, timeout=timeout_seconds or 30.0)
             return response.choices[0].message.content
         except asyncio.TimeoutError:
             logger.error("DeepSeek 聊天请求超时 (Circuit Breaker触发)")
-            from fastapi import HTTPException
-            raise HTTPException(status_code=504, detail="大模型上游服务响应超时")
+            raise TimeoutError("大模型上游服务响应超时")
         except Exception as e:
             logger.error(f"DeepSeek 聊天请求失败: {e}")
             raise
