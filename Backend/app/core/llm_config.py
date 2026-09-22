@@ -74,6 +74,18 @@ class LLMConfig:
         """Whether a dedicated reasoning-capable model is explicitly configured."""
         return bool(settings.LLM_REASONING_MODEL)
 
+    def resolve_main_model(self, *, thinking: bool) -> str:
+        if thinking and settings.LLM_REASONING_MODEL:
+            return settings.LLM_REASONING_MODEL
+        provider = settings.LLM_PROVIDER
+        if provider == LLMProvider.OPENAI:
+            return settings.OPENAI_MODEL
+        if provider == LLMProvider.ZHIPU:
+            return settings.ZHIPU_MODEL
+        if provider == LLMProvider.DEEPSEEK:
+            return settings.DEEPSEEK_MODEL
+        raise ValueError(f"不支持的 LLM 提供商: {provider}")
+
     async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
         """
         获取文本的向量嵌入
@@ -144,7 +156,8 @@ class LLMConfig:
         if request_reasoning:
             if not self.supports_reasoning:
                 raise RuntimeError("reasoning was requested but no reasoning model is configured")
-            selected_model = settings.LLM_REASONING_MODEL
+        if selected_model is None:
+            selected_model = self.resolve_main_model(thinking=request_reasoning)
 
         if provider == LLMProvider.OPENAI:
             return await self._openai_chat_completion(messages, selected_model, temperature, **kwargs)

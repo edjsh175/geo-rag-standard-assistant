@@ -10,6 +10,7 @@ from uuid import uuid4
 from app.models.search_models import SearchRequest, SearchResponse
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
+from app.services.agent.publication import PublishedResult
 from app.services.agent.runtime import AgentRunRequest
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import RetrievalRequestConstraints
@@ -90,7 +91,8 @@ class SearchApplicationService:
                 turn_id=turn_id,
                 evidence_ids=[item.evidence_id for item in admitted],
             )
-            answer = await self.agent_runtime.answer_generator.generate(
+            main_model_name = self._resolve_main_model(thinking=False)
+            answer_kwargs = dict(
                 question=request.query,
                 snapshot=snapshot,
                 stage_policy=LLMStagePolicy(
@@ -98,6 +100,9 @@ class SearchApplicationService:
                     endpoint_supports_reasoning=False,
                 ),
             )
+            if main_model_name is not None:
+                answer_kwargs["model_name"] = main_model_name
+            answer = await self.agent_runtime.answer_generator.generate(**answer_kwargs)
             publication_state = "published"
             generated_answer = answer.answer
             if request.reviewer_enabled:
@@ -107,7 +112,7 @@ class SearchApplicationService:
                     generated_answer = "证据审查执行失败，答案未发布。"
                 else:
                     try:
-                        review = await reviewer.review(
+                        reviewer_kwargs = dict(
                             question=request.query,
                             answer=answer,
                             snapshot=snapshot,
@@ -116,6 +121,9 @@ class SearchApplicationService:
                                 endpoint_supports_reasoning=False,
                             ),
                         )
+                        if main_model_name is not None:
+                            reviewer_kwargs["model_name"] = main_model_name
+                        review = await reviewer.review(**reviewer_kwargs)
                     except Exception:
                         publication_state = "review_failed"
                         generated_answer = "证据审查执行失败，答案未发布。"
@@ -124,6 +132,18 @@ class SearchApplicationService:
                         if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
                             publication_state = "review_rejected"
                             generated_answer = "答案未通过证据审查，未发布。"
+            published = (
+                PublishedResult.publish(
+                    text=answer.answer,
+                    publication_state="published",
+                    map_action=answer.map_action,
+                )
+                if publication_state == "published"
+                else PublishedResult.safe_fallback(
+                    publication_state=publication_state,
+                    fallback_text=generated_answer,
+                )
+            )
             elapsed = (datetime.now() - started_at).total_seconds()
             return SearchResponse(
                 query=request.query,
@@ -131,12 +151,12 @@ class SearchApplicationService:
                 total_count=len(results),
                 search_time=elapsed,
                 search_mode=request.search_mode,
-                generated_answer=generated_answer,
+                generated_answer=published.visible_text,
                 generation_time=elapsed,
                 session_id=session_id,
                 final_mode="linear",
                 publication_state=publication_state,
-                map_action=(answer.map_action if publication_state == "published" else None),
+                map_action=published.map_action,
             )
 
         session_id = request.session_id or f"session-{uuid4()}"
@@ -161,11 +181,7 @@ class SearchApplicationService:
             )
         )
         results = await self._results_from_frozen_evidence(run_result.frozen_evidence)
-        generated_answer = (
-            run_result.answer.answer
-            if run_result.answer is not None
-            else (run_result.clarification or run_result.limitation)
-        )
+        published = run_result.published_result
         elapsed = (datetime.now() - started_at).total_seconds()
         return SearchResponse(
             query=request.query,
@@ -173,17 +189,13 @@ class SearchApplicationService:
             total_count=len(results),
             search_time=elapsed,
             search_mode=request.search_mode,
-            generated_answer=generated_answer,
+            generated_answer=published.visible_text,
             generation_time=elapsed,
             session_id=run_result.session_id,
             trace_id=run_result.trace_id,
             final_mode="agent",
             publication_state=run_result.publication_state,
-            map_action=(
-                getattr(run_result.answer, "map_action", None)
-                if run_result.answer is not None
-                else None
-            ),
+            map_action=published.map_action,
         )
 
     async def stream(
@@ -233,11 +245,7 @@ class SearchApplicationService:
             if run_result is None:
                 continue
             results = await self._results_from_frozen_evidence(run_result.frozen_evidence)
-            generated_answer = (
-                run_result.answer.answer
-                if run_result.answer is not None
-                else (run_result.clarification or run_result.limitation)
-            )
+            published = run_result.published_result
             elapsed = (datetime.now() - started_at).total_seconds()
             yield SearchStreamFrame(
                 response=SearchResponse(
@@ -246,19 +254,21 @@ class SearchApplicationService:
                     total_count=len(results),
                     search_time=elapsed,
                     search_mode=request.search_mode,
-                    generated_answer=generated_answer,
+                    generated_answer=published.visible_text,
                     generation_time=elapsed,
                     session_id=run_result.session_id,
                     trace_id=run_result.trace_id,
                     final_mode="agent",
                     publication_state=run_result.publication_state,
-                    map_action=(
-                        getattr(run_result.answer, "map_action", None)
-                        if run_result.answer is not None
-                        else None
-                    ),
+                    map_action=published.map_action,
                 )
             )
+
+    def _resolve_main_model(self, *, thinking: bool) -> str | None:
+        controller = getattr(self.agent_runtime, "controller", None)
+        model_client = getattr(controller, "model_client", None)
+        resolver = getattr(model_client, "resolve_main_model", None)
+        return resolver(thinking=thinking) if callable(resolver) else None
 
     async def _deterministic_search(self, request: SearchRequest):
         results = await self.search_service.search(

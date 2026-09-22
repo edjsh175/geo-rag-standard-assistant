@@ -10,6 +10,7 @@ from app.models.search_models import (
     FollowUpContext,
     SearchRequest,
 )
+from app.services.agent.publication import PublishedResult
 from app.services.search_application_service import SearchApplicationService
 
 
@@ -89,6 +90,11 @@ class AgentRuntimeStub:
             answer=answer,
             clarification=None,
             frozen_evidence=snapshot,
+            published_result=PublishedResult.publish(
+                text="agent answer",
+                publication_state="published",
+                map_action=None,
+            ),
         )
 
 

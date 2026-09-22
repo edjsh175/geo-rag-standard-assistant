@@ -33,6 +33,7 @@ class MainController:
         working_evidence: Sequence[Mapping[str, Any]],
         observations: Sequence[ToolObservation],
         stage_policy: LLMStagePolicy,
+        model_name: str | None = None,
     ) -> ToolCall:
         tools = "\n".join(
             (
@@ -72,6 +73,7 @@ class MainController:
                 },
             ),
             request_reasoning=stage_policy.for_stage("controller").request_reasoning,
+            model_name=model_name,
         )
         response = await self.model_client.complete(request)
         return self._parse_tool_call(response.content)

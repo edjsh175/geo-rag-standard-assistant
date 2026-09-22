@@ -13,6 +13,7 @@ from app.services.agent.controller import ControllerOutputError
 from app.services.agent.context import AgentContextBuilder
 from app.services.agent.contracts import FrozenEvidenceSnapshot
 from app.services.agent.events import AgentEvent
+from app.services.agent.publication import PublishedResult
 from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
@@ -55,6 +56,31 @@ class AgentRunResult:
     frozen_evidence: FrozenEvidenceSnapshot | None
     review: Any | None
     events: tuple[AgentEvent, ...]
+
+    @property
+    def published_result(self) -> PublishedResult:
+        if self.publication_state == "published" and self.answer is not None:
+            return PublishedResult.publish(
+                text=self.answer.answer,
+                publication_state="published",
+                map_action=self.answer.map_action,
+            )
+        if self.publication_state == "clarification" and self.clarification:
+            return PublishedResult.publish(
+                text=self.clarification,
+                publication_state="clarification",
+                map_action=None,
+            )
+        if self.publication_state == "limitation" and self.limitation:
+            return PublishedResult.publish(
+                text=self.limitation,
+                publication_state="limitation",
+                map_action=None,
+            )
+        return PublishedResult.safe_fallback(
+            publication_state=self.publication_state,
+            fallback_text=self.limitation or "答案未通过发布契约，未发布。",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +260,13 @@ class AgentRuntime:
             user_thinking=request.thinking,
             endpoint_supports_reasoning=self.endpoint_supports_reasoning,
         )
+        model_client = getattr(self.controller, "model_client", None)
+        resolve_main_model = getattr(model_client, "resolve_main_model", None)
+        main_model_name = (
+            resolve_main_model(thinking=request.thinking)
+            if callable(resolve_main_model)
+            else None
+        )
         observations: list[ToolObservation] = []
 
         while True:
@@ -257,7 +290,7 @@ class AgentRuntime:
                 ),
             )
             try:
-                call = await self.controller.decide(
+                controller_kwargs = dict(
                     question=context.current_question,
                     context_summary=self._merge_request_context(
                         context.summary,
@@ -267,6 +300,9 @@ class AgentRuntime:
                     observations=tuple(observations),
                     stage_policy=stage_policy,
                 )
+                if main_model_name is not None:
+                    controller_kwargs["model_name"] = main_model_name
+                call = await self.controller.decide(**controller_kwargs)
             except ControllerOutputError:
                 return model_output_failure_result()
             self._append_event(
@@ -413,11 +449,14 @@ class AgentRuntime:
             if not snapshot.items:
                 raise ValueError("knowledge publication requires Frozen Evidence")
             try:
-                answer = await self.answer_generator.generate(
+                answer_kwargs = dict(
                     question=question,
                     snapshot=snapshot,
                     stage_policy=stage_policy,
                 )
+                if main_model_name is not None:
+                    answer_kwargs["model_name"] = main_model_name
+                answer = await self.answer_generator.generate(**answer_kwargs)
             except AnswerGenerationError:
                 return model_output_failure_result()
             self._append_event(
@@ -438,12 +477,15 @@ class AgentRuntime:
                 if self.reviewer is None:
                     raise RuntimeError("reviewer_enabled but no reviewer is configured")
                 try:
-                    review = await self.reviewer.review(
+                    reviewer_kwargs = dict(
                         question=question,
                         answer=answer,
                         snapshot=snapshot,
                         stage_policy=stage_policy,
                     )
+                    if main_model_name is not None:
+                        reviewer_kwargs["model_name"] = main_model_name
+                    review = await self.reviewer.review(**reviewer_kwargs)
                 except Exception as exc:
                     limitation = "证据审查执行失败，答案未发布。"
                     self._append_event(
