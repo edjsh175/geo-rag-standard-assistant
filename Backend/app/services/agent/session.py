@@ -3,9 +3,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
+
+
+@dataclass(slots=True)
+class PendingBrowserExecution:
+    """Server-owned continuation state for one browser GIS tool call."""
+
+    token: str
+    question: str
+    turn_id: str
+    trace_id: str
+    tool_call_id: str
+    tool_name: str
+    observations: tuple[Any, ...]
+    request_context: Mapping[str, Any]
+    reviewer_enabled: bool
+    thinking: bool
+    max_steps: int
+    steps_used: int
+    max_elapsed_seconds: float
+    retrieval_constraints: Any
+    main_model_name: str | None
 
 
 @dataclass(slots=True)
@@ -15,6 +37,7 @@ class AgentSession:
     evidence_ledger: EvidenceLedger
     events: list[AgentEvent] = field(default_factory=list)
     next_turn_number: int = 1
+    pending_browser_execution: PendingBrowserExecution | None = None
 
     def new_turn_id(self) -> str:
         turn_id = f"turn-{self.next_turn_number}"

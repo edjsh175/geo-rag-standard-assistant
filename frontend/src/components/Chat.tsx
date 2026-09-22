@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { Bot, Sparkles, Send, Mic, History, X, Download, FileText } from 'lucide-react';
+import { Bot, Sparkles, Send, Mic, History, X, Download, FileText, Paperclip } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
@@ -17,6 +17,7 @@ export interface ChatProps {
   inputValue: string;
   onInputChange: (value: string) => void;
   onCitationClick?: (documentId: string) => Promise<void>;
+  onVectorFilesSelected?: (files: File[]) => Promise<string>;
   disabled?: boolean;
   title?: string;
   status?: string;
@@ -33,6 +34,7 @@ const Chat: React.FC<ChatProps> = ({
   inputValue,
   onInputChange,
   onCitationClick,
+  onVectorFilesSelected,
   disabled = false,
   title = 'Sentinel GeoAI',
   status = '模型就绪 · RAG 已同步',
@@ -41,6 +43,7 @@ const Chat: React.FC<ChatProps> = ({
   className,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
+  const vectorFileInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   const { scrollToBottom, lockAutoScroll, unlockAutoScroll, isAutoScrollLocked } =
@@ -85,6 +88,15 @@ const Chat: React.FC<ChatProps> = ({
   const handleCitationClick = useCallback(async (citation: Citation) => {
     if (onCitationClick) await onCitationClick(citation.document_id);
   }, [onCitationClick]);
+
+  const handleVectorFiles = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (!files.length || !onVectorFilesSelected) return;
+    const datasetName = await onVectorFilesSelected(files);
+    onInputChange(`导入数据集 ${datasetName}`);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [onInputChange, onVectorFilesSelected]);
 
   return (
     <div
@@ -169,11 +181,19 @@ const Chat: React.FC<ChatProps> = ({
         {/* Input */}
         <div className="relative">
           <input
+            ref={vectorFileInputRef}
+            type="file"
+            accept=".geojson,.json,.zip,.shp,.dbf,.shx,.prj"
+            multiple
+            className="hidden"
+            onChange={handleVectorFiles}
+          />
+          <input
             ref={inputRef}
             value={inputValue}
             onChange={e => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full rounded-xl py-3 pl-4 pr-20 text-[15px] transition-all outline-none bg-surface-variant/40 border border-outline text-on-background"
+            className="w-full rounded-xl py-3 pl-11 pr-20 text-[15px] transition-all outline-none bg-surface-variant/40 border border-outline text-on-background"
             style={{
               caretColor: '#f07040',
             }}
@@ -183,6 +203,17 @@ const Chat: React.FC<ChatProps> = ({
             type="text"
             disabled={disabled}
           />
+          {onVectorFilesSelected && (
+            <button
+              type="button"
+              onClick={() => vectorFileInputRef.current?.click()}
+              disabled={disabled || isLoading}
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-lg transition-all text-on-background/40 hover:text-primary-container disabled:opacity-40"
+              title="登记 SHP / GeoJSON 到浏览器地图运行时"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+            </button>
+          )}
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
             <button className="w-6 h-6 flex items-center justify-center rounded-lg transition-all" style={{ color: 'rgba(255,255,255,0.25)' }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,112,64,0.7)'; }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.25)'; }}>
               <Mic className="w-3.5 h-3.5" />

@@ -11,10 +11,10 @@ from uuid import uuid4
 from app.services.agent.answer_generator import AnswerGenerationError, GeneratedAnswer
 from app.services.agent.controller import ControllerOutputError
 from app.services.agent.context import AgentContextBuilder
-from app.services.agent.contracts import FrozenEvidenceSnapshot
+from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.events import AgentEvent
 from app.services.agent.publication import PublishedResult
-from app.services.agent.session import InMemoryAgentSessionStore
+from app.services.agent.session import InMemoryAgentSessionStore, PendingBrowserExecution
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
     RetrievalRequestConstraints,
@@ -38,6 +38,8 @@ class AgentRunRequest:
     max_steps: int = 12
     max_elapsed_seconds: float = 60.0
     request_context: Mapping[str, Any] = field(default_factory=dict)
+    continuation_token: str | None = None
+    browser_tool_receipt: Mapping[str, Any] | None = None
     legacy_history: tuple[Mapping[str, str], ...] = ()
     retrieval_constraints: RetrievalRequestConstraints = field(
         default_factory=RetrievalRequestConstraints
@@ -56,9 +58,17 @@ class AgentRunResult:
     frozen_evidence: FrozenEvidenceSnapshot | None
     review: Any | None
     events: tuple[AgentEvent, ...]
+    pending_tool_call_id: str | None = None
+    continuation_token: str | None = None
 
     @property
     def published_result(self) -> PublishedResult:
+        if self.publication_state == "tool_execution_required" and self.answer is not None:
+            return PublishedResult.publish(
+                text=self.answer.answer,
+                publication_state="tool_execution_required",
+                map_action=self.answer.map_action,
+            )
         if self.publication_state == "published" and self.answer is not None:
             return PublishedResult.publish(
                 text=self.answer.answer,
@@ -125,11 +135,124 @@ class AgentRuntime:
             request.principal_id,
             request.session_id,
         )
-        if not session.events and request.legacy_history:
-            self._seed_legacy_history(session.events, request.legacy_history, session.session_id)
-        turn_id = session.new_turn_id()
-        trace_id = str(uuid4())
         turn_events: list[AgentEvent] = []
+
+        pending = session.pending_browser_execution
+        is_continuation = request.continuation_token is not None
+        if is_continuation:
+            if pending is None or request.continuation_token != pending.token:
+                raise ValueError("invalid or expired browser continuation token")
+            receipt = request.browser_tool_receipt
+            if receipt is None:
+                raise ValueError("browser_tool_receipt is required for continuation")
+            if (
+                str(receipt.get("tool_call_id", "")) != pending.tool_call_id
+                or str(receipt.get("tool_name", "")) != pending.tool_name
+            ):
+                raise ValueError("browser tool receipt does not match pending tool call")
+            receipt_status = str(receipt.get("status", ""))
+            if receipt_status not in {"succeeded", "failed"}:
+                raise ValueError("browser tool receipt has invalid status")
+
+            question = pending.question
+            turn_id = pending.turn_id
+            trace_id = pending.trace_id
+            effective_request_context = dict(pending.request_context)
+            effective_request_context["map_context"] = receipt.get("map_context")
+            reviewer_enabled = pending.reviewer_enabled
+            thinking = pending.thinking
+            retrieval_constraints = pending.retrieval_constraints
+            max_steps = pending.max_steps
+            max_elapsed_seconds = pending.max_elapsed_seconds
+            initial_steps = pending.steps_used
+            main_model_name = pending.main_model_name
+            observations: list[ToolObservation] = list(pending.observations)
+            observations.append(
+                ToolObservation(
+                    tool_call_id=pending.tool_call_id,
+                    tool_name=pending.tool_name,
+                    status=f"browser_{receipt_status}",
+                    payload={
+                        "output": receipt.get("output"),
+                        "error": receipt.get("error"),
+                        "effect": receipt.get("effect") or {},
+                        "map_context": receipt.get("map_context") or {},
+                    },
+                    is_terminal=False,
+                )
+            )
+            session.pending_browser_execution = None
+            self._append_event(
+                session.events,
+                turn_events,
+                AgentEvent(
+                    event_type="browser_tool_completed",
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    payload={
+                        "tool_name": pending.tool_name,
+                        "tool_call_id": pending.tool_call_id,
+                        "status": receipt_status,
+                        "effect": receipt.get("effect") or {},
+                    },
+                ),
+                event_listener,
+            )
+        else:
+            if request.browser_tool_receipt is not None:
+                raise ValueError("browser_tool_receipt requires continuation_token")
+            if pending is not None:
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="browser_tool_cancelled",
+                        session_id=session.session_id,
+                        turn_id=pending.turn_id,
+                        trace_id=pending.trace_id,
+                        payload={
+                            "tool_name": pending.tool_name,
+                            "tool_call_id": pending.tool_call_id,
+                            "reason": "superseded_by_user_request",
+                        },
+                    ),
+                    event_listener,
+                )
+                session.pending_browser_execution = None
+            if not session.events and request.legacy_history:
+                self._seed_legacy_history(session.events, request.legacy_history, session.session_id)
+            turn_id = session.new_turn_id()
+            trace_id = str(uuid4())
+            effective_request_context = request.request_context
+            reviewer_enabled = request.reviewer_enabled
+            thinking = request.thinking
+            retrieval_constraints = request.retrieval_constraints
+            max_steps = request.max_steps
+            max_elapsed_seconds = request.max_elapsed_seconds
+            initial_steps = 0
+            observations = []
+
+            self._append_event(
+                session.events,
+                turn_events,
+                AgentEvent(
+                    event_type="user_message",
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    payload={"text": question},
+                ),
+                event_listener,
+            )
+
+            model_client = getattr(self.controller, "model_client", None)
+            resolve_main_model = getattr(model_client, "resolve_main_model", None)
+            main_model_name = (
+                resolve_main_model(thinking=thinking)
+                if callable(resolve_main_model)
+                else None
+            )
 
         def resource_fuse_result() -> AgentRunResult:
             limitation = "Agent 运行达到资源保护上限，未发布答案。"
@@ -233,42 +356,22 @@ class AgentRuntime:
                 events=tuple(turn_events),
             )
 
-        self._append_event(
-            session.events,
-            turn_events,
-            AgentEvent(
-                event_type="user_message",
-                session_id=session.session_id,
-                turn_id=turn_id,
-                trace_id=trace_id,
-                payload={"text": question},
-            ),
-            event_listener,
-        )
-
         fuse = ResourceFuse(
-            max_steps=request.max_steps,
-            max_elapsed_seconds=request.max_elapsed_seconds,
+            max_steps=max_steps,
+            max_elapsed_seconds=max_elapsed_seconds,
+            initial_steps=initial_steps,
         )
         tool_runtime = ToolRuntime(
             retrieval_port=self.retrieval_port,
             evidence_ledger=session.evidence_ledger,
             resource_fuse=fuse,
-            retrieval_constraints=request.retrieval_constraints,
+            retrieval_constraints=retrieval_constraints,
         )
         stage_policy = LLMStagePolicy(
-            user_thinking=request.thinking,
+            user_thinking=thinking,
             endpoint_supports_reasoning=self.endpoint_supports_reasoning,
             runtime_deadline_at=fuse.deadline_at,
         )
-        model_client = getattr(self.controller, "model_client", None)
-        resolve_main_model = getattr(model_client, "resolve_main_model", None)
-        main_model_name = (
-            resolve_main_model(thinking=request.thinking)
-            if callable(resolve_main_model)
-            else None
-        )
-        observations: list[ToolObservation] = []
 
         while True:
             try:
@@ -295,7 +398,7 @@ class AgentRuntime:
                     question=context.current_question,
                     context_summary=self._merge_request_context(
                         context.summary,
-                        request.request_context,
+                        effective_request_context,
                     ),
                     working_evidence=context.working_evidence,
                     observations=tuple(observations),
@@ -448,6 +551,68 @@ class AgentRuntime:
                     events=tuple(turn_events),
                 )
 
+            if observation.status == "browser_execution_required":
+                action_payload = observation.payload["map_action"]
+                continuation_token = str(uuid4())
+                map_action = GeneratedAnswer(
+                    kind="browser_tool_request",
+                    answer="",
+                    citations=(),
+                    map_action=MapAction(
+                        type=str(action_payload["type"]),
+                        target=str(action_payload["target"]),
+                        payload=action_payload.get("payload"),
+                    ),
+                    units=(),
+                )
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="browser_tool_requested",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={
+                            "tool_name": call.name,
+                            "tool_call_id": call.tool_call_id,
+                            "arguments": dict(call.arguments),
+                        },
+                    ),
+                    event_listener,
+                )
+                session.pending_browser_execution = PendingBrowserExecution(
+                    token=continuation_token,
+                    question=question,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    tool_call_id=call.tool_call_id,
+                    tool_name=call.name,
+                    observations=tuple(observations[:-1]),
+                    request_context=dict(effective_request_context),
+                    reviewer_enabled=reviewer_enabled,
+                    thinking=thinking,
+                    max_steps=max_steps,
+                    steps_used=fuse.steps,
+                    max_elapsed_seconds=max(fuse.remaining_seconds, 0.001),
+                    retrieval_constraints=retrieval_constraints,
+                    main_model_name=main_model_name,
+                )
+                return AgentRunResult(
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    publication_state="tool_execution_required",
+                    answer=map_action,
+                    clarification=None,
+                    limitation=None,
+                    frozen_evidence=None,
+                    review=None,
+                    events=tuple(turn_events),
+                    pending_tool_call_id=call.tool_call_id,
+                    continuation_token=continuation_token,
+                )
+
             snapshot = observation.payload["snapshot"]
             if not snapshot.items:
                 raise ValueError("knowledge publication requires Frozen Evidence")
@@ -478,7 +643,7 @@ class AgentRuntime:
             )
 
             review = None
-            if request.reviewer_enabled:
+            if reviewer_enabled:
                 if self.reviewer is None:
                     raise RuntimeError("reviewer_enabled but no reviewer is configured")
                 try:

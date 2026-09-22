@@ -15,6 +15,8 @@ import type MapBrowserEvent from 'ol/MapBrowserEvent';
 import { loadProvinceCollection } from '../lib/bootstrap';
 import { getMapFitPadding, type MapLayoutMode } from '../lib/mapViewport';
 import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapStore';
+import { createBrowserGisRuntime } from '../gis/createBrowserGisRuntime';
+import { registerBrowserGisRuntime } from '../gis/browserBridge';
 
 // ============================================================
 //  OpenLayers 2D 地图引擎
@@ -379,6 +381,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
     });
 
     mapRef.current = map;
+    const gisRuntime = createBrowserGisRuntime(map, () => getFitPadding(map));
+    const unregisterGisRuntime = registerBrowserGisRuntime(gisRuntime);
 
     // —————— Hover ——————
     map.on('pointermove', (evt: MapBrowserEvent<PointerEvent>) => {
@@ -513,6 +517,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
     })();
 
     return () => {
+      unregisterGisRuntime();
+      gisRuntime.dispose();
       viewport.removeEventListener('pointerleave', handlePointerLeave);
       map.setTarget(undefined);
     };

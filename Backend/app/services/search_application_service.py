@@ -173,7 +173,14 @@ class SearchApplicationService:
                         if request.follow_up_context is not None
                         else None
                     ),
+                    "map_context": request.map_context,
                 },
+                continuation_token=request.continuation_token,
+                browser_tool_receipt=(
+                    request.browser_tool_receipt.model_dump()
+                    if request.browser_tool_receipt is not None
+                    else None
+                ),
                 legacy_history=tuple(
                     message.model_dump() for message in (request.history or [])
                 ),
@@ -196,6 +203,8 @@ class SearchApplicationService:
             final_mode="agent",
             publication_state=run_result.publication_state,
             map_action=published.map_action,
+            pending_tool_call_id=run_result.pending_tool_call_id,
+            continuation_token=run_result.continuation_token,
         )
 
     async def stream(
@@ -229,7 +238,14 @@ class SearchApplicationService:
                     if request.follow_up_context is not None
                     else None
                 ),
+                "map_context": request.map_context,
             },
+            continuation_token=request.continuation_token,
+            browser_tool_receipt=(
+                request.browser_tool_receipt.model_dump()
+                if request.browser_tool_receipt is not None
+                else None
+            ),
             legacy_history=tuple(
                 message.model_dump() for message in (request.history or [])
             ),
@@ -261,6 +277,8 @@ class SearchApplicationService:
                     final_mode="agent",
                     publication_state=run_result.publication_state,
                     map_action=published.map_action,
+                    pending_tool_call_id=run_result.pending_tool_call_id,
+                    continuation_token=run_result.continuation_token,
                 )
             )
 

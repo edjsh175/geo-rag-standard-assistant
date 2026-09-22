@@ -39,6 +39,11 @@ Tool Runtime
   ├─ retrieve_kb      检索知识库
   ├─ reuse_evidence   复用会话证据
   ├─ compose_answer   冻结回答证据
+  ├─ import_vector_dataset  导入浏览器矢量数据
+  ├─ set_layer_visibility   控制用户图层显隐
+  ├─ set_vector_style       修改矢量图层样式
+  ├─ fit_vector_layer       定位用户图层
+  ├─ locate_map             定位地图视角
   ├─ clarify          请求用户澄清
   └─ limitation       安全结束当前任务
   ↓
@@ -208,18 +213,46 @@ Structured Candidate 的协议重试共用同一个 logical call deadline，不�
 
 ### 7. WebGIS 联动与空间能力
 
-当前仓库保留了原有 WebGIS 产品能力：
+项目在原有 WebGIS 产品能力上增加了浏览器侧 GIS Agent 执行闭环：
 
 - OpenLayers 2D 地图；
 - Cesium 3D 地球；
 - PostGIS 空间范围、包含、相交等查询；
 - GeoJSON 等空间数据接口；
-- 后端结构化 `MapAction`；
-- 根据 `adcode / name` 驱动前端行政区定位与地图飞行。
+- 浏览器本地 SHP / GeoJSON 文件登记与导入；
+- 稳定 `file_ref` / `layer_ref` 引用；
+- 用户矢量图层显隐、样式修改与视图定位；
+- 浏览器权威 `MapContext`；
+- 结构化 `MapAction` 与 Browser Tool Receipt；
+- `runId + toolCallId` 幂等执行与冲突校验。
 
-知识回答和地图动作从同一 Answer / Publication 链路输出，而不是依赖前端再次解析 Markdown JSON。
+浏览器文件字节保留在本地页面内，Agent 仅接收文件摘要与不透明 `file_ref`。导入后生成稳定 `layer_ref`，后续显隐、样式和定位工具均围绕这一引用执行，避免多步操作时依赖脆弱的图层对象地址。
 
-> **边界说明**：当前仓库的 GIS Agent 能力主要是“知识 Agent + 结构化地图联动”。SHP/GeoJSON 用户数据导入、图层显隐、样式修改、浏览器真实图层树/要素状态回传、多 GIS 工具连续执行等完整 Browser-in-the-loop 执行闭环，不在本仓库当前实现范围内。
+浏览器工具采用暂停/续接协议：
+
+```text
+Controller
+  ↓
+GIS Tool Call
+  ↓
+Agent Runtime 暂停当前 Turn
+  ↓ continuation_token + MapAction
+Browser Bridge
+  ↓
+FrontendExecutor
+  ↓
+GIS Capability
+  ↓
+OpenLayers
+  ↓
+Tool Receipt + 最新 MapContext
+  ↓
+Agent Runtime 恢复同一 Turn / Trace
+  ↓
+Controller 继续规划下一步
+```
+
+Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真实地图状态与地图副作用执行，不维护第二套规划状态机。
 
 ## 三种查询入口
 
@@ -319,6 +352,14 @@ geo-rag-standard-assistant/
 │        └─ rag/
 ├─ frontend/
 │  └─ src/
+│     ├─ gis/
+│     │  ├─ browserBridge.ts
+│     │  ├─ frontendExecutor.ts
+│     │  ├─ mapContext.ts
+│     │  ├─ fileReferenceStore.ts
+│     │  ├─ userVectorCapabilities.ts
+│     │  └─ openlayersAdapter.ts
+│     └─ components/
 ├─ docs/
 ├─ scripts/
 └─ docker-compose.yml
@@ -356,34 +397,6 @@ npm run dev
 ```bash
 docker compose up -d
 ```
-
-## 当前实现边界与验收状态
-
-为避免把“设计目标”写成“已经完成”，当前仓库状态明确区分如下：
-
-### 已进入代码主线
-
-- Agent Runtime / Controller / Tool Runtime；
-- PostgreSQL / pgvector RetrievalPort；
-- Session + Evidence Memory；
-- Working Evidence → Frozen Evidence；
-- Answer Units；
-- 可选 Grounding Reviewer；
-- Publication Boundary；
-- Structured Candidate 有界协议重试；
-- 请求级 Main Model Identity；
-- 模型调用 deadline / attempt audit；
-- 结构化 MapAction；
-- Linear RAG 兼容路径；
-- 文档 Parser / Chunker 结构保留。
-
-### 未在当前仓库完成真实端到端验收
-
-- 真实 PostgreSQL + pgvector + LLM + 浏览器完整 E2E；
-- Browser-in-the-loop 的真实地图状态回传闭环；
-- 完整 GIS 工具链的多步执行成功率评测。
-
-因此仓库不会把单元/集成层验证等同于真实生产 E2E。
 
 ## 设计文档
 

@@ -1,5 +1,7 @@
 import { apiPost, apiPostSse } from '../lib/api/contractClient';
 import type { components } from '../lib/api/generated/schema';
+import { executeBrowserTool, getBrowserMapContext } from '../gis/browserBridge';
+import type { BrowserMapAction } from '../gis/contracts';
 
 export type ChatHistoryMessage = components['schemas']['ChatHistoryMessage'];
 export type DocumentResult = components['schemas']['DocumentResult'];
@@ -36,6 +38,36 @@ export interface ChatResponse {
  * 注意：后端可能还没有专门的聊天端点，目前使用搜索服务生成答案
  */
 export const chatService = {
+  async runAgentRequest(
+    searchRequest: components['schemas']['SearchRequest'],
+    signal?: AbortSignal,
+  ): Promise<SearchResponse> {
+    let request = searchRequest;
+    for (let browserStep = 0; browserStep < 8; browserStep += 1) {
+      const response: SearchResponse = await apiPost('/api/search/query', request, {
+        config: { signal },
+      });
+      if (response.publication_state !== 'tool_execution_required') return response;
+      if (!response.trace_id || !response.pending_tool_call_id || !response.continuation_token || !response.map_action) {
+        throw new Error('browser tool continuation contract is incomplete');
+      }
+      const receipt = await executeBrowserTool(
+        response.trace_id,
+        response.pending_tool_call_id,
+        response.map_action as BrowserMapAction,
+      );
+      request = {
+        ...searchRequest,
+        session_id: response.session_id ?? searchRequest.session_id,
+        history: [],
+        map_context: receipt.map_context,
+        continuation_token: response.continuation_token,
+        browser_tool_receipt: receipt,
+      };
+    }
+    throw new Error('browser GIS continuation exceeded client safety limit');
+  },
+
   /**
    * 发送聊天消息
    */
@@ -55,11 +87,10 @@ export const chatService = {
         session_id: conversationId,
         history,
         follow_up_context: followUpContext,
+        map_context: getBrowserMapContext() ?? undefined,
       };
 
-      const searchResponse: SearchResponse = await apiPost('/api/search/query', searchRequest, {
-        config: { signal },
-      });
+      const searchResponse = await this.runAgentRequest(searchRequest, signal);
       const quota = searchResponse.quota;
 
       const fallbackMessage = quota?.exhausted
@@ -149,6 +180,31 @@ export const chatService = {
         }
       });
       if (!finalResponse) throw new Error('stream completed without result event');
+
+      if (finalResponse.publication_state === 'tool_execution_required') {
+        if (!finalResponse.trace_id || !finalResponse.pending_tool_call_id || !finalResponse.continuation_token || !finalResponse.map_action) {
+          throw new Error('browser tool continuation contract is incomplete');
+        }
+        const receipt = await executeBrowserTool(
+          finalResponse.trace_id,
+          finalResponse.pending_tool_call_id,
+          finalResponse.map_action as BrowserMapAction,
+        );
+        finalResponse = await this.runAgentRequest({
+          query: message,
+          search_mode: 'hybrid',
+          top_k: 10,
+          threshold: 0.6,
+          use_rerank: true,
+          use_generation: true,
+          session_id: finalResponse.session_id || conversationId,
+          history: [],
+          follow_up_context: followUpContext,
+          map_context: receipt.map_context,
+          continuation_token: finalResponse.continuation_token,
+          browser_tool_receipt: receipt,
+        });
+      }
 
       const quota = finalResponse.quota;
       const fallbackMessage = quota?.exhausted

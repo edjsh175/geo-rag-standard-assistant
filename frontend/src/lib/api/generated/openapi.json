@@ -3337,6 +3337,42 @@
               }
             ],
             "description": "Optional document follow-up context resolved on the client."
+          },
+          "map_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Context",
+            "description": "Browser-authoritative WebGIS state snapshot for Agent planning."
+          },
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation Token",
+            "description": "Opaque server-issued token used only to resume a pending browser GIS tool call."
+          },
+          "browser_tool_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserToolReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Receipt for the browser GIS tool call identified by continuation_token."
           }
         },
         "type": "object",
@@ -3491,6 +3527,30 @@
               }
             ],
             "description": "Structured map action for the frontend."
+          },
+          "pending_tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Tool Call Id",
+            "description": "Tool call identifier when browser execution is required before Agent continuation."
+          },
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation Token",
+            "description": "Opaque token required to resume a pending browser GIS tool call."
           }
         },
         "type": "object",
@@ -3774,6 +3834,70 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "BrowserToolReceipt": {
+        "properties": {
+          "tool_call_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Tool Call Id"
+          },
+          "tool_name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Tool Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "effect": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Effect"
+          },
+          "map_context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Map Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_call_id",
+          "tool_name",
+          "status",
+          "map_context"
+        ],
+        "title": "BrowserToolReceipt",
+        "description": "Browser-authoritative result for one pending GIS tool call."
       }
     }
   }

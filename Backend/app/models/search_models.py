@@ -83,6 +83,18 @@ class ChatHistoryMessage(BaseModel):
     content: str = Field(..., min_length=1, max_length=4000, description="Message content.")
 
 
+class BrowserToolReceipt(BaseModel):
+    """Browser-authoritative result for one pending GIS tool call."""
+
+    tool_call_id: str = Field(..., min_length=1)
+    tool_name: str = Field(..., min_length=1)
+    status: Literal["succeeded", "failed"]
+    output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    effect: Dict[str, Any] = Field(default_factory=dict)
+    map_context: Dict[str, Any]
+
+
 class SearchRequest(BaseModel):
     """Search request payload."""
 
@@ -112,6 +124,18 @@ class SearchRequest(BaseModel):
         None,
         description="Optional document follow-up context resolved on the client.",
     )
+    map_context: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Browser-authoritative WebGIS state snapshot for Agent planning.",
+    )
+    continuation_token: Optional[str] = Field(
+        None,
+        description="Opaque server-issued token used only to resume a pending browser GIS tool call.",
+    )
+    browser_tool_receipt: Optional[BrowserToolReceipt] = Field(
+        None,
+        description="Receipt for the browser GIS tool call identified by continuation_token.",
+    )
 
 
 class SearchResponse(BaseModel):
@@ -137,6 +161,14 @@ class SearchResponse(BaseModel):
         description="Runtime publication state such as published or clarification.",
     )
     map_action: Optional[MapAction] = Field(None, description="Structured map action for the frontend.")
+    pending_tool_call_id: Optional[str] = Field(
+        None,
+        description="Tool call identifier when browser execution is required before Agent continuation.",
+    )
+    continuation_token: Optional[str] = Field(
+        None,
+        description="Opaque token required to resume a pending browser GIS tool call.",
+    )
 
 
 class SearchHistory(BaseModel):
