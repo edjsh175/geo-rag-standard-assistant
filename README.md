@@ -1,99 +1,334 @@
-## GeoRAG Planning Assistant / GeoRAG 国土空间规划智能检索与可视化助手
+# GeoRAG Planning Assistant
+
+> 面向国土空间规划、测绘标准与 GIS 资料理解场景的 **GeoAI Agent / RAG 应用**。
+>
+> 项目将知识检索、证据管理、Agent 自主规划、可选 Grounding Reviewer 与 2D/3D WebGIS 联动整合到同一工作台中，使系统不再停留在“检索后直接交给模型回答”的传统 RAG 流程。
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
-[![Node](https://img.shields.io/badge/Node-18%2B-green.svg)](https://nodejs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-TypeScript-61DAFB.svg)](https://react.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector%20%2B%20PostGIS-336791.svg)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
-## 项目简介 / Overview
+## 项目定位
 
-GeoRAG Planning Assistant 是一个面向国土空间规划、测绘标准与地理信息政策资料的 RAG 智能检索项目。它把标准文档语义检索、引用溯源、有限额度的 AI 问答，以及 2D/3D 地图联动整合到一个可直接演示的工作台中。
+GeoRAG Planning Assistant 最初是一个面向规划标准、测绘规范和地理信息政策资料的传统 RAG 项目。当前后端已经完成 Agent 化升级：
 
-GeoRAG Planning Assistant is a retrieval-augmented assistant for spatial planning, surveying standards, and geospatial policy documents. It combines semantic standards search, citation-backed answers, limited AI Q&A, and 2D/3D map interaction in a demo-ready workspace.
+- **Main Controller** 负责理解用户目标并决定下一步工具调用；
+- **Agent Runtime** 只负责执行、状态、资源边界与发布契约，不预判业务语义；
+- **Retrieval / Evidence** 将检索结果从候选证据推进到 Working Evidence，再冻结为最终回答唯一可用的 Frozen Evidence；
+- **Answer Generator** 只能基于冻结证据生成结构化 Answer Units；
+- **Grounding Reviewer** 可按开关启用，对每个 Answer Unit 与证据进行一一审查；
+- **Publication Boundary** 决定答案是否允许真正发布；
+- **MapAction** 作为结构化地图动作从后端传递给前端，与 OpenLayers / Cesium 地图联动。
 
-## 在线演示 / Live Demo
+项目保留了原有的 PostgreSQL / pgvector、PostGIS、文档上传与索引、2D/3D 地图、公开演示等产品能力，没有为了适配 Agent 架构整体替换原系统。
 
-- 在线地址：[https://8.156.85.7/](https://8.156.85.7/)
-- 打开页面后点击  打开页面后点击 `访客体验` 即可进入，无需注册账号。 即可进入，无需注册账号。
-- 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。 访客模式支持文档检索、地图浏览、引用查看和有限次数的 AI 回答；AI 额度用完后，仍可继续查看检索结果、引用和地图内容。
+## 核心链路
 
+```text
+用户问题
+  ↓
+Search API / Application Service
+  ↓
+Agent Runtime
+  ↓
+Main Controller
+  ↓
+Tool Runtime
+  ├─ retrieve_kb      检索知识库
+  ├─ reuse_evidence   复用会话证据
+  ├─ compose_answer   冻结回答证据
+  ├─ clarify          请求用户澄清
+  └─ limitation       安全结束当前任务
+  ↓
+RetrievalPort
+  ↓
+PostgreSQL + pgvector + PostGIS
+  ↓
+Evidence Ledger
+  Working Evidence → Frozen Evidence Snapshot
+  ↓
+Answer Generator
+  ↓
+Optional Grounding Reviewer
+  ↓
+Publication Boundary
+  ↓
+Answer + Citations + MapAction
+  ↓
+React + OpenLayers / Cesium
+```
 
+这个链路的核心不是“增加几个 Agent 类”，而是重新划分职责：
 
-- Demo:  Demo: [https://8.156.85.7/](https://8.156.85.7/)
-- Click  Click `访客体验` on the login page to enter without registration. on the login page to enter without registration.
-- Visitor mode supports document retrieval, map exploration, citation viewing, and limited AI answers. When the AI quota is used up, retrieval results, citations, and map views remain available. Visitor mode supports document retrieval, map exploration, citation viewing, and limited AI answers. When the AI quota is used up, retrieval results, citations, and map views remain available.
+> **模型负责语义判断，Runtime 负责确定性执行；知识回答只能来自冻结证据，任何未通过发布契约的 Candidate 都不能成为最终答案。**
 
-## 产品预览 / Screenshots
+## 关键设计
 
-登录页提供管理员入口和公开访客体验入口，适合快速进入演示环境。
-The login page supports both admin access and public visitor demo entry.
+### 1. Agent Runtime：从一次性 RAG 调用到多步执行
+
+传统流程通常是：
+
+```text
+问题 → 检索 → 拼 Prompt → LLM → 回答
+```
+
+当前 Agent 模式则是：
+
+```text
+问题
+→ Controller 判断下一步
+→ 调用工具
+→ 获得 Observation
+→ 更新 Working Evidence / Session
+→ Controller 继续判断
+→ 冻结证据
+→ 生成并发布答案
+```
+
+Runtime 不通过关键词、意图枚举或实体特判替模型做语义决策。它只维护：
+
+- Tool 调用生命周期；
+- Session / Turn / Trace；
+- Working Evidence；
+- 物理资源保险丝；
+- Structured Candidate 协议；
+- 最终发布边界。
+
+### 2. Evidence 生命周期：回答依据不是“检索结果列表”
+
+检索结果进入系统后不会直接交给最终回答模型，而是经过明确的证据生命周期：
+
+```text
+Retrieval Candidate
+  ↓
+Evidence Ledger
+  ↓
+Working Evidence
+  ↓ Controller 显式选择
+Frozen Evidence Snapshot
+  ↓
+Answer Generator
+```
+
+Frozen Evidence 一旦生成即作为该轮知识回答的不可变事实来源。最终 Citation 只能引用这一快照内的 Evidence。
+
+这使“模型看过什么”和“最终答案真正依据什么”成为两个可审计概念。
+
+### 3. Answer Units + Grounding Reviewer
+
+Answer Generator 不再只返回一整段不可定位文本，而是输出稳定的 Answer Units：
+
+```text
+Answer Unit
+├─ unit_id
+├─ text
+└─ citations[]
+```
+
+Reviewer 开启时必须满足：
+
+- 每个 Answer Unit 恰好对应一条审查结果；
+- 不能漏审；
+- 不能重复审；
+- 不能引用不存在的 Unit；
+- `SUPPORTED` Unit 必须拥有实际证据引用；
+- 顶层 `SUPPORTED` 与 Unit 级 `UNSUPPORTED / OVERSTATED` 冲突时直接判定协议无效。
+
+因此：
+
+```text
+“Reviewer 没审到” ≠ “默认支持”
+```
+
+Reviewer 只是 Grounding Control，不拥有重新规划、重新检索或改变用户目标的权限。
+
+### 4. Publication Boundary：Candidate 不等于 Published Answer
+
+系统显式区分：
+
+```text
+Generated Candidate
+        ↓
+Validation / Review
+        ↓
+Publication Decision
+        ↓
+Published Result
+```
+
+模型已经生成文本，并不意味着该文本可以直接返回用户。
+
+以下场景都会 fail-close：
+
+- 结构化协议连续两次失败；
+- Frozen Evidence 不存在；
+- Reviewer 协议不完整；
+- Reviewer 拒绝答案；
+- Runtime 资源预算耗尽；
+- 上游模型调用超过剩余 deadline。
+
+### 5. Structured Candidate 单轨协议
+
+Controller、Answer Generator、Reviewer 的结构化输出统一遵循有界协议：
+
+```text
+Generate
+  ↓
+Deterministic Validate
+  ↓ invalid
+One Clean Retry
+  ├─ reasoning = off
+  ├─ temperature = 0
+  └─ same semantic input
+  ↓ invalid
+Fail Close
+```
+
+不会从 `reasoning_content` 中提取“看起来像答案”的文本进行补救，也不会无限重试。
+
+### 6. 请求级 Main Model Identity
+
+一次 Agent 请求只解析一次 Main Model 身份。
+
+Controller、Answer Generator 以及该请求内的协议重试共享同一模型身份；`thinking` 只改变阶段调用策略，不在运行中偷偷把 Answer Generator 切换到另一套模型。
+
+同时每次逻辑模型调用记录：
+
+- `call_id`
+- `stage`
+- `attempt`
+- `model_name`
+- `timeout_seconds`
+- `elapsed_seconds`
+- `outcome`
+
+Structured Candidate 的协议重试共用同一个 logical call deadline，不能通过重试重新获得一整份超时预算。
+
+### 7. WebGIS 联动与空间能力
+
+当前仓库保留了原有 WebGIS 产品能力：
+
+- OpenLayers 2D 地图；
+- Cesium 3D 地球；
+- PostGIS 空间范围、包含、相交等查询；
+- GeoJSON 等空间数据接口；
+- 后端结构化 `MapAction`；
+- 根据 `adcode / name` 驱动前端行政区定位与地图飞行。
+
+知识回答和地图动作从同一 Answer / Publication 链路输出，而不是依赖前端再次解析 Markdown JSON。
+
+> **边界说明**：当前仓库的 GIS Agent 能力主要是“知识 Agent + 结构化地图联动”。SHP/GeoJSON 用户数据导入、图层显隐、样式修改、浏览器真实图层树/要素状态回传、多 GIS 工具连续执行等完整 Browser-in-the-loop 执行闭环，不在本仓库当前实现范围内。
+
+## 三种查询入口
+
+项目保留不同使用场景，而不是强制所有请求都走 Agent：
+
+| 模式 | 用途 |
+| --- | --- |
+| `use_generation=false` | 确定性检索，只返回搜索结果 |
+| `mode=linear` | 兼容传统线性 RAG 路径 |
+| `mode=agent` | 默认生成模式，进入 Agent Runtime |
+
+这样可以在迁移 Agent 架构后继续兼容已有 API 与产品功能。
+
+## 检索与文档处理
+
+### Retrieval
+
+- PostgreSQL + pgvector 向量检索；
+- 关键词检索；
+- Hybrid Retrieval；
+- 可选 rerank；
+- Metadata Filter；
+- Spatial Filter / PostGIS；
+- 检索通道诊断，可区分“没有证据”和“检索服务不可用”。
+
+### Document Pipeline
+
+文档解析与切分保留结构信息，包括：
+
+- Markdown 标题层级；
+- 表格；
+- 代码块；
+- DOCX 表格；
+- Excel Sheet 结构；
+- 文档上传、索引与状态生命周期。
+
+## 产品预览
+
+### 登录与公开演示
 
 ![Login page](docs/screenshots/login-light.png)
 
-2D 地图工作台把标准检索、AI 问答和行政区划联动放在同一个操作界面中。
-The 2D workspace combines standards retrieval, AI Q&A, and administrative map interaction in one interface.
+### 2D 地图工作台
+
+标准检索、AI 问答、引用和地图联动位于同一工作台。
 
 ![2D map workspace](docs/screenshots/workspace-2d-map.png)
 
-3D 地球视图用于展示更沉浸的空间浏览体验，并保留右侧问答与检索面板。
-The 3D globe view provides a more immersive spatial browsing experience while keeping the chat and retrieval panel available.
+### 3D 地球
 
 ![3D globe workspace](docs/screenshots/workspace-3d-globe.png)
 
-## 核心能力 / Features
+## 技术栈
 
-- 标准知识库检索：支持规划、测绘、GIS 标准和政策资料的语义检索与关键词检索。 标准知识库检索：支持规划、测绘、GIS 标准和政策资料的语义检索与关键词检索。
-  Standards retrieval: semantic and keyword search over planning, surveying, GIS standards, and policy documents.  Standards retrieval: semantic and keyword search over planning, surveying, GIS standards, and policy documents.
-- RAG 问答与引用溯源：AI 回答基于检索结果生成，并保留可查看的文档引用。 RAG 问答与引用溯源：AI 回答基于检索结果生成，并保留可查看的文档引用。
-  RAG Q&A with citations: generated answers are grounded in retrieved documents and include traceable references.  RAG Q&A with citations: generated answers are grounded in retrieved documents and include traceable references.
-- 访客演示限额：公开演示不开放注册，通过访客会话和每日额度控制 AI 调用成本。 访客演示限额：公开演示不开放注册，通过访客会话和每日额度控制 AI 调用成本。
-  Public demo quota: no open registration; visitor sessions and daily quotas limit AI generation cost.  Public demo quota: no open registration; visitor sessions and daily quotas limit AI generation cost.
-- 2D/3D 地图联动：使用 OpenLayers 和 Cesium 展示空间数据，并支持地图与检索场景联动。 2D/3D 地图联动：使用 OpenLayers 和 Cesium 展示空间数据，并支持地图与检索场景联动。
-  2D/3D map interaction: OpenLayers and Cesium power spatial visualization and search-to-map workflows.  2D/3D map interaction: OpenLayers and Cesium power spatial visualization and search-to-map workflows.
-- 管理与展示分离：管理员保留上传、索引和系统管理能力，访客只访问展示和低成本检索能力。 管理与展示分离：管理员保留上传、索引和系统管理能力，访客只访问展示和低成本检索能力。
-  Separated admin and demo access: administrators keep upload, indexing, and management tools, while visitors access presentation and low-cost retrieval features.  Separated admin and demo access: administrators keep upload, indexing, and management tools, while visitors access presentation and low-cost retrieval features.
+### Backend
 
-## 技术栈 / Tech Stack
+- Python 3.12+
+- FastAPI
+- Pydantic
+- SQLAlchemy Async
+- PostgreSQL
+- pgvector
+- PostGIS
+- MySQL
+- Redis
+- OpenAI-compatible LLM API
 
-- 后端：FastAPI、SQLAlchemy Async、PostgreSQL、pgvector、PostGIS、MySQL、Redis。 后端：FastAPI、SQLAlchemy Async、PostgreSQL、pgvector、PostGIS、MySQL、Redis。
-  Backend: FastAPI, SQLAlchemy Async, PostgreSQL, pgvector, PostGIS, MySQL, and Redis.  Backend: FastAPI, SQLAlchemy Async, PostgreSQL, pgvector, PostGIS, MySQL, and Redis.
-- 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand。 前端：React 19、TypeScript、Vite、OpenLayers、Cesium、Zustand。
-  Frontend: React 19, TypeScript, Vite, OpenLayers, Cesium, and Zustand.  Frontend: React 19, TypeScript, Vite, OpenLayers, Cesium, and Zustand.
-- 数据服务：PostgreSQL 存储向量与空间数据，MySQL 存储标准元数据，Redis 用于缓存和访客 AI 限额计数。
-  Data services: PostgreSQL stores vector and spatial data, MySQL stores standards metadata, and Redis supports caching plus visitor AI quota counters.
-- 对象存储：MinIO 作为源文档下载和后续对象存储能力预留，不是主检索链路的必需依赖。
-  Object storage: MinIO is reserved for source-document downloads and future object storage flows; it is not required for the main retrieval path.
+### Frontend
 
-## 系统架构 / Architecture
+- React
+- TypeScript
+- Vite
+- OpenLayers
+- Cesium
+- Zustand
 
-项目采用前后端分离结构：FastAPI 提供检索、认证、文档和空间接口，React 工作台负责对话、引用、地图和访客体验入口。
-
-The project uses a separated frontend and backend architecture: FastAPI exposes search, authentication, document, and spatial APIs, while the React workspace handles chat, citations, maps, and visitor demo entry.
+## 项目结构
 
 ```text
-geo-rag-planning-assistant/
-├─ Backend/                  # FastAPI backend entrypoint: Backend/main.py
+geo-rag-standard-assistant/
+├─ Backend/
 │  ├─ main.py
 │  └─ app/
-├─ frontend/                 # React + Vite frontend
-│  ├─ src/
-│  └─ package.json
-├─ src/geoai/                # Legacy scripts and modules
-├─ scripts/                  # Data processing and deployment scripts
-├─ docs/                     # Product, deployment, and release docs
+│     ├─ api/
+│     ├─ models/
+│     └─ services/
+│        ├─ agent/
+│        │  ├─ runtime.py
+│        │  ├─ controller.py
+│        │  ├─ tool_runtime.py
+│        │  ├─ evidence.py
+│        │  ├─ answer_generator.py
+│        │  ├─ reviewer.py
+│        │  ├─ publication.py
+│        │  ├─ structured_candidate.py
+│        │  └─ model_client.py
+│        └─ rag/
+├─ frontend/
+│  └─ src/
+├─ docs/
+├─ scripts/
 └─ docker-compose.yml
 ```
 
-## 快速开始 / Quick Start
+## 快速开始
 
-### Non-Docker local development
+### 1. Backend
 
-Docker is not required for the default local workflow. Run PostgreSQL with pgvector/PostGIS, MySQL, and optional Redis as native services, then start the backend and frontend directly from the repository.
-
-### 后端 / Backend
-
-启动后端前，请在 `Backend/.env` 中配置可用的 PostgreSQL 和 MySQL。PostgreSQL 用于向量和空间检索数据，MySQL 用于标准元数据；任一核心数据库不可用时后端会启动失败。
-
-Before starting the backend, configure usable PostgreSQL and MySQL connections in `Backend/.env`. PostgreSQL is required for vector and spatial retrieval data, and MySQL is required for standards metadata. The backend fails fast if either core database is unavailable.
+本地运行需要可用的 PostgreSQL 与 MySQL。Redis 属于缓存与公开演示额度相关依赖。
 
 ```bash
 cd Backend
@@ -104,11 +339,9 @@ copy .env.example .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 前端 / Frontend
+根据实际环境配置 `Backend/.env` 中的数据库、LLM 与对象存储参数。
 
-前端默认请求同源 `/api`。本地开发时 Vite 会把 `/api` 代理到 `http://localhost:8000`；只有跨域或特殊部署时才需要通过 `VITE_API_URL` 覆盖。
-
-The frontend uses same-origin `/api` by default. During local development, Vite proxies `/api` to `http://localhost:8000`; use `VITE_API_URL` only for cross-origin or special deployment scenarios.
+### 2. Frontend
 
 ```bash
 cd frontend
@@ -116,35 +349,49 @@ npm install
 npm run dev
 ```
 
-### Optional Docker Compose
+本地开发时 Vite 默认将 `/api` 代理到后端；特殊部署场景可以通过 `VITE_API_URL` 覆盖。
 
-Docker Compose is retained as an optional full-stack entrypoint, but it is not the recommended path for low-memory local development.
+### 3. Docker Compose（可选）
 
 ```bash
 docker compose up -d
 ```
 
-## 文档 / Documentation
+## 当前实现边界与验收状态
 
-- 产品需求：`docs/PRD.md`
-  Product requirements: `docs/PRD.md`
-- 后端说明：`Backend/README.md`
-  Backend guide: `Backend/README.md`
-- 前端说明：`frontend/README.md`
-  Frontend guide: `frontend/README.md`
-- 部署说明：`docs/DEPLOY.md`
-  Deployment guide: `docs/DEPLOY.md`
-- 发布流程：`docs/RELEASE_WORKFLOW.md`
-  Release workflow: `docs/RELEASE_WORKFLOW.md`
+为避免把“设计目标”写成“已经完成”，当前仓库状态明确区分如下：
 
-## 安全说明 / Security
+### 已进入代码主线
 
-- 仓库中的示例配置均为占位值，不能直接用于生产环境。
-  Example configuration values are placeholders and must not be used in production.
-- 真实凭据应通过本地 `.env` 文件或部署平台的密钥管理机制注入。
-  Real credentials should be injected through local `.env` files or deployment platform secret management.
-- 不要提交真实 API Key、数据库密码或服务器凭据。
-  Do not commit real API keys, database passwords, or server credentials.
+- Agent Runtime / Controller / Tool Runtime；
+- PostgreSQL / pgvector RetrievalPort；
+- Session + Evidence Memory；
+- Working Evidence → Frozen Evidence；
+- Answer Units；
+- 可选 Grounding Reviewer；
+- Publication Boundary；
+- Structured Candidate 有界协议重试；
+- 请求级 Main Model Identity；
+- 模型调用 deadline / attempt audit；
+- 结构化 MapAction；
+- Linear RAG 兼容路径；
+- 文档 Parser / Chunker 结构保留。
+
+### 未在当前仓库完成真实端到端验收
+
+- 真实 PostgreSQL + pgvector + LLM + 浏览器完整 E2E；
+- Browser-in-the-loop 的真实地图状态回传闭环；
+- 完整 GIS 工具链的多步执行成功率评测。
+
+因此仓库不会把单元/集成层验证等同于真实生产 E2E。
+
+## 设计文档
+
+- `docs/superpowers/specs/2026-09-20-georag-backend-rag-agent-adaptation-design.md`
+- `docs/superpowers/plans/2026-09-20-georag-backend-rag-agent-adaptation.md`
+- `docs/superpowers/specs/2026-09-22-georag-reference-rag-contract-delta.md`
+- `docs/PRD.md`
+- `docs/DEPLOY.md`
 
 ## License
 
