@@ -124,6 +124,21 @@ class InvalidArgumentsController:
         )
 
 
+class BrowserThenComposeController:
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+        if not observations:
+            return ToolCall(
+                tool_call_id="browser-import-1",
+                name="import_vector_dataset",
+                arguments={"file_ref": "vf_1", "name": "测试图层"},
+            )
+        return ToolCall(
+            tool_call_id="compose-browser-1",
+            name="compose_answer",
+            arguments={"evidence_ids": [observations[-1].payload["evidence_id"]]},
+        )
+
+
 class FakeAnswerGenerator:
     def __init__(self) -> None:
         self.snapshots = []
@@ -176,6 +191,50 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
         "publication_completed",
     ]
     assert {event.trace_id for event in result.events} == {result.trace_id}
+
+
+@pytest.mark.asyncio
+async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None:
+    store = InMemoryAgentSessionStore()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=BrowserThenComposeController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=store,
+    )
+
+    pending = await runtime.run(
+        AgentRunRequest(
+            question="导入数据并确认结果",
+            session_id="browser-session",
+            principal_id="admin:test",
+        )
+    )
+    assert pending.publication_state == "tool_execution_required"
+    assert pending.continuation_token
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="导入数据并确认结果",
+            session_id="browser-session",
+            principal_id="admin:test",
+            continuation_token=pending.continuation_token,
+            browser_tool_receipt={
+                "tool_call_id": pending.pending_tool_call_id,
+                "tool_name": "import_vector_dataset",
+                "status": "succeeded",
+                "output": {"layer_ref": "ul_1"},
+                "effect": {"status": "applied", "state_revision": 2},
+                "map_context": {"schema_version": 2, "revision": 2},
+            },
+        )
+    )
+
+    assert result.publication_state == "published"
+    assert result.frozen_evidence is not None
+    assert len(result.frozen_evidence.items) == 1
+    assert result.frozen_evidence.items[0].source == "browser_gis"
+    assert '"layer_ref":"ul_1"' in result.frozen_evidence.items[0].text
 
 
 @pytest.mark.asyncio

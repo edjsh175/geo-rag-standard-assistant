@@ -60,6 +60,57 @@ class EvidenceLedger:
             activated.append(item)
         return tuple(activated)
 
+    def add_observation(
+        self,
+        *,
+        turn_id: str,
+        source: str,
+        observation_key: str,
+        title: str,
+        payload: object,
+    ) -> EvidenceItem:
+        """Admit one deterministic external observation as citable evidence."""
+        self._require_turn_id(turn_id)
+        source = source.strip()
+        observation_key = observation_key.strip()
+        if not source or not observation_key:
+            raise ValueError("observation source and key must not be empty")
+        text = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        identity = json.dumps(
+            [self.session_id, source, observation_key, content_hash],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        evidence_id = str(uuid5(NAMESPACE_URL, identity))
+        item = self._items.get(evidence_id)
+        if item is None:
+            item = EvidenceItem(
+                evidence_id=evidence_id,
+                citation_id=f"E{self._next_citation_ordinal}",
+                session_id=self.session_id,
+                first_turn_id=turn_id,
+                chunk_id=f"observation:{source}:{observation_key}",
+                document_id=None,
+                text=text,
+                title=title.strip() or source,
+                score=1.0,
+                metadata={"observation_key": observation_key},
+                source=source,
+                match_type="observation",
+                content_hash=content_hash,
+            )
+            self._next_citation_ordinal += 1
+            self._items[evidence_id] = item
+        self._activate(turn_id=turn_id, evidence_id=evidence_id)
+        return item
+
     def working_evidence(self, *, turn_id: str) -> tuple[EvidenceItem, ...]:
         evidence_ids = self._working_by_turn.get(turn_id, [])
         return tuple(self._items[evidence_id] for evidence_id in evidence_ids)

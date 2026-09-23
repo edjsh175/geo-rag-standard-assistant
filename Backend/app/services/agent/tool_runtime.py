@@ -112,12 +112,14 @@ class ToolRuntime:
         registry: ToolRegistry | None = None,
         resource_fuse: ResourceFuse | None = None,
         retrieval_constraints: RetrievalRequestConstraints | None = None,
+        spatial_service: Any | None = None,
     ) -> None:
         self.retrieval_port = retrieval_port
         self.evidence_ledger = evidence_ledger
         self.registry = registry or build_default_tool_registry()
         self.resource_fuse = resource_fuse
         self.retrieval_constraints = retrieval_constraints or RetrievalRequestConstraints()
+        self.spatial_service = spatial_service
 
     async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
         try:
@@ -148,8 +150,12 @@ class ToolRuntime:
             "set_vector_style",
             "fit_vector_layer",
             "locate_map",
+            "inspect_layer_features",
+            "get_feature_geometry",
         }:
             observation = self._browser_action(call=call)
+        elif call.name in {"query_spatial_relation", "spatial_overlay"}:
+            observation = await self._spatial_operation(turn_id=turn_id, call=call)
         else:  # pragma: no cover - registry.get() already rejects this branch.
             raise KeyError(f"unknown tool: {call.name}")
 
@@ -209,6 +215,48 @@ class ToolRuntime:
                 "diagnostics": result.diagnostics,
                 "unavailable_channels": list(result.diagnostics.unavailable_channels),
             },
+        )
+
+    async def _spatial_operation(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        if self.spatial_service is None:
+            return ToolObservation(
+                tool_call_id=call.tool_call_id,
+                tool_name=call.name,
+                status="failed",
+                payload={"error": "spatial service is unavailable"},
+            )
+        try:
+            if call.name == "query_spatial_relation":
+                result = await self.spatial_service.query_relation(
+                    left=call.arguments["left"],
+                    right=call.arguments["right"],
+                    relation=str(call.arguments["relation"]),
+                )
+            else:
+                result = await self.spatial_service.overlay(
+                    left=call.arguments["left"],
+                    right=call.arguments["right"],
+                    operation=str(call.arguments["operation"]),
+                )
+        except Exception as exc:
+            return ToolObservation(
+                tool_call_id=call.tool_call_id,
+                tool_name=call.name,
+                status="failed",
+                payload={"error": str(exc)},
+            )
+        evidence = self.evidence_ledger.add_observation(
+            turn_id=turn_id,
+            source="postgis",
+            observation_key=call.tool_call_id,
+            title=f"PostGIS {call.name}",
+            payload=result,
+        )
+        return ToolObservation(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            status="ok",
+            payload={"result": result, "evidence_id": evidence.evidence_id},
         )
 
     def _reuse_evidence(self, *, turn_id: str, call: ToolCall) -> ToolObservation:

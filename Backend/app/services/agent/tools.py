@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
 class RetrieveKbInput(BaseModel):
@@ -69,6 +69,50 @@ class LocateMapInput(BaseModel):
     longitude: float = Field(..., ge=-180, le=180)
     latitude: float = Field(..., ge=-90, le=90)
     zoom: float | None = Field(None, ge=1, le=22)
+
+
+class InspectLayerFeaturesInput(BaseModel):
+    layer_ref: str = Field(..., min_length=1)
+    offset: int = Field(0, ge=0)
+    limit: int = Field(20, ge=1, le=50)
+
+
+class GetFeatureGeometryInput(BaseModel):
+    feature_ref: str = Field(..., min_length=1)
+
+
+class SpatialRegionRef(BaseModel):
+    adcode: str | None = Field(None, min_length=1)
+    region_name: str | None = Field(None, min_length=1)
+
+    @model_validator(mode="after")
+    def require_one_identity(self):
+        if bool(self.adcode) == bool(self.region_name):
+            raise ValueError("region requires exactly one of adcode or region_name")
+        return self
+
+
+class SpatialOperand(BaseModel):
+    geometry: dict[str, Any] | None = None
+    region: SpatialRegionRef | None = None
+
+    @model_validator(mode="after")
+    def require_one_operand(self):
+        if (self.geometry is None) == (self.region is None):
+            raise ValueError("operand requires exactly one of geometry or region")
+        return self
+
+
+class QuerySpatialRelationInput(BaseModel):
+    left: SpatialOperand
+    right: SpatialOperand
+    relation: str = Field(..., pattern="^(intersects|within|contains|overlaps|disjoint|touches)$")
+
+
+class SpatialOverlayInput(BaseModel):
+    left: SpatialOperand
+    right: SpatialOperand
+    operation: str = Field(..., pattern="^(intersection|union|difference)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +223,26 @@ def build_default_tool_registry() -> ToolRegistry:
                 name="locate_map",
                 description="Request browser execution to move the active map viewport to a coordinate.",
                 input_model=LocateMapInput,
+            ),
+            ToolSpec(
+                name="inspect_layer_features",
+                description="Inspect a bounded page of feature_ref identities and properties from a stable browser layer_ref.",
+                input_model=InspectLayerFeaturesInput,
+            ),
+            ToolSpec(
+                name="get_feature_geometry",
+                description="Read exact GeoJSON geometry and properties for one stable browser feature_ref.",
+                input_model=GetFeatureGeometryInput,
+            ),
+            ToolSpec(
+                name="query_spatial_relation",
+                description="Ask PostGIS for an authoritative spatial predicate between two GeoJSON or spatial_regions operands.",
+                input_model=QuerySpatialRelationInput,
+            ),
+            ToolSpec(
+                name="spatial_overlay",
+                description="Ask PostGIS to compute intersection, union, or difference for two GeoJSON or spatial_regions operands.",
+                input_model=SpatialOverlayInput,
             ),
         )
     )

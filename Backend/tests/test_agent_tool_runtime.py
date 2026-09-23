@@ -63,7 +63,15 @@ class FakeRetrievalPort:
         return [candidate for candidate in self.candidates if candidate.chunk_id in chunk_ids]
 
 
-def test_default_registry_exposes_only_graph_free_agent_tools() -> None:
+class FakeSpatialService:
+    async def query_relation(self, *, left, right, relation):
+        return {"operation": "relation", "relation": relation, "result": True, "left": left, "right": right}
+
+    async def overlay(self, *, left, right, operation):
+        return {"operation": operation, "geometry": {"type": "Polygon", "coordinates": []}}
+
+
+def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> None:
     registry = build_default_tool_registry()
 
     assert registry.names() == {
@@ -72,6 +80,15 @@ def test_default_registry_exposes_only_graph_free_agent_tools() -> None:
         "compose_answer",
         "clarify",
         "limitation",
+        "import_vector_dataset",
+        "set_layer_visibility",
+        "set_vector_style",
+        "fit_vector_layer",
+        "locate_map",
+        "inspect_layer_features",
+        "get_feature_geometry",
+        "query_spatial_relation",
+        "spatial_overlay",
     }
     serialized = " ".join(
         f"{spec.name} {spec.description}" for spec in registry.specs()
@@ -80,6 +97,34 @@ def test_default_registry_exposes_only_graph_free_agent_tools() -> None:
     assert "图谱" not in serialized
     assert "多实体必须" not in serialized
     assert "检索两次" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_spatial_relation_result_is_admitted_as_evidence() -> None:
+    ledger = EvidenceLedger(session_id="session-spatial")
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=ledger,
+        spatial_service=FakeSpatialService(),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="spatial-1",
+            name="query_spatial_relation",
+            arguments={
+                "left": {"geometry": {"type": "Point", "coordinates": [104, 30]}},
+                "right": {"region": {"adcode": "510000"}},
+                "relation": "intersects",
+            },
+        ),
+    )
+
+    assert observation.status == "ok"
+    evidence_id = observation.payload["evidence_id"]
+    assert ledger.get(evidence_id) is not None
+    assert ledger.get(evidence_id).source == "postgis"
 
 
 @pytest.mark.asyncio

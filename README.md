@@ -254,6 +254,12 @@ Controller 继续规划下一步
 
 Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真实地图状态与地图副作用执行，不维护第二套规划状态机。
 
+### GIS 状态观测与评测
+
+`MapContext` 以浏览器真实 OpenLayers 状态为准，除视口与用户图层摘要外，还提供完整递归图层树。导入矢量数据时为要素建立稳定 `feature_ref`；属性和精确几何不全量塞入上下文，而通过 `inspect_layer_features` / `get_feature_geometry` 按需读取。PostGIS 的空间关系与叠加结果、Browser Tool Receipt 都作为 Observation 进入同一 Evidence Ledger，最终回答仍必须通过 Frozen Evidence 发布。
+
+仓库提供 `evals/geoai_agent_36_tasks.json` 的 36 个端到端任务契约，以及 `scripts/evaluate_geoai_agent_results.py` 聚合真实执行结果。评测器只根据完整结果记录计算任务完成率；README 不预置或宣称未经执行得到的百分比。
+
 ## 三种查询入口
 
 项目保留不同使用场景，而不是强制所有请求都走 Agent：
