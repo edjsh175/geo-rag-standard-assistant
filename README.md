@@ -414,7 +414,7 @@ docker compose up -d
 python scripts/preflight_geoai_agent_e2e.py
 ```
 
-预检会检查 36-task 清单、数据库与 LLM 配置、PostgreSQL 可达性、Backend/Frontend 服务以及本机浏览器可用性，并且不会打印密钥值。单元测试、契约测试和模拟 Controller 的通过结果不能计作 36 个真实任务的完成记录。
+预检会检查 36-task 清单、PostgreSQL/MySQL 配置与可达性、Backend 启动所需的 Admin Auth 配置、LLM 凭证、Backend/Frontend 服务以及本机浏览器可用性，并且不会打印密钥值。Redis 与 Docker 会单独报告，但不是 36-task 验收的硬前置；Frontend 默认按项目实际开发端口 `3000` 检查。单元测试、契约测试和模拟 Controller 的通过结果不能计作 36 个真实任务的完成记录。
 
 ## 设计文档
 
