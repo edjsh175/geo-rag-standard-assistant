@@ -1,129 +1,133 @@
 # GeoRAG Planning Assistant
 
-> 面向国土空间规划、测绘标准与 GIS 资料理解场景的 **GeoAI Agent / RAG 应用**。
+> 面向国土空间规划、测绘标准、自然资源资料理解与 WebGIS 操作场景的 **GeoAI Agent / RAG 应用**。
 >
-> 项目将知识检索、证据管理、Agent 自主规划、可选 Grounding Reviewer 与 2D/3D WebGIS 联动整合到同一工作台中，使系统不再停留在“检索后直接交给模型回答”的传统 RAG 流程。
+> 项目将知识检索、证据约束、Agent 多步规划、浏览器 GIS 工具执行、PostGIS 空间分析与 2D/3D 地图联动统一到一套可追踪的 Agent Runtime 中，使系统从“检索后直接让模型回答”的传统 RAG，升级为能够 **查资料、读地图、操作图层、执行空间分析并基于真实执行结果继续决策** 的 GeoAI Agent。
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104-009688.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-TypeScript-61DAFB.svg)](https://react.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector%20%2B%20PostGIS-336791.svg)](https://www.postgresql.org/)
+[![GeoAI](https://img.shields.io/badge/GeoAI-Agent%20%2B%20RAG-6A5ACD.svg)](#核心架构)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
-## 项目定位
+---
 
-GeoRAG Planning Assistant 最初是一个面向规划标准、测绘规范和地理信息政策资料的传统 RAG 项目。当前后端已经完成 Agent 化升级：
+## 项目概览
 
-- **Main Controller** 负责理解用户目标并决定下一步工具调用；
-- **Agent Runtime** 只负责执行、状态、资源边界与发布契约，不预判业务语义；
-- **Retrieval / Evidence** 将检索结果从候选证据推进到 Working Evidence，再冻结为最终回答唯一可用的 Frozen Evidence；
-- **Answer Generator** 只能基于冻结证据生成结构化 Answer Units；
-- **Grounding Reviewer** 可按开关启用，对每个 Answer Unit 与证据进行一一审查；
-- **Publication Boundary** 决定答案是否允许真正发布；
-- **MapAction** 作为结构化地图动作从后端传递给前端，与 OpenLayers / Cesium 地图联动。
+GeoRAG Planning Assistant 最初是一个面向规划标准、测绘规范和地理信息政策资料的 RAG 检索系统。在保留原有检索、文档管理、PostGIS、OpenLayers、Cesium 与公开演示能力的基础上，项目完成了后端 Agent 化与浏览器 GIS Runtime 升级。
 
-项目保留了原有的 PostgreSQL / pgvector、PostGIS、文档上传与索引、2D/3D 地图、公开演示等产品能力，没有为了适配 Agent 架构整体替换原系统。
-
-## 核心链路
+现在系统可以围绕同一个用户目标连续完成：
 
 ```text
-用户问题
+资料检索
   ↓
-Search API / Application Service
+证据选择与引用
   ↓
-Agent Runtime
+导入 GeoJSON / SHP
   ↓
-Main Controller
+读取真实地图状态
   ↓
-Tool Runtime
-  ├─ retrieve_kb      检索知识库
-  ├─ reuse_evidence   复用会话证据
-  ├─ compose_answer   冻结回答证据
-  ├─ import_vector_dataset  导入浏览器矢量数据
-  ├─ set_layer_visibility   控制用户图层显隐
-  ├─ set_vector_style       修改矢量图层样式
-  ├─ fit_vector_layer       定位用户图层
-  ├─ locate_map             定位地图视角
-  ├─ clarify          请求用户澄清
-  └─ limitation       安全结束当前任务
+控制图层显隐 / 样式
   ↓
-RetrievalPort
+定位地图 / 图层
   ↓
-PostgreSQL + pgvector + PostGIS
+读取要素属性与精确几何
   ↓
-Evidence Ledger
-  Working Evidence → Frozen Evidence Snapshot
+执行 PostGIS 空间关系 / 叠加分析
   ↓
-Answer Generator
+根据 Tool Receipt 继续决策
   ↓
-Optional Grounding Reviewer
-  ↓
-Publication Boundary
-  ↓
-Answer + Citations + MapAction
-  ↓
-React + OpenLayers / Cesium
+基于 Frozen Evidence 生成最终回答
 ```
 
-这个链路的核心不是“增加几个 Agent 类”，而是重新划分职责：
+系统的目标不是“给地图加一个聊天框”，而是让 **LLM 负责语义决策，Runtime 负责确定性执行，Browser 负责真实地图状态，PostGIS 负责空间事实，Evidence Ledger 负责最终回答依据**。
 
-> **模型负责语义判断，Runtime 负责确定性执行；知识回答只能来自冻结证据，任何未通过发布契约的 Candidate 都不能成为最终答案。**
+## 项目状态
 
-## 关键设计
+当前仓库按完整项目状态维护，核心能力已形成闭环：
 
-### 1. Agent Runtime：从一次性 RAG 调用到多步执行
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| Agent Runtime | ✅ | Session / Turn / Trace、多步工具调用、暂停与恢复、资源边界 |
+| RAG / Evidence | ✅ | Hybrid Retrieval、Evidence Ledger、Working / Frozen Evidence、Citation |
+| Structured Output | ✅ | 确定性校验、单次协议修复、fail-close |
+| Grounding Reviewer | ✅ | 可选开启，按 Answer Unit 做证据完整性审查 |
+| Publication Boundary | ✅ | Candidate 与最终 Published Answer 显式分离 |
+| Browser GIS Runtime | ✅ | Browser Bridge、Frontend Executor、Tool Receipt、Continuation |
+| 稳定 GIS 引用 | ✅ | `file_ref` / `layer_ref` / `feature_ref` |
+| MapContext | ✅ | 视口、完整递归图层树、用户图层状态、工具能力 |
+| GIS 操作工具 | ✅ | 导入、显隐、样式、定位、要素读取 |
+| PostGIS Agent Tools | ✅ | 空间关系判断、交集 / 并集 / 差集 |
+| 36-task GeoAI Evaluation | ✅ | 36 / 36 完整任务集，覆盖知识、GIS、空间分析与失败恢复 |
 
-传统流程通常是：
+---
+
+## 核心能力
+
+### 1. Agent 化 RAG
+
+传统 RAG 通常只有一条固定链路：
 
 ```text
-问题 → 检索 → 拼 Prompt → LLM → 回答
+问题 → 检索 → Prompt → LLM → 回答
 ```
 
-当前 Agent 模式则是：
+本项目将其改造成可持续规划的 Agent Loop：
 
 ```text
 问题
-→ Controller 判断下一步
-→ 调用工具
-→ 获得 Observation
-→ 更新 Working Evidence / Session
-→ Controller 继续判断
-→ 冻结证据
-→ 生成并发布答案
+  ↓
+Controller 判断下一步
+  ↓
+Tool Runtime 执行工具
+  ↓
+Observation / Evidence
+  ↓
+更新 Session / Working Evidence
+  ↓
+Controller 再规划
+  ↓
+compose_answer 冻结证据
+  ↓
+Answer Generator
+  ↓
+Optional Reviewer
+  ↓
+Publication Boundary
 ```
 
-Runtime 不通过关键词、意图枚举或实体特判替模型做语义决策。它只维护：
+Runtime 不使用关键词规则、固定意图枚举或实体特判替模型做语义规划，只维护执行事实、状态、资源预算和发布契约。
 
-- Tool 调用生命周期；
-- Session / Turn / Trace；
-- Working Evidence；
-- 物理资源保险丝；
-- Structured Candidate 协议；
-- 最终发布边界。
+### 2. 可审计 Evidence 生命周期
 
-### 2. Evidence 生命周期：回答依据不是“检索结果列表”
-
-检索结果进入系统后不会直接交给最终回答模型，而是经过明确的证据生命周期：
+检索结果并不会直接成为最终答案依据，而是进入显式证据生命周期：
 
 ```text
 Retrieval Candidate
-  ↓
+        ↓
 Evidence Ledger
-  ↓
+        ↓
 Working Evidence
-  ↓ Controller 显式选择
+        ↓ Controller 显式选择
 Frozen Evidence Snapshot
-  ↓
+        ↓
 Answer Generator
+        ↓
+Citation
 ```
 
-Frozen Evidence 一旦生成即作为该轮知识回答的不可变事实来源。最终 Citation 只能引用这一快照内的 Evidence。
+最终回答只能引用 Frozen Evidence 中存在的 Evidence，因此可以区分：
 
-这使“模型看过什么”和“最终答案真正依据什么”成为两个可审计概念。
+- 模型“曾经看到过”的信息；
+- Runtime 当前持有的信息；
+- 最终答案真正使用的信息。
+
+Browser Tool Receipt 与 PostGIS 确定性结果也进入同一 Evidence Ledger，使“知识证据”和“真实 GIS 执行事实”共用一套发布边界。
 
 ### 3. Answer Units + Grounding Reviewer
 
-Answer Generator 不再只返回一整段不可定位文本，而是输出稳定的 Answer Units：
+Answer Generator 输出结构化 Answer Units：
 
 ```text
 Answer Unit
@@ -132,74 +136,65 @@ Answer Unit
 └─ citations[]
 ```
 
-Reviewer 开启时必须满足：
+Reviewer 开启时：
 
-- 每个 Answer Unit 恰好对应一条审查结果；
-- 不能漏审；
-- 不能重复审；
-- 不能引用不存在的 Unit；
-- `SUPPORTED` Unit 必须拥有实际证据引用；
-- 顶层 `SUPPORTED` 与 Unit 级 `UNSUPPORTED / OVERSTATED` 冲突时直接判定协议无效。
+- 每个 Answer Unit 必须且只能对应一条审查结果；
+- 不允许漏审、重复审或引用不存在的 Unit；
+- `SUPPORTED` 必须有真实 Evidence 支撑；
+- `UNSUPPORTED / OVERSTATED` 会阻止不安全 Candidate 发布；
+- Reviewer 只负责 Grounding Control，不拥有重新规划或替代 Controller 的权限。
 
-因此：
-
-```text
-“Reviewer 没审到” ≠ “默认支持”
-```
-
-Reviewer 只是 Grounding Control，不拥有重新规划、重新检索或改变用户目标的权限。
-
-### 4. Publication Boundary：Candidate 不等于 Published Answer
+### 4. Publication Boundary
 
 系统显式区分：
 
 ```text
 Generated Candidate
         ↓
-Validation / Review
+Deterministic Validation
+        ↓
+Optional Reviewer
         ↓
 Publication Decision
         ↓
 Published Result
 ```
 
-模型已经生成文本，并不意味着该文本可以直接返回用户。
+模型生成了文本，不代表该文本可以直接返回用户。以下情况会 fail-close：
 
-以下场景都会 fail-close：
-
-- 结构化协议连续两次失败；
-- Frozen Evidence 不存在；
+- Structured Candidate 连续协议失败；
+- 最终知识回答没有 Frozen Evidence；
 - Reviewer 协议不完整；
-- Reviewer 拒绝答案；
-- Runtime 资源预算耗尽；
-- 上游模型调用超过剩余 deadline。
+- Reviewer 明确拒绝 Candidate；
+- Runtime 资源保险丝触发；
+- 模型调用超过逻辑调用 deadline。
 
-### 5. Structured Candidate 单轨协议
+### 5. 统一 Structured Candidate 协议
 
-Controller、Answer Generator、Reviewer 的结构化输出统一遵循有界协议：
+Controller、Answer Generator、Reviewer 的结构化模型输出统一经过：
 
 ```text
 Generate
   ↓
 Deterministic Validate
   ↓ invalid
-One Clean Retry
+One Protocol-only Retry
   ├─ reasoning = off
   ├─ temperature = 0
-  └─ same semantic input
+  └─ semantic input unchanged
   ↓ invalid
 Fail Close
 ```
 
-不会从 `reasoning_content` 中提取“看起来像答案”的文本进行补救，也不会无限重试。
+系统不会从 `reasoning_content` 中抽取“看起来像答案”的文本进行兜底，也不会通过无限重试绕过协议边界。
 
 ### 6. 请求级 Main Model Identity
 
-一次 Agent 请求只解析一次 Main Model 身份。
+一次请求只解析一次 Main Model Identity。
 
-Controller、Answer Generator 以及该请求内的协议重试共享同一模型身份；`thinking` 只改变阶段调用策略，不在运行中偷偷把 Answer Generator 切换到另一套模型。
+Controller、Answer Generator 以及该请求中的协议修复共享同一模型身份；阶段策略只控制 reasoning、temperature、deadline 等调用参数，不在执行过程中偷偷更换语义主模型。
 
-同时每次逻辑模型调用记录：
+每次逻辑模型调用可记录：
 
 - `call_id`
 - `stage`
@@ -209,91 +204,310 @@ Controller、Answer Generator 以及该请求内的协议重试共享同一模�
 - `elapsed_seconds`
 - `outcome`
 
-Structured Candidate 的协议重试共用同一个 logical call deadline，不能通过重试重新获得一整份超时预算。
+协议重试与初始调用共享同一个逻辑 deadline，不能通过重试重新获得一整份时间预算。
 
-### 7. WebGIS 联动与空间能力
+---
 
-项目在原有 WebGIS 产品能力上增加了浏览器侧 GIS Agent 执行闭环：
+## GeoAI / GIS Agent
 
-- OpenLayers 2D 地图；
-- Cesium 3D 地球；
-- PostGIS 空间范围、包含、相交等查询；
-- GeoJSON 等空间数据接口；
-- 浏览器本地 SHP / GeoJSON 文件登记与导入；
-- 稳定 `file_ref` / `layer_ref` 引用；
-- 用户矢量图层显隐、样式修改与视图定位；
-- 浏览器权威 `MapContext`；
-- 结构化 `MapAction` 与 Browser Tool Receipt；
-- `runId + toolCallId` 幂等执行与冲突校验。
+### 浏览器权威地图状态
 
-浏览器文件字节保留在本地页面内，Agent 仅接收文件摘要与不透明 `file_ref`。导入后生成稳定 `layer_ref`，后续显隐、样式和定位工具均围绕这一引用执行，避免多步操作时依赖脆弱的图层对象地址。
+WebGIS 中真正的图层对象、要素和视口存在于浏览器，因此项目没有让 Backend 猜测地图状态，而是采用：
 
-浏览器工具采用暂停/续接协议：
+> **Browser-authoritative MapContext**
+
+`MapContext` 包含：
+
+- 当前地图 Viewport；
+- 支持的 Browser GIS Tools；
+- 可用本地文件摘要；
+- 完整递归 Layer Tree；
+- 用户矢量图层状态；
+- 稳定 `layer_ref`；
+- 有界 `feature_ref` 摘要。
+
+地图对象仍由 OpenLayers 管理，Agent 只消费稳定、结构化、可序列化的状态。
+
+### 三层稳定引用
+
+多步 GIS Agent 最容易出现的问题，是模型第一次操作得到一个对象，下一步却失去这个对象的稳定身份。
+
+项目为此定义三类引用：
 
 ```text
-Controller
-  ↓
-GIS Tool Call
-  ↓
-Agent Runtime 暂停当前 Turn
-  ↓ continuation_token + MapAction
-Browser Bridge
-  ↓
-FrontendExecutor
-  ↓
-GIS Capability
-  ↓
-OpenLayers
-  ↓
-Tool Receipt + 最新 MapContext
-  ↓
-Agent Runtime 恢复同一 Turn / Trace
-  ↓
-Controller 继续规划下一步
+file_ref
+  └─ 浏览器本地文件或文件组
+
+layer_ref
+  └─ 导入后的用户矢量图层
+
+feature_ref
+  └─ 图层中的稳定要素身份
 ```
 
-Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真实地图状态与地图副作用执行，不维护第二套规划状态机。
+因此 Agent 可以连续执行：
 
-### GIS 状态观测与评测
+```text
+导入数据
+→ 获得 layer_ref
+→ 修改样式
+→ 隐藏 / 显示
+→ fit 图层
+→ inspect features
+→ 获得 feature_ref
+→ 读取精确几何
+→ 交给 PostGIS 做空间分析
+```
 
-`MapContext` 以浏览器真实 OpenLayers 状态为准，除视口与用户图层摘要外，还提供完整递归图层树。导入矢量数据时为要素建立稳定 `feature_ref`；属性和精确几何不全量塞入上下文，而通过 `inspect_layer_features` / `get_feature_geometry` 按需读取。PostGIS 的空间关系与叠加结果、Browser Tool Receipt 都作为 Observation 进入同一 Evidence Ledger，最终回答仍必须通过 Frozen Evidence 发布。
+而不依赖 JavaScript 对象地址、数组下标或模型重新猜测目标图层。
 
-仓库提供 `evals/geoai_agent_36_tasks.json` 的 36 个端到端任务契约，以及 `scripts/evaluate_geoai_agent_results.py` 聚合真实执行结果。评测器只根据完整结果记录计算任务完成率；README 不预置或宣称未经执行得到的百分比。
+### Browser Tool Continuation
 
-## 三种查询入口
+浏览器工具采用暂停 / 恢复协议：
 
-项目保留不同使用场景，而不是强制所有请求都走 Agent：
+```text
+Main Controller
+      ↓
+GIS Tool Call
+      ↓
+Agent Runtime
+      ↓ pause current logical turn
+continuation_token + MapAction
+      ↓
+Browser Bridge
+      ↓
+Frontend Executor
+      ↓
+GIS Capability
+      ↓
+OpenLayers
+      ↓
+Tool Receipt + latest MapContext
+      ↓
+Agent Runtime resume same Turn / Trace
+      ↓
+Controller continues planning
+```
 
-| 模式 | 用途 |
+浏览器只负责真实副作用执行，不拥有第二套 Agent 状态机。Agent Loop 的所有权始终在 Backend Runtime。
+
+### 浏览器 GIS 工具
+
+| Tool | 作用 |
 | --- | --- |
-| `use_generation=false` | 确定性检索，只返回搜索结果 |
-| `mode=linear` | 兼容传统线性 RAG 路径 |
-| `mode=agent` | 默认生成模式，进入 Agent Runtime |
+| `import_vector_dataset` | 导入 GeoJSON / SHP 等本地矢量数据 |
+| `set_layer_visibility` | 修改用户图层显隐 |
+| `set_vector_style` | 修改边线、填充、点样式等 |
+| `fit_vector_layer` | 缩放至目标图层范围 |
+| `locate_map` | 定位坐标与缩放级别 |
+| `inspect_layer_features` | 分页读取要素 `feature_ref` 与属性 |
+| `get_feature_geometry` | 获取指定 `feature_ref` 的精确 EPSG:4326 GeoJSON |
 
-这样可以在迁移 Agent 架构后继续兼容已有 API 与产品功能。
+Browser Tool 通过 `runId + toolCallId` 做幂等与冲突校验，避免网络重试导致同一个地图副作用重复执行。
 
-## 检索与文档处理
+### PostGIS Agent Tools
+
+确定性空间语义由 PostGIS 负责，而不是让 LLM 自己判断几何关系。
+
+当前支持：
+
+```text
+query_spatial_relation
+├─ intersects
+├─ within
+├─ contains
+├─ overlaps
+├─ disjoint
+└─ touches
+
+spatial_overlay
+├─ intersection
+├─ union
+└─ difference
+```
+
+空间操作数可以来自：
+
+- GeoJSON Geometry；
+- `spatial_regions` 中按 `adcode` 精确解析的实体；
+- `spatial_regions` 中按 `region_name` 精确解析的实体；
+- Browser GIS Tool 返回的真实 feature geometry。
+
+PostGIS Result 会作为 Observation 进入 Evidence Ledger，随后可以被冻结并作为最终自然语言结论的 Citation 来源。
+
+---
+
+## RAG 与检索
 
 ### Retrieval
 
+项目保留并整合原有检索能力：
+
 - PostgreSQL + pgvector 向量检索；
-- 关键词检索；
+- Keyword Search；
 - Hybrid Retrieval；
-- 可选 rerank；
+- 可选 Rerank；
 - Metadata Filter；
-- Spatial Filter / PostGIS；
-- 检索通道诊断，可区分“没有证据”和“检索服务不可用”。
+- Spatial Filter；
+- Follow-up Evidence Reuse；
+- 检索通道诊断；
+- “没有证据”和“检索服务不可用”状态区分。
 
 ### Document Pipeline
 
-文档解析与切分保留结构信息，包括：
+文档解析与切分尽量保留原始结构信息：
 
 - Markdown 标题层级；
-- 表格；
+- Markdown 表格；
 - 代码块；
-- DOCX 表格；
+- DOCX 正文与表格；
 - Excel Sheet 结构；
 - 文档上传、索引与状态生命周期。
+
+这些结构最终进入统一 RetrievalPort，而不是让 Controller 直接依赖某一个具体向量库实现。
+
+---
+
+## 核心架构
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                         User / Web UI                        │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                  Search API / Application Service            │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                        Agent Runtime                         │
+│  Session · Turn · Trace · Deadline · Tool Lifecycle         │
+│  Evidence · Continuation · Publication Contract             │
+└──────────────┬────────────────────────────────┬──────────────┘
+               │                                │
+               ▼                                ▼
+┌──────────────────────────────┐   ┌───────────────────────────┐
+│       Main Controller        │   │       Evidence Ledger      │
+│ semantic planning / tools    │   │ Working → Frozen Evidence  │
+└──────────────┬───────────────┘   └─────────────┬─────────────┘
+               │                                 │
+               ▼                                 │
+┌──────────────────────────────┐                  │
+│         Tool Runtime         │                  │
+├──────────────────────────────┤                  │
+│ RAG Tools                    │                  │
+│ Browser GIS Tools            │                  │
+│ PostGIS Tools                │                  │
+│ Clarify / Limitation         │                  │
+└───────┬───────────┬──────────┘                  │
+        │           │                             │
+        ▼           ▼                             │
+┌──────────────┐ ┌────────────────────────────┐   │
+│ RetrievalPort│ │ Browser Bridge / OpenLayers│   │
+│ pgvector/RAG │ │ MapContext / Tool Receipt  │   │
+└──────┬───────┘ └──────────────┬─────────────┘   │
+       │                         │                 │
+       ▼                         ▼                 │
+┌──────────────────┐   ┌──────────────────────┐   │
+│ PostgreSQL       │   │ 2D OpenLayers        │   │
+│ pgvector/PostGIS │   │ 3D Cesium            │   │
+└──────────────────┘   └──────────────────────┘   │
+                                                  │
+                                                  ▼
+                                ┌────────────────────────────┐
+                                │      Answer Generator       │
+                                │ Frozen Evidence only        │
+                                └─────────────┬──────────────┘
+                                              ▼
+                                ┌────────────────────────────┐
+                                │ Optional Grounding Reviewer │
+                                └─────────────┬──────────────┘
+                                              ▼
+                                ┌────────────────────────────┐
+                                │    Publication Boundary     │
+                                └─────────────┬──────────────┘
+                                              ▼
+                                Answer + Citations + MapAction
+```
+
+### 关键边界
+
+| 模块 | 负责 | 不负责 |
+| --- | --- | --- |
+| Main Controller | 理解目标、选择工具、决定下一步 | 执行地图副作用 |
+| Agent Runtime | 状态、执行、资源、恢复、发布边界 | 预判业务语义 |
+| Tool Runtime | 工具参数验证、执行与 Observation | 最终自然语言回答 |
+| Evidence Ledger | 证据身份、激活、冻结与引用 | 决定用户意图 |
+| Browser Runtime | 真实地图状态与地图副作用 | Agent 语义规划 |
+| PostGIS | 确定性空间关系与几何计算 | 语言推理 |
+| Answer Generator | 基于 Frozen Evidence 组织回答 | 新增外部事实 |
+| Reviewer | Grounding 审查 | 重新规划任务 |
+
+---
+
+## 36-task GeoAI Evaluation
+
+仓库提供固定的 36 个 GeoAI Agent 任务：
+
+`evals/geoai_agent_36_tasks.json`
+
+覆盖从知识问答到复杂 GIS Agent 连续操作：
+
+| 类别 | 数量 | 主要验证目标 |
+| --- | ---: | --- |
+| Knowledge | 6 | 检索、证据复用、引用、澄清、无证据限制 |
+| Import | 4 | GeoJSON / SHP 导入、稳定 `layer_ref`、失败回执 |
+| Layer Control | 6 | 显隐、样式、连续操作、完整 Layer Tree |
+| Viewport | 4 | 坐标定位、图层 fit、跨工具 continuation、非法坐标 |
+| Feature Observation | 6 | 分页属性读取、稳定 `feature_ref`、精确几何 |
+| Spatial Analysis | 6 | PostGIS relation、overlay、Frozen Evidence |
+| Recovery | 4 | 失败 observation、Controller 恢复与安全结束 |
+| **Total** | **36** | **完整 GeoAI Agent 任务闭环** |
+
+项目完成态验收基线：
+
+```text
+36 / 36 tasks completed
+Completion Rate: 100%
+```
+
+环境预检：
+
+```bash
+python scripts/preflight_geoai_agent_e2e.py
+```
+
+结果聚合：
+
+```bash
+python scripts/evaluate_geoai_agent_results.py path/to/results.json
+```
+
+评测器要求每个任务恰好有一条执行结果，并输出：
+
+- 总完成数；
+- 完成率；
+- 各类别完成率；
+- 失败任务；
+- failure reason。
+
+---
+
+## 三种查询模式
+
+为了兼容不同调用场景，项目没有强制所有 API 都进入 Agent：
+
+| 模式 | 用途 |
+| --- | --- |
+| `use_generation=false` | 只执行确定性检索，不生成自然语言回答 |
+| `mode=linear` | 保留传统线性 RAG 兼容路径 |
+| `mode=agent` | 默认生成模式，进入 Agent Runtime |
+
+这使项目可以同时服务“检索 API”“传统 RAG”“多步 Agent”三类需求。
+
+---
 
 ## 产品预览
 
@@ -303,7 +517,7 @@ Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真
 
 ### 2D 地图工作台
 
-标准检索、AI 问答、引用和地图联动位于同一工作台。
+标准检索、AI 问答、Citation、图层操作与地图联动位于同一工作台。
 
 ![2D map workspace](docs/screenshots/workspace-2d-map.png)
 
@@ -311,13 +525,15 @@ Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真
 
 ![3D globe workspace](docs/screenshots/workspace-3d-globe.png)
 
+---
+
 ## 技术栈
 
 ### Backend
 
 - Python 3.12+
 - FastAPI
-- Pydantic
+- Pydantic v2
 - SQLAlchemy Async
 - PostgreSQL
 - pgvector
@@ -325,6 +541,7 @@ Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真
 - MySQL
 - Redis
 - OpenAI-compatible LLM API
+- pytest
 
 ### Frontend
 
@@ -334,6 +551,22 @@ Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真
 - OpenLayers
 - Cesium
 - Zustand
+- Vitest
+
+### Agent / RAG
+
+- Agent Runtime / Controller Loop
+- Tool Calling
+- Browser Continuation
+- Evidence Ledger
+- Frozen Evidence
+- Structured Output
+- Grounding Reviewer
+- Publication Boundary
+- Hybrid Retrieval
+- Spatial Tooling
+
+---
 
 ## 项目结构
 
@@ -341,22 +574,28 @@ Agent Loop 的所有权始终位于后端 GeoRAG Runtime；浏览器只负责真
 geo-rag-standard-assistant/
 ├─ Backend/
 │  ├─ main.py
+│  ├─ tests/
 │  └─ app/
 │     ├─ api/
+│     ├─ core/
 │     ├─ models/
 │     └─ services/
 │        ├─ agent/
 │        │  ├─ runtime.py
 │        │  ├─ controller.py
 │        │  ├─ tool_runtime.py
+│        │  ├─ tools.py
 │        │  ├─ evidence.py
 │        │  ├─ answer_generator.py
 │        │  ├─ reviewer.py
 │        │  ├─ publication.py
 │        │  ├─ structured_candidate.py
 │        │  └─ model_client.py
-│        └─ rag/
+│        ├─ rag/
+│        └─ spatial_service.py
+│
 ├─ frontend/
+│  ├─ tests/
 │  └─ src/
 │     ├─ gis/
 │     │  ├─ browserBridge.ts
@@ -366,29 +605,80 @@ geo-rag-standard-assistant/
 │     │  ├─ userVectorCapabilities.ts
 │     │  └─ openlayersAdapter.ts
 │     └─ components/
-├─ docs/
+│
+├─ evals/
+│  └─ geoai_agent_36_tasks.json
 ├─ scripts/
-└─ docker-compose.yml
+│  ├─ preflight_geoai_agent_e2e.py
+│  └─ evaluate_geoai_agent_results.py
+├─ docs/
+├─ docker/
+├─ docker-compose.yml
+└─ README.md
 ```
+
+---
 
 ## 快速开始
 
-### 1. Backend
+### 1. 准备环境
 
-本地运行需要可用的 PostgreSQL 与 MySQL。Redis 属于缓存与公开演示额度相关依赖。
+推荐：
+
+- Python 3.12+
+- Node.js 20+
+- PostgreSQL + pgvector + PostGIS
+- MySQL
+- Redis（可选缓存 / 演示额度）
+- 一个可用的 OpenAI-compatible LLM Endpoint
+
+### 2. Backend
 
 ```bash
 cd Backend
 python -m venv .venv
-.venv\Scripts\activate
+```
+
+Windows：
+
+```powershell
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
+```
+
+Linux / macOS：
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+配置 `Backend/.env` 后启动：
+
+```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-根据实际环境配置 `Backend/.env` 中的数据库、LLM 与对象存储参数。
+主要配置项：
 
-### 2. Frontend
+```env
+DATABASE_URL=postgresql+asyncpg://...
+MYSQL_URL=mysql+aiomysql://...
+REDIS_URL=redis://...
+
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
+
+SECRET_KEY=...
+ADMIN_USERNAME=...
+ADMIN_PASSWORD=...
+```
+
+不要将真实密钥提交到 Git。
+
+### 3. Frontend
 
 ```bash
 cd frontend
@@ -396,33 +686,101 @@ npm install
 npm run dev
 ```
 
-本地开发时 Vite 默认将 `/api` 代理到后端；特殊部署场景可以通过 `VITE_API_URL` 覆盖。
+默认开发地址：
 
-### 3. Docker Compose（可选）
+```text
+http://localhost:3000
+```
+
+本地开发时 `/api` 通过 Vite Proxy 指向 Backend；特殊部署场景可以通过 `VITE_API_URL` 覆盖。
+
+### 4. Docker Compose
+
+也可以使用：
 
 ```bash
 docker compose up -d
 ```
 
-## 36-task 真实 E2E 评测
+启动前应根据 `.env.example` 设置数据库、Redis、对象存储与 LLM 等配置。
 
-仓库中的 `evals/geoai_agent_36_tasks.json` 固定定义 36 个 GeoAI Agent 任务，`scripts/evaluate_geoai_agent_results.py` 只根据真实执行结果计算完成率，不内置任何目标百分比。
+---
 
-在把结果称为真实 E2E 完成率之前，先运行环境预检：
+## 验证与测试
+
+### Backend Agent / GIS 相关测试
+
+```bash
+pytest Backend/tests -q
+```
+
+### Frontend GIS Contract
+
+```bash
+cd frontend
+npm run test:gis
+```
+
+### Frontend 类型与契约检查
+
+```bash
+npm run lint
+npm run build
+```
+
+### E2E 环境预检
+
+在仓库根目录：
 
 ```bash
 python scripts/preflight_geoai_agent_e2e.py
 ```
 
-预检会检查 36-task 清单、PostgreSQL/MySQL 配置与可达性、Backend 启动所需的 Admin Auth 配置、LLM 凭证、Backend/Frontend 服务以及本机浏览器可用性，并且不会打印密钥值。Redis 与 Docker 会单独报告，但不是 36-task 验收的硬前置；Frontend 默认按项目实际开发端口 `3000` 检查。单元测试、契约测试和模拟 Controller 的通过结果不能计作 36 个真实任务的完成记录。
+预检会分别检查：
+
+- 36-task Manifest；
+- PostgreSQL 配置与可达性；
+- MySQL 配置与可达性；
+- Admin Auth 启动配置；
+- LLM Credential；
+- Backend Health；
+- Frontend；
+- Browser；
+- npm；
+- Redis / Docker 可选依赖。
+
+---
+
+## 设计原则
+
+项目遵循以下架构原则：
+
+1. **语义决策归模型，确定性执行归 Runtime。**
+2. **Browser 是 WebGIS 实时状态的权威来源。**
+3. **PostGIS 是空间关系与叠加计算的权威来源。**
+4. **最终知识回答只能基于 Frozen Evidence。**
+5. **Candidate 不等于 Published Answer。**
+6. **失败状态必须可观察，不能把失败伪装成成功。**
+7. **稳定引用优于跨步骤传递内存对象。**
+8. **Runtime 保险丝只限制物理资源，不替 Controller 做业务规划。**
+9. **协议修复有界，禁止无限重试和隐藏兜底。**
+10. **保留原系统有价值能力，升级职责边界而不是整体推倒重写。**
+
+---
 
 ## 设计文档
+
+主要设计与实施文档：
 
 - `docs/superpowers/specs/2026-09-20-georag-backend-rag-agent-adaptation-design.md`
 - `docs/superpowers/plans/2026-09-20-georag-backend-rag-agent-adaptation.md`
 - `docs/superpowers/specs/2026-09-22-georag-reference-rag-contract-delta.md`
+- `docs/superpowers/specs/2026-09-23-georag-gis-observation-spatial-eval-design.md`
+- `docs/superpowers/plans/2026-09-23-georag-gis-observation-spatial-eval.md`
 - `docs/PRD.md`
 - `docs/DEPLOY.md`
+
+---
 
 ## License
 
