@@ -2,26 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MANIFEST = ROOT / "evals" / "geoai_agent_36_tasks.json"
-
-
-def load_manifest(path: Path = DEFAULT_MANIFEST) -> list[dict[str, Any]]:
-    tasks = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(tasks, list) or len(tasks) != 36:
-        raise ValueError("GeoAI evaluation manifest must contain exactly 36 tasks")
-    ids = [task.get("id") for task in tasks]
-    if len(set(ids)) != 36 or any(not isinstance(task_id, str) or not task_id for task_id in ids):
-        raise ValueError("GeoAI evaluation task ids must be 36 unique non-empty strings")
-    required = {"id", "category", "prompt", "required_capabilities", "success_criteria"}
-    if any(not required.issubset(task) for task in tasks):
-        raise ValueError("GeoAI evaluation task is missing required fields")
-    return tasks
+from geoai_eval_contract import DEFAULT_MANIFEST, load_manifest
 
 
 def evaluate(results: list[dict[str, Any]], tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -33,6 +23,24 @@ def evaluate(results: list[dict[str, Any]], tasks: list[dict[str, Any]]) -> dict
         raise ValueError("result ids must exactly match the evaluation manifest")
     if any(not isinstance(row.get("completed"), bool) for row in results):
         raise ValueError("every result requires boolean completed")
+
+    for row in results:
+        task = task_by_id[row["id"]]
+        evidence = row.get("assertions")
+        if not isinstance(evidence, list) or not evidence:
+            raise ValueError(f"task {row['id']} requires assertion evidence")
+        required_types = [assertion["type"] for assertion in task["assertions"]]
+        observed_required = [
+            assertion
+            for assertion in evidence
+            if isinstance(assertion, dict) and assertion.get("required", True)
+        ]
+        observed_types = [assertion.get("type") for assertion in observed_required]
+        if observed_types != required_types:
+            raise ValueError(f"task {row['id']} assertion evidence does not match manifest")
+        computed = all(assertion.get("passed") is True for assertion in observed_required)
+        if row["completed"] is not computed:
+            raise ValueError(f"task {row['id']} completed must equal required assertion outcome")
 
     per_category: dict[str, dict[str, int | float]] = defaultdict(lambda: {"completed": 0, "total": 0, "rate": 0.0})
     failures: list[dict[str, Any]] = []
@@ -57,6 +65,10 @@ def evaluate(results: list[dict[str, Any]], tasks: list[dict[str, Any]]) -> dict
     }
 
 
+def completion_exit_code(summary: dict[str, Any]) -> int:
+    return 0 if summary.get("rate") == 1.0 else 4
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Aggregate executed GeoAI Agent evaluation results.")
     parser.add_argument("results", type=Path, help="JSON array with one executed result per manifest task")
@@ -64,6 +76,7 @@ def main() -> None:
     args = parser.parse_args()
     summary = evaluate(json.loads(args.results.read_text(encoding="utf-8")), load_manifest(args.manifest))
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    raise SystemExit(completion_exit_code(summary))
 
 
 if __name__ == "__main__":
