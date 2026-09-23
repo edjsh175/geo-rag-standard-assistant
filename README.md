@@ -59,7 +59,7 @@ GeoRAG Planning Assistant 最初是一个面向规划标准、测绘规范和地
 | MapContext | ✅ | 视口、完整递归图层树、用户图层状态、工具能力 |
 | GIS 操作工具 | ✅ | 导入、显隐、样式、定位、要素读取 |
 | PostGIS Agent Tools | ✅ | 空间关系判断、交集 / 并集 / 差集 |
-| 36-task GeoAI Evaluation | ✅ | 36 / 36 完整任务集，覆盖知识、GIS、空间分析与失败恢复 |
+| 36-task GeoAI Evaluation | ✅ Harness 已实现 | 36 条固定任务 + 场景依赖 + 机器断言 + Playwright 浏览器执行；真实 36/36 需以结果文件为证 |
 
 ---
 
@@ -466,7 +466,9 @@ PostGIS Result 会作为 Observation 进入 Evidence Ledger，随后可以被冻
 | Recovery | 4 | 失败 observation、Controller 恢复与安全结束 |
 | **Total** | **36** | **完整 GeoAI Agent 任务闭环** |
 
-项目完成态验收基线：
+当前仓库提供的是 **36 条完整任务定义与真实浏览器 E2E Harness**。是否已经达到 36/36，不由 README 预先声明，而由最新一次真实执行产生的 `evals/results/<run>/results.json` 决定。
+
+项目完成态验收基线仍然是：
 
 ```text
 36 / 36 tasks completed
@@ -479,13 +481,40 @@ Completion Rate: 100%
 python scripts/preflight_geoai_agent_e2e.py
 ```
 
+完整真实 E2E：
+
+```bash
+python scripts/run_geoai_agent_e2e.py
+```
+
+该入口严格执行：
+
+```text
+preflight
+→ Playwright 打开真实前端
+→ 真实 Agent / Browser GIS continuation
+→ Tool Receipt / MapContext
+→ 机器断言
+→ results.json
+→ evaluator
+```
+
+Frontend 也可以单独运行：
+
+```bash
+cd frontend
+npm run e2e:geoai
+```
+
 结果聚合：
 
 ```bash
 python scripts/evaluate_geoai_agent_results.py path/to/results.json
 ```
 
-评测器要求每个任务恰好有一条执行结果，并输出：
+评测器要求每个任务恰好有一条执行结果，并且 `completed=true` 必须由该任务 Manifest 中所有 required assertions 实际通过计算得到。单独提供一个裸 `completed=true` 会被拒绝。
+
+结果汇总输出：
 
 - 总完成数；
 - 完成率；
