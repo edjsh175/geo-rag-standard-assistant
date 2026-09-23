@@ -13,7 +13,8 @@
     "api:export": "node ./scripts/export-openapi.mjs",
     "api:generate": "npm run api:export && openapi-typescript ./src/lib/api/generated/openapi.json -o ./src/lib/api/generated/schema.d.ts --default-non-nullable false --empty-objects-unknown",
     "contract:check": "node ./scripts/check-api-contract-usage.mjs",
-    "lint": "node ./scripts/check-text-encoding.mjs && npm run contract:check && tsc --noEmit"
+    "lint": "node ./scripts/check-text-encoding.mjs && npm run contract:check && tsc --noEmit",
+    "test:gis": "vitest run tests/gisObservationContract.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -48,6 +49,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^3.2.4"
   }
 }

@@ -22,18 +22,38 @@ export interface UserVectorLayerState {
   name: string;
   geometry_types: string[];
   feature_count: number;
+  feature_refs: string[];
   visible: boolean;
   style: VectorStyle;
 }
 
+export interface LayerTreeNode {
+  layer_ref: string;
+  parent_ref?: string;
+  name: string;
+  kind: 'base' | 'annotation' | 'business' | 'user_vector' | 'group' | 'unknown';
+  visible: boolean;
+  opacity: number;
+  z_index?: number;
+  children?: LayerTreeNode[];
+}
+
+export interface FeatureObservation {
+  feature_ref: string;
+  layer_ref: string;
+  geometry_type: string | null;
+  properties: Record<string, unknown>;
+}
+
 export interface BrowserMapContext {
   [key: string]: unknown;
-  schema_version: 1;
+  schema_version: 2;
   revision: number;
   dimension: '2d';
   ready: boolean;
   supported_tools: string[];
   viewport: { center: [number, number]; zoom: number; crs: 'EPSG:4326' } | null;
+  layer_tree: LayerTreeNode[];
   user_layers: UserVectorLayerState[];
   available_files: AvailableVectorFile[];
 }

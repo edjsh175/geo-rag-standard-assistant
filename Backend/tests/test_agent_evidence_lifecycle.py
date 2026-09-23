@@ -100,3 +100,20 @@ def test_structurally_empty_candidate_is_not_admitted() -> None:
 
     assert admitted == []
     assert ledger.working_evidence(turn_id="turn-1") == ()
+
+
+def test_observation_can_be_admitted_and_frozen_without_kb_retrieval() -> None:
+    ledger = EvidenceLedger(session_id="session-1")
+
+    item = ledger.add_observation(
+        turn_id="turn-1",
+        source="browser_gis",
+        observation_key="tool-call-1",
+        title="Browser GIS tool receipt",
+        payload={"status": "succeeded", "output": {"layer_ref": "ul_1"}},
+    )
+
+    snapshot = ledger.freeze(turn_id="turn-1", evidence_ids=[item.evidence_id])
+    assert snapshot.items[0].source == "browser_gis"
+    assert snapshot.items[0].match_type == "observation"
+    assert '"layer_ref":"ul_1"' in snapshot.items[0].text

@@ -2,6 +2,7 @@
 空间分析服务
 """
 
+import json
 import logging
 from typing import List, Optional, Dict, Any
 import asyncio
@@ -20,6 +21,117 @@ class SpatialService:
 
     def __init__(self):
         pass
+
+    @staticmethod
+    def _operand_sql(prefix: str, operand: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+        geometry = operand.get("geometry")
+        region = operand.get("region")
+        if geometry is not None:
+            return (
+                f"ST_SetSRID(ST_GeomFromGeoJSON(:{prefix}_geometry), 4326)",
+                {f"{prefix}_geometry": json.dumps(geometry, ensure_ascii=False)},
+            )
+        if isinstance(region, dict):
+            if region.get("adcode"):
+                return (
+                    f"(SELECT geometry FROM spatial_regions WHERE adcode = :{prefix}_adcode LIMIT 1)",
+                    {f"{prefix}_adcode": str(region["adcode"])},
+                )
+            if region.get("region_name"):
+                return (
+                    f"(SELECT geometry FROM spatial_regions WHERE region_name = :{prefix}_region_name LIMIT 1)",
+                    {f"{prefix}_region_name": str(region["region_name"])},
+                )
+        raise ValueError("invalid spatial operand")
+
+    async def query_relation(
+        self,
+        *,
+        left: Dict[str, Any],
+        right: Dict[str, Any],
+        relation: str,
+    ) -> Dict[str, Any]:
+        relation_functions = {
+            "intersects": "ST_Intersects",
+            "within": "ST_Within",
+            "contains": "ST_Contains",
+            "overlaps": "ST_Overlaps",
+            "disjoint": "ST_Disjoint",
+            "touches": "ST_Touches",
+        }
+        function = relation_functions.get(relation)
+        if function is None:
+            raise ValueError(f"unsupported spatial relation: {relation}")
+        left_sql, left_params = self._operand_sql("left", left)
+        right_sql, right_params = self._operand_sql("right", right)
+        from sqlalchemy import text
+
+        sql = text(
+            f"""
+            WITH operands AS (
+                SELECT {left_sql} AS left_geom, {right_sql} AS right_geom
+            )
+            SELECT
+                left_geom IS NOT NULL AS left_found,
+                right_geom IS NOT NULL AS right_found,
+                CASE WHEN left_geom IS NULL OR right_geom IS NULL
+                    THEN NULL ELSE {function}(left_geom, right_geom) END AS result
+            FROM operands
+            """
+        )
+        async with db_manager.get_postgres_session() as session:
+            row = (await session.execute(sql, {**left_params, **right_params})).mappings().one()
+        if not row["left_found"] or not row["right_found"]:
+            raise ValueError("spatial operand was not found")
+        return {"operation": "relation", "relation": relation, "result": bool(row["result"])}
+
+    async def overlay(
+        self,
+        *,
+        left: Dict[str, Any],
+        right: Dict[str, Any],
+        operation: str,
+    ) -> Dict[str, Any]:
+        overlay_functions = {
+            "intersection": "ST_Intersection",
+            "union": "ST_Union",
+            "difference": "ST_Difference",
+        }
+        function = overlay_functions.get(operation)
+        if function is None:
+            raise ValueError(f"unsupported spatial overlay: {operation}")
+        left_sql, left_params = self._operand_sql("left", left)
+        right_sql, right_params = self._operand_sql("right", right)
+        from sqlalchemy import text
+
+        sql = text(
+            f"""
+            WITH operands AS (
+                SELECT {left_sql} AS left_geom, {right_sql} AS right_geom
+            ), result AS (
+                SELECT left_geom, right_geom,
+                    CASE WHEN left_geom IS NULL OR right_geom IS NULL
+                        THEN NULL ELSE {function}(left_geom, right_geom) END AS result_geom
+                FROM operands
+            )
+            SELECT
+                left_geom IS NOT NULL AS left_found,
+                right_geom IS NOT NULL AS right_found,
+                CASE WHEN result_geom IS NULL THEN NULL ELSE ST_AsGeoJSON(result_geom)::json END AS geometry,
+                CASE WHEN result_geom IS NULL OR ST_IsEmpty(result_geom) THEN 0
+                    ELSE ST_Area(result_geom::geography) END AS area_m2
+            FROM result
+            """
+        )
+        async with db_manager.get_postgres_session() as session:
+            row = (await session.execute(sql, {**left_params, **right_params})).mappings().one()
+        if not row["left_found"] or not row["right_found"]:
+            raise ValueError("spatial operand was not found")
+        return {
+            "operation": operation,
+            "geometry": row["geometry"],
+            "area_m2": float(row["area_m2"] or 0),
+        }
 
     async def geocode(self, request: GeocodeRequest) -> GeocodeResponse:
         """

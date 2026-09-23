@@ -44,6 +44,14 @@ export const createFrontendExecutor = ({
             return capabilities.setVectorStyle({ layer_ref: String(payload.layer_ref ?? ''), style: payload.style as never });
           case 'fit_vector_layer':
             return capabilities.fit({ layer_ref: String(payload.layer_ref ?? '') });
+          case 'inspect_layer_features':
+            return capabilities.inspectFeatures({
+              layer_ref: String(payload.layer_ref ?? ''),
+              offset: Number(payload.offset ?? 0),
+              limit: Number(payload.limit ?? 20),
+            });
+          case 'get_feature_geometry':
+            return capabilities.getFeatureGeometry({ feature_ref: String(payload.feature_ref ?? '') });
           case 'locate_map': {
             const longitude = Number(payload.longitude);
             const latitude = Number(payload.latitude);

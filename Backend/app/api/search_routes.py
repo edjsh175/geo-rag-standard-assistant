@@ -33,6 +33,7 @@ from app.services.search_application_service import (
     SearchApplicationService,
 )
 from app.services.search_service import SearchService
+from app.services.spatial_service import SpatialService
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def _build_search_application_service(
         answer_generator=AnswerGenerator(model_client=model_client),
         reviewer=GroundingReviewer(model_client=model_client),
         session_store=_agent_session_store,
+        spatial_service=SpatialService(),
     )
     return SearchApplicationService(
         search_service=search_service,

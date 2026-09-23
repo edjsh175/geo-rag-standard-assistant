@@ -46,6 +46,7 @@ export const createUserVectorLayer = (
   map.addLayer(layer);
   return {
     layer,
+    features: converted,
     featureCount: converted.length,
     geometryTypes: [...new Set(converted.map((item) => item.getGeometry()?.getType()).filter(Boolean))] as string[],
   };

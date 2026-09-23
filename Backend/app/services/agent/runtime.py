@@ -109,6 +109,7 @@ class AgentRuntime:
         session_store: InMemoryAgentSessionStore,
         reviewer=None,
         context_builder: AgentContextBuilder | None = None,
+        spatial_service=None,
     ) -> None:
         self.retrieval_port = retrieval_port
         self.controller = controller
@@ -116,6 +117,7 @@ class AgentRuntime:
         self.reviewer = reviewer
         self.session_store = session_store
         self.context_builder = context_builder or AgentContextBuilder()
+        self.spatial_service = spatial_service
         model_client = getattr(controller, "model_client", None)
         self.endpoint_supports_reasoning = bool(
             getattr(model_client, "supports_reasoning", False)
@@ -180,6 +182,26 @@ class AgentRuntime:
                     },
                     is_terminal=False,
                 )
+            )
+            receipt_evidence = session.evidence_ledger.add_observation(
+                turn_id=turn_id,
+                source="browser_gis",
+                observation_key=pending.tool_call_id,
+                title=f"Browser GIS {pending.tool_name} receipt",
+                payload={
+                    "status": receipt_status,
+                    "output": receipt.get("output"),
+                    "error": receipt.get("error"),
+                    "effect": receipt.get("effect") or {},
+                    "map_context": receipt.get("map_context") or {},
+                },
+            )
+            observations[-1] = ToolObservation(
+                tool_call_id=observations[-1].tool_call_id,
+                tool_name=observations[-1].tool_name,
+                status=observations[-1].status,
+                payload={**dict(observations[-1].payload), "evidence_id": receipt_evidence.evidence_id},
+                is_terminal=False,
             )
             session.pending_browser_execution = None
             self._append_event(
@@ -366,6 +388,7 @@ class AgentRuntime:
             evidence_ledger=session.evidence_ledger,
             resource_fuse=fuse,
             retrieval_constraints=retrieval_constraints,
+            spatial_service=self.spatial_service,
         )
         stage_policy = LLMStagePolicy(
             user_thinking=thinking,

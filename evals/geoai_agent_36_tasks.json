@@ -1,0 +1,44 @@
+[
+  {"id":"K01","category":"knowledge","prompt":"查询滑坡监测相关标准并给出引用。","required_capabilities":["retrieve_kb","compose_answer"],"success_criteria":["答案包含冻结证据引用"]},
+  {"id":"K02","category":"knowledge","prompt":"查询规划标准中的空间数据要求。","required_capabilities":["retrieve_kb","compose_answer"],"success_criteria":["仅依据知识库证据回答"]},
+  {"id":"K03","category":"knowledge","prompt":"继续追问上一轮标准要求。","required_capabilities":["reuse_evidence","compose_answer"],"success_criteria":["可复用历史证据"]},
+  {"id":"K04","category":"knowledge","prompt":"知识库无证据时说明限制。","required_capabilities":["retrieve_kb","limitation"],"success_criteria":["不使用模型先验补答"]},
+  {"id":"K05","category":"knowledge","prompt":"问题主体不明确时请求澄清。","required_capabilities":["clarify"],"success_criteria":["返回澄清而非猜测"]},
+  {"id":"K06","category":"knowledge","prompt":"同时查询两个相关标准事实。","required_capabilities":["retrieve_kb","compose_answer"],"success_criteria":["多证据可冻结并引用"]},
+
+  {"id":"I01","category":"import","prompt":"导入一个 GeoJSON 文件。","required_capabilities":["import_vector_dataset"],"success_criteria":["返回稳定 layer_ref"]},
+  {"id":"I02","category":"import","prompt":"导入一套 SHP 文件。","required_capabilities":["import_vector_dataset"],"success_criteria":["SHP/DBF 被解析并生成图层"]},
+  {"id":"I03","category":"import","prompt":"导入后再次引用同一图层。","required_capabilities":["layer_ref"],"success_criteria":["后续调用无需 JS 对象地址"]},
+  {"id":"I04","category":"import","prompt":"对不存在的 file_ref 执行导入。","required_capabilities":["import_vector_dataset","failure_receipt"],"success_criteria":["明确失败并回传状态"]},
+
+  {"id":"L01","category":"layer_control","prompt":"隐藏刚导入的图层。","required_capabilities":["set_layer_visibility"],"success_criteria":["visible=false 且 receipt 成功"]},
+  {"id":"L02","category":"layer_control","prompt":"重新显示该图层。","required_capabilities":["set_layer_visibility"],"success_criteria":["visible=true"]},
+  {"id":"L03","category":"layer_control","prompt":"把图层边线改成红色。","required_capabilities":["set_vector_style"],"success_criteria":["样式状态回传"]},
+  {"id":"L04","category":"layer_control","prompt":"修改填充透明度和点半径。","required_capabilities":["set_vector_style"],"success_criteria":["部分样式补丁正确合并"]},
+  {"id":"L05","category":"layer_control","prompt":"连续执行显隐、样式、定位。","required_capabilities":["layer_ref","browser_continuation"],"success_criteria":["多工具后 layer_ref 不丢失"]},
+  {"id":"L06","category":"layer_control","prompt":"读取当前完整图层树。","required_capabilities":["layer_tree"],"success_criteria":["包含底图、业务图层和用户图层"]},
+
+  {"id":"V01","category":"viewport","prompt":"定位到成都坐标并设置缩放级别。","required_capabilities":["locate_map"],"success_criteria":["动画完成后回传 viewport"]},
+  {"id":"V02","category":"viewport","prompt":"缩放到导入图层的完整范围。","required_capabilities":["fit_vector_layer"],"success_criteria":["fit 完成后回传 receipt"]},
+  {"id":"V03","category":"viewport","prompt":"定位后继续修改同一图层样式。","required_capabilities":["browser_continuation","layer_ref"],"success_criteria":["同一 turn/trace 继续规划"]},
+  {"id":"V04","category":"viewport","prompt":"传入非法坐标进行定位。","required_capabilities":["locate_map","failure_receipt"],"success_criteria":["失败状态可被 Controller 观察"]},
+
+  {"id":"F01","category":"feature_observation","prompt":"列出图层前 20 个要素属性。","required_capabilities":["inspect_layer_features"],"success_criteria":["最多返回 20 个 feature_ref 与属性"]},
+  {"id":"F02","category":"feature_observation","prompt":"翻页读取下一批要素。","required_capabilities":["inspect_layer_features"],"success_criteria":["offset/limit 生效"]},
+  {"id":"F03","category":"feature_observation","prompt":"读取指定 feature_ref 的精确几何。","required_capabilities":["get_feature_geometry"],"success_criteria":["返回 EPSG:4326 GeoJSON"]},
+  {"id":"F04","category":"feature_observation","prompt":"重复读取同一要素。","required_capabilities":["feature_ref"],"success_criteria":["feature_ref 保持稳定"]},
+  {"id":"F05","category":"feature_observation","prompt":"读取不存在的 feature_ref。","required_capabilities":["get_feature_geometry","failure_receipt"],"success_criteria":["明确 UNKNOWN_FEATURE"]},
+  {"id":"F06","category":"feature_observation","prompt":"从图层树定位用户图层再读取要素。","required_capabilities":["layer_tree","inspect_layer_features"],"success_criteria":["状态观测与按需读取协同"]},
+
+  {"id":"S01","category":"spatial_analysis","prompt":"判断两个 GeoJSON 几何是否相交。","required_capabilities":["query_spatial_relation"],"success_criteria":["PostGIS 返回 authoritative predicate"]},
+  {"id":"S02","category":"spatial_analysis","prompt":"判断要素几何是否位于指定行政区。","required_capabilities":["get_feature_geometry","query_spatial_relation"],"success_criteria":["feature geometry 与 spatial_regions 联合查询"]},
+  {"id":"S03","category":"spatial_analysis","prompt":"判断两个行政区空间实体是否接触。","required_capabilities":["query_spatial_relation"],"success_criteria":["按 adcode/region_name 解析实体"]},
+  {"id":"S04","category":"spatial_analysis","prompt":"计算两个几何的交集。","required_capabilities":["spatial_overlay"],"success_criteria":["返回 intersection GeoJSON"]},
+  {"id":"S05","category":"spatial_analysis","prompt":"计算两个几何的差集。","required_capabilities":["spatial_overlay"],"success_criteria":["返回 difference GeoJSON"]},
+  {"id":"S06","category":"spatial_analysis","prompt":"空间分析后基于结果生成带引用结论。","required_capabilities":["spatial_overlay","compose_answer"],"success_criteria":["PostGIS 结果进入 Frozen Evidence"]},
+
+  {"id":"R01","category":"recovery","prompt":"图层不存在时自主调整或停止。","required_capabilities":["failure_receipt","controller_recovery"],"success_criteria":["不伪造成功"]},
+  {"id":"R02","category":"recovery","prompt":"空间实体不存在时自主调整或停止。","required_capabilities":["query_spatial_relation","controller_recovery"],"success_criteria":["失败 observation 非崩溃"]},
+  {"id":"R03","category":"recovery","prompt":"浏览器工具失败后最终回答引用失败事实。","required_capabilities":["failure_receipt","compose_answer"],"success_criteria":["失败 receipt 可冻结引用"]},
+  {"id":"R04","category":"recovery","prompt":"知识检索后导入数据、改样式、定位并总结执行结果。","required_capabilities":["retrieve_kb","import_vector_dataset","set_vector_style","fit_vector_layer","compose_answer"],"success_criteria":["知识与 GIS 工具统一编排且事实可引用"]}
+]
