@@ -22,3 +22,11 @@ def test_database_target_defaults_to_postgres_port() -> None:
 
 def test_database_target_rejects_missing_url() -> None:
     assert preflight._database_target(None) is None
+
+
+def test_database_target_accepts_mysql_url() -> None:
+    assert preflight._database_target("mysql+aiomysql://user:pass@127.0.0.1:3307/db") == ("127.0.0.1", 3307)
+
+
+def test_database_target_accepts_redis_url() -> None:
+    assert preflight._database_target("redis://127.0.0.1:6380/0") == ("127.0.0.1", 6380)

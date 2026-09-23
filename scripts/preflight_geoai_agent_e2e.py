@@ -67,7 +67,7 @@ def _database_target(database_url: str | None) -> tuple[str, int] | None:
 def run_preflight(
     *,
     backend_url: str = "http://127.0.0.1:8000",
-    frontend_url: str = "http://127.0.0.1:5173",
+    frontend_url: str = "http://127.0.0.1:3000",
 ) -> dict[str, object]:
     checks: list[dict[str, object]] = []
 
@@ -87,7 +87,19 @@ def run_preflight(
 
     config = _config()
     database_url = config.get("DATABASE_URL") or config.get("GEOAI_DATABASE_URL")
-    add("database configuration", bool(database_url), "DATABASE_URL/GEOAI_DATABASE_URL must be configured")
+    mysql_url = config.get("MYSQL_URL") or config.get("GEOAI_MYSQL_URL")
+    redis_url = config.get("REDIS_URL") or config.get("GEOAI_REDIS_URL")
+    add("PostgreSQL configuration", bool(database_url), "DATABASE_URL/GEOAI_DATABASE_URL must be configured")
+    add("MySQL configuration", bool(mysql_url), "MYSQL_URL/GEOAI_MYSQL_URL must be configured")
+
+    admin_username = config.get("ADMIN_USERNAME")
+    admin_password_ready = bool(config.get("ADMIN_PASSWORD_HASH") or config.get("ADMIN_PASSWORD"))
+    secret_key = config.get("SECRET_KEY")
+    add(
+        "admin auth configuration",
+        bool(admin_username and admin_password_ready and secret_key),
+        "ADMIN_USERNAME, SECRET_KEY, and ADMIN_PASSWORD_HASH or ADMIN_PASSWORD are required at backend startup",
+    )
 
     provider = (config.get("LLM_PROVIDER") or "deepseek").lower()
     if provider == "deepseek":
@@ -107,6 +119,20 @@ def run_preflight(
     else:
         host, port = target
         add("PostgreSQL reachable", _tcp_open(host, port), f"TCP {host}:{port}")
+
+    mysql_target = _database_target(mysql_url)
+    if mysql_target is None:
+        add("MySQL reachable", False, "database target unavailable because MYSQL_URL is missing")
+    else:
+        host, port = mysql_target
+        add("MySQL reachable", _tcp_open(host, port), f"TCP {host}:{port}")
+
+    redis_target = _database_target(redis_url)
+    if redis_target is None:
+        add("Redis reachable", False, "REDIS_URL/GEOAI_REDIS_URL is not configured", required=False)
+    else:
+        host, port = redis_target
+        add("Redis reachable", _tcp_open(host, port), f"TCP {host}:{port}", required=False)
 
     backend_status = _http_status(f"{backend_url.rstrip('/')}/health")
     add("backend health", backend_status == 200, f"GET /health returned {backend_status!r}")
@@ -133,7 +159,7 @@ def run_preflight(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Preflight the real GeoAI 36-task E2E environment without exposing secrets.")
     parser.add_argument("--backend-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--frontend-url", default="http://127.0.0.1:5173")
+    parser.add_argument("--frontend-url", default="http://127.0.0.1:3000")
     args = parser.parse_args()
     result = run_preflight(backend_url=args.backend_url, frontend_url=args.frontend_url)
     print(json.dumps(result, ensure_ascii=False, indent=2))
