@@ -404,6 +404,18 @@ npm run dev
 docker compose up -d
 ```
 
+## 36-task 真实 E2E 评测
+
+仓库中的 `evals/geoai_agent_36_tasks.json` 固定定义 36 个 GeoAI Agent 任务，`scripts/evaluate_geoai_agent_results.py` 只根据真实执行结果计算完成率，不内置任何目标百分比。
+
+在把结果称为真实 E2E 完成率之前，先运行环境预检：
+
+```bash
+python scripts/preflight_geoai_agent_e2e.py
+```
+
+预检会检查 36-task 清单、数据库与 LLM 配置、PostgreSQL 可达性、Backend/Frontend 服务以及本机浏览器可用性，并且不会打印密钥值。单元测试、契约测试和模拟 Controller 的通过结果不能计作 36 个真实任务的完成记录。
+
 ## 设计文档
 
 - `docs/superpowers/specs/2026-09-20-georag-backend-rag-agent-adaptation-design.md`
