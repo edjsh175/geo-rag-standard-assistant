@@ -88,6 +88,37 @@ async def test_production_model_adapter_keeps_answer_stage_reasoning_off() -> No
     )
 
     assert llm.calls[0]["request_reasoning"] is False
+    assert llm.calls[0]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_production_model_adapter_requests_json_for_every_structured_stage() -> None:
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return "{}"
+
+    llm = FakeLLMConfig()
+    client = LLMConfigStageModelClient(llm)
+
+    for stage in ("controller", "answer_generation", "reviewer"):
+        await client.complete(
+            ModelRequest(
+                stage=stage,
+                messages=({"role": "user", "content": "问题"},),
+            )
+        )
+
+    assert [call["response_format"] for call in llm.calls] == [
+        {"type": "json_object"},
+        {"type": "json_object"},
+        {"type": "json_object"},
+    ]
 
 
 @pytest.mark.asyncio

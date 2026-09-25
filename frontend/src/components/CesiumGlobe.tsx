@@ -10,6 +10,9 @@ import {
   type ViewportSize,
 } from '../lib/mapViewport';
 import { useMapStore } from '../store/useMapStore';
+import { heightToZoom, zoomToHeight } from '../store/useMapStore';
+import { createCesiumGisRuntime } from '../gis/cesiumRuntime';
+import { registerBrowserGisRuntime } from '../gis/browserBridge';
 
 // ============================================================
 //  Cesium 3D 地球引擎 — 性能优化版
@@ -39,6 +42,7 @@ interface CesiumGlobeProps {
     wms: boolean;
   };
   onReady?: () => void;
+  onAgentLayerVisibilityChange?: (layerRef: string, visible: boolean) => void;
 }
 
 // ==================== 样式常量 ====================
@@ -135,6 +139,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
   viewportWidth = typeof window === 'undefined' ? 1920 : window.innerWidth,
   layers,
   onReady,
+  onAgentLayerVisibilityChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
@@ -157,6 +162,8 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
   const onReadyRef = useRef(onReady);
   const layoutModeRef = useRef<MapLayoutMode>(layoutMode);
   const viewportWidthRef = useRef(viewportWidth);
+  const layersRef = useRef(layers);
+  const themeRef = useRef(theme);
 
   // 鼠标节流标记
   const pickPending = useRef(false);
@@ -178,6 +185,14 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     layoutModeRef.current = layoutMode;
     viewportWidthRef.current = viewportWidth;
   }, [layoutMode, viewportWidth]);
+
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
+
+  useEffect(() => {
+    themeRef.current = theme;
+  }, [theme]);
 
   const notifyReady = useCallback(() => {
     if (!readyNotifiedRef.current) {
@@ -724,7 +739,70 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     baseLayersRef.current = { cartoLight: cartoLightLayer, cartoDark: cartoDarkLayer, tdtCva: tdtCvaLayer, tdtCvaDark: tdtCvaDarkLayer, satellite: satelliteLayer };
     // ===================================
 
+    const applyLogicalBaseLayer = (satelliteVisible: boolean) => {
+      const currentTheme = themeRef.current;
+      const current = baseLayersRef.current;
+      if (current.cartoLight) {
+        current.cartoLight.show = !satelliteVisible;
+        current.cartoLight.alpha = currentTheme === 'light' ? 1.0 : 0.01;
+      }
+      if (current.cartoDark) {
+        current.cartoDark.show = !satelliteVisible;
+        current.cartoDark.alpha = currentTheme === 'dark' ? 1.0 : 0.01;
+      }
+      if (current.tdtCva) current.tdtCva.show = !satelliteVisible && currentTheme === 'light';
+      if (current.tdtCvaDark) current.tdtCvaDark.show = !satelliteVisible && currentTheme === 'dark';
+      if (current.satellite) current.satellite.show = satelliteVisible;
+      viewer.scene.requestRender();
+    };
+
+    const gisRuntime = createCesiumGisRuntime({
+      readState: () => {
+        const pos = viewer.camera.positionCartographic;
+        const longitude = Cesium.Math.toDegrees(pos.longitude);
+        const latitude = Cesium.Math.toDegrees(pos.latitude);
+        return {
+          ready: !viewer.isDestroyed(),
+          center: [longitude, latitude],
+          zoom: heightToZoom(pos.height, latitude),
+          adminVisible: layersRef.current.admin,
+          satelliteVisible: layersRef.current.wms,
+        };
+      },
+      locateMap: async ({ longitude, latitude, zoom }) => {
+        const currentHeight = viewer.camera.positionCartographic.height;
+        const targetZoom = zoom ?? heightToZoom(currentHeight, latitude);
+        const height = zoom == null ? currentHeight : zoomToHeight(zoom, latitude);
+        await new Promise<void>((resolve, reject) => {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
+            orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
+            duration: 0.8,
+            complete: resolve,
+            cancel: () => reject(new Error('3D 地图定位未完成')),
+          });
+        });
+        setViewState({ center: [longitude, latitude], height, zoom: targetZoom });
+        return { center: [longitude, latitude], zoom: targetZoom };
+      },
+      setLayerVisibility: async (layerRef, visible) => {
+        if (layerRef === 'system:provinces') {
+          entitiesRef.current.forEach((entity) => { entity.show = visible; });
+          layersRef.current = { ...layersRef.current, admin: visible };
+        } else {
+          const satelliteVisible = layerRef === 'base:satellite' ? visible : !visible;
+          layersRef.current = { ...layersRef.current, wms: satelliteVisible };
+          applyLogicalBaseLayer(satelliteVisible);
+        }
+        onAgentLayerVisibilityChange?.(layerRef, visible);
+        viewer.scene.requestRender();
+        return { layer_ref: layerRef, visible };
+      },
+    });
+    const unregisterGisRuntime = registerBrowserGisRuntime('3d', gisRuntime);
+
     return () => {
+      unregisterGisRuntime();
       if (eventHandlerRef.current) {
         if ((eventHandlerRef.current as any)._cleanupPointerLeave) {
           (eventHandlerRef.current as any)._cleanupPointerLeave();
@@ -741,7 +819,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       hoveredEntityRef.current = null;
       clickedEntityRef.current = null;
     };
-  }, []);
+  }, [onAgentLayerVisibilityChange, setViewState]);
 
   useEffect(() => {
     if (!viewerRef.current) return;

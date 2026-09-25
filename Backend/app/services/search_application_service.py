@@ -203,8 +203,9 @@ class SearchApplicationService:
             final_mode="agent",
             publication_state=run_result.publication_state,
             map_action=published.map_action,
-            pending_tool_call_id=run_result.pending_tool_call_id,
-            continuation_token=run_result.continuation_token,
+            pending_tool_call_id=getattr(run_result, "pending_tool_call_id", None),
+            continuation_token=getattr(run_result, "continuation_token", None),
+
         )
 
     async def stream(

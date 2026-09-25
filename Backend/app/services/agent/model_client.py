@@ -18,6 +18,7 @@ class ModelRequest:
     call_id: str | None = None
     attempt: int = 1
     timeout_seconds: float | None = None
+    response_schema: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,13 +75,43 @@ class LLMConfigStageModelClient:
         started_at = monotonic()
         outcome = "error"
         try:
-            content = await self.llm_config.chat_completion(
-                messages=[dict(message) for message in request.messages],
-                model=request.model_name,
-                temperature=request.temperature,
-                request_reasoning=request.request_reasoning,
-                timeout_seconds=request.timeout_seconds,
-            )
+            if request.response_schema:
+                structured_output = {
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": f"{request.stage}_decision",
+                            "schema": dict(request.response_schema),
+                        },
+                    }
+                }
+            elif request.stage in {"controller", "answer_generation", "reviewer"}:
+                structured_output = {"response_format": {"type": "json_object"}}
+            else:
+                structured_output = {}
+
+            try:
+                content = await self.llm_config.chat_completion(
+                    messages=[dict(message) for message in request.messages],
+                    model=request.model_name,
+                    temperature=request.temperature,
+                    request_reasoning=request.request_reasoning,
+                    timeout_seconds=request.timeout_seconds,
+                    **structured_output,
+                )
+            except Exception:
+                # If provider rejects json_schema, fallback to json_object
+                if structured_output.get("response_format", {}).get("type") == "json_schema":
+                    content = await self.llm_config.chat_completion(
+                        messages=[dict(message) for message in request.messages],
+                        model=request.model_name,
+                        temperature=request.temperature,
+                        request_reasoning=request.request_reasoning,
+                        timeout_seconds=request.timeout_seconds,
+                        response_format={"type": "json_object"},
+                    )
+                else:
+                    raise
             outcome = "success"
             return ModelResponse(content=content)
         finally:

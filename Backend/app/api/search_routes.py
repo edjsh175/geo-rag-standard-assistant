@@ -22,7 +22,7 @@ from app.services.agent.controller import MainController
 from app.services.agent.model_client import LLMConfigStageModelClient
 from app.services.agent.reviewer import GroundingReviewer
 from app.services.agent.runtime import AgentRuntime
-from app.services.agent.session import InMemoryAgentSessionStore
+from app.services.agent.store import PostgresAgentStore
 from app.services.agent.tools import build_default_tool_registry
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
 from app.services.document_contract_service import DocumentContractService
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 public_router = APIRouter()
 router = APIRouter()
 
-_agent_session_store = InMemoryAgentSessionStore()
+_agent_session_store = PostgresAgentStore()
 
 
 class HealthCheckResponse(BaseModel):

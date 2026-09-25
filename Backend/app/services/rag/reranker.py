@@ -1,12 +1,18 @@
-"""Deterministic local reranking for RAG candidates."""
+"""Deterministic local and remote reranking for RAG candidates."""
 
 from __future__ import annotations
 
+import logging
 import re
+from abc import ABC, abstractmethod
 from typing import Any, Optional
+import urllib.request
+import json
 
 from app.models.search_models import DocumentResult, MetadataFilter, SpatialFilter
 from app.services.document_asset_service import DocumentAssetService
+
+logger = logging.getLogger(__name__)
 
 STANDARD_CODE_QUERY_PATTERN = re.compile(
     r"""
@@ -39,7 +45,22 @@ QUERY_STOP_WORDS = {
 }
 
 
-class RagReranker:
+class BaseReranker(ABC):
+    """Abstract base contract for RAG rerankers."""
+
+    @abstractmethod
+    def rerank(
+        self,
+        query: str,
+        results: list[DocumentResult],
+        top_k: int,
+        metadata_filter: Optional[MetadataFilter] = None,
+        spatial_filter: Optional[SpatialFilter] = None,
+    ) -> list[DocumentResult]:
+        """Rerank candidates and return top_k results."""
+
+
+class RagReranker(BaseReranker):
     """Rerank candidates with stable local scoring instead of provider calls."""
 
     def rerank(
@@ -50,6 +71,9 @@ class RagReranker:
         metadata_filter: Optional[MetadataFilter] = None,
         spatial_filter: Optional[SpatialFilter] = None,
     ) -> list[DocumentResult]:
+        if not results:
+            return []
+
         query_standard_code = self._extract_standard_code_query(query)
         query_terms = self._extract_query_terms(query)
         scored_results: list[tuple[float, int, DocumentResult]] = []
@@ -158,3 +182,105 @@ class RagReranker:
     def _metadata_value(self, metadata: dict[str, Any], key: str) -> Optional[str]:
         value = metadata.get(key)
         return str(value).strip() if value else None
+
+
+class RemoteHttpReranker(BaseReranker):
+    """Remote HTTP Reranker service (e.g., TEI / BGE reranker microservice)."""
+
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 10.0,
+        model_name: str = "",
+        fallback_reranker: BaseReranker | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.model_name = model_name
+        self.fallback_reranker = fallback_reranker or RagReranker()
+
+    def rerank(
+        self,
+        query: str,
+        results: list[DocumentResult],
+        top_k: int,
+        metadata_filter: Optional[MetadataFilter] = None,
+        spatial_filter: Optional[SpatialFilter] = None,
+    ) -> list[DocumentResult]:
+        if not results:
+            return []
+
+        endpoint = f"{self.base_url}/rerank"
+        payload = {
+            "query": query,
+            "documents": [r.content or r.title for r in results],
+            "top_k": top_k,
+        }
+        if self.model_name:
+            payload["model"] = self.model_name
+
+        try:
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            # Parse TEI format: [{"index": int, "score": float}, ...]
+            if isinstance(data, list):
+                ranked_items: list[tuple[int, float]] = []
+                for item in data:
+                    ranked_items.append((int(item["index"]), float(item["score"])))
+            elif isinstance(data, dict) and "results" in data:
+                ranked_items = [
+                    (int(item["index"]), float(item["score"])) for item in data["results"]
+                ]
+            elif isinstance(data, dict) and "scores" in data:
+                ranked_items = list(enumerate(data["scores"]))
+                ranked_items.sort(key=lambda x: x[1], reverse=True)
+            else:
+                raise ValueError(f"Unrecognized reranker response format: {data}")
+
+            reranked_docs: list[DocumentResult] = []
+            for idx, score in ranked_items[:top_k]:
+                if 0 <= idx < len(results):
+                    doc = results[idx]
+                    doc.metadata["remote_rerank_score"] = score
+                    reranked_docs.append(doc)
+
+            return reranked_docs
+
+        except Exception as exc:
+            logger.warning(
+                "Remote HTTP reranker failed (%s); falling back to local reranker: %s",
+                endpoint,
+                exc,
+            )
+            return self.fallback_reranker.rerank(
+                query=query,
+                results=results,
+                top_k=top_k,
+                metadata_filter=metadata_filter,
+                spatial_filter=spatial_filter,
+            )
+
+
+def create_reranker(
+    reranker_type: str = "local",
+    *,
+    base_url: str | None = None,
+    timeout: float = 10.0,
+    model_name: str = "",
+) -> BaseReranker:
+    """Factory creating appropriate Reranker with automatic fallback."""
+    if reranker_type == "remote" and base_url:
+        return RemoteHttpReranker(
+            base_url=base_url,
+            timeout=timeout,
+            model_name=model_name,
+            fallback_reranker=RagReranker(),
+        )
+    return RagReranker()

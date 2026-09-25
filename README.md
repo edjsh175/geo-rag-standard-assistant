@@ -650,7 +650,9 @@ geo-rag-standard-assistant/
 
 ## 快速开始
 
-### 1. 准备环境
+### Non-Docker local development
+
+#### 1. 准备环境
 
 推荐：
 
@@ -661,7 +663,7 @@ geo-rag-standard-assistant/
 - Redis（可选缓存 / 演示额度）
 - 一个可用的 OpenAI-compatible LLM Endpoint
 
-### 2. Backend
+#### 2. Backend
 
 ```bash
 cd Backend
@@ -699,6 +701,15 @@ REDIS_URL=redis://...
 
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=...
+DEEPSEEK_MODEL=deepseek-flash
+# Optional; unset for direct connection, set only to a reachable proxy.
+DEEPSEEK_PROXY=
+EMBEDDING_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_EMBEDDING_MODEL=qwen3-embedding:4b-q4_K_M
+OLLAMA_EMBEDDING_DIMENSIONS=2048
+# Optional; unset for direct connection, set only to a reachable proxy.
+OPENAI_PROXY=
 
 SECRET_KEY=...
 ADMIN_USERNAME=...
@@ -707,7 +718,7 @@ ADMIN_PASSWORD=...
 
 不要将真实密钥提交到 Git。
 
-### 3. Frontend
+#### 3. Frontend
 
 ```bash
 cd frontend
@@ -723,7 +734,7 @@ http://localhost:3000
 
 本地开发时 `/api` 通过 Vite Proxy 指向 Backend；特殊部署场景可以通过 `VITE_API_URL` 覆盖。
 
-### 4. Docker Compose
+### Optional Docker Compose
 
 也可以使用：
 

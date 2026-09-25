@@ -77,9 +77,6 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
     assert registry.names() == {
         "retrieve_kb",
         "reuse_evidence",
-        "compose_answer",
-        "clarify",
-        "limitation",
         "import_vector_dataset",
         "set_layer_visibility",
         "set_vector_style",
@@ -90,6 +87,10 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
         "query_spatial_relation",
         "spatial_overlay",
     }
+    assert "compose_answer" not in registry.names()
+    assert "clarify" not in registry.names()
+    assert "limitation" not in registry.names()
+    assert "direct_answer" not in registry.names()
     serialized = " ".join(
         f"{spec.name} {spec.description}" for spec in registry.specs()
     ).lower()

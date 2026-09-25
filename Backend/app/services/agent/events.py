@@ -14,6 +14,14 @@ class AgentEvent:
     turn_id: str
     trace_id: str = ""
     payload: Mapping[str, Any] = field(default_factory=dict)
+    event_id: str = ""
+    sequence: int = 0
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+
+    def __post_init__(self) -> None:
+        if not self.event_id:
+            from uuid import uuid4
+            object.__setattr__(self, "event_id", uuid4().hex)
+

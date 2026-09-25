@@ -48,6 +48,7 @@ import remarkGfm from 'remark-gfm';
 import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
 import { registerVectorDataset } from './gis/fileReferenceStore';
+import { setActiveBrowserGisRuntime } from './gis/browserBridge';
 
 type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
 
@@ -602,6 +603,24 @@ export default function App() {
     admin: true,
     wms: false
   });
+
+  useEffect(() => {
+    setActiveBrowserGisRuntime(viewMode === '3D' ? '3d' : '2d');
+  }, [viewMode]);
+
+  const handleAgentLayerVisibilityChange = useCallback((layerRef: string, visible: boolean) => {
+    if (layerRef === 'system:provinces') {
+      setLayers((prev) => ({ ...prev, admin: visible }));
+      return;
+    }
+    if (layerRef === 'base:satellite') {
+      setLayers((prev) => ({ ...prev, wms: visible }));
+      return;
+    }
+    if (layerRef === 'base:vector') {
+      setLayers((prev) => ({ ...prev, wms: !visible }));
+    }
+  }, []);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedStandard, setSelectedStandard] = useState<any>(null);
 
@@ -1006,6 +1025,7 @@ export default function App() {
           viewportWidth={viewportWidth}
           layers={layers}
           onReady={handleMapReady3D}
+          onAgentLayerVisibilityChange={handleAgentLayerVisibilityChange}
         />
         <OpenLayersMap
           theme={theme}
@@ -1014,6 +1034,7 @@ export default function App() {
           viewportWidth={viewportWidth}
           layers={layers}
           onReady={handleMapReady2D}
+          onAgentLayerVisibilityChange={handleAgentLayerVisibilityChange}
         />
       </motion.section>
 

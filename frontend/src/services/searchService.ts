@@ -15,7 +15,9 @@ export const searchService = {
    */
   async search(request: SearchRequest): Promise<SearchResponse> {
     try {
-      return await apiPost('/api/search/query', request);
+      return await apiPost('/api/search/query', request, {
+        config: { timeout: 120_000 },
+      });
     } catch (error) {
       console.error('搜索失败:', error);
       throw error;

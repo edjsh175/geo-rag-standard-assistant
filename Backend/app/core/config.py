@@ -34,13 +34,19 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    OPENAI_PROXY: Optional[str] = None
     EMBEDDING_MODEL: str = "embedding-3"
+    EMBEDDING_PROVIDER: Optional[str] = None
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_EMBEDDING_MODEL: str = "qwen3-embedding:4b-q4_K_M"
+    OLLAMA_EMBEDDING_DIMENSIONS: int = 2048
 
     ZHIPU_API_KEY: Optional[str] = None
     ZHIPU_MODEL: str = "glm-4"
 
     DEEPSEEK_API_KEY: Optional[str] = None
-    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_MODEL: str = "deepseek-flash"
+    DEEPSEEK_PROXY: Optional[str] = None
     LLM_REASONING_MODEL: Optional[str] = None
 
     SIMILARITY_THRESHOLD: float = 0.7
