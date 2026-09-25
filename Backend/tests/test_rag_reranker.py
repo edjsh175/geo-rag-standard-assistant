@@ -5,8 +5,9 @@ from datetime import datetime
 import pytest
 
 from app.models.search_models import DocumentResult
+from app.services.rag.contracts import RetrievalQuery
+from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 from app.services.rag.reranker import RagReranker
-from app.services.search_service import SearchService
 
 
 def make_result(
@@ -62,8 +63,8 @@ def test_reranker_keeps_stable_order_when_scores_tie() -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_service_skips_reranker_when_use_rerank_false() -> None:
-    service = SearchService.__new__(SearchService)
+async def test_postgres_adapter_skips_reranker_when_use_rerank_false() -> None:
+    adapter = PostgresRetrievalAdapter()
 
     async def exact_search(query: str, top_k: int) -> list[DocumentResult]:
         return []
@@ -83,19 +84,21 @@ async def test_search_service_skips_reranker_when_use_rerank_false() -> None:
     async def fail_rerank(*args, **kwargs) -> list[DocumentResult]:
         raise AssertionError("reranker should not run when use_rerank=False")
 
-    service._exact_standard_code_search = exact_search
-    service._keyword_search = keyword_search
-    service._vector_search = vector_search
-    service._get_query_embedding = get_query_embedding
-    service._rerank_results = fail_rerank
-    service._log_search = lambda *args, **kwargs: None
+    adapter._exact_standard_code_search = exact_search  # type: ignore[method-assign]
+    adapter._keyword_search = keyword_search  # type: ignore[method-assign]
+    adapter._vector_search = vector_search  # type: ignore[method-assign]
+    adapter._get_query_embedding = get_query_embedding  # type: ignore[method-assign]
+    adapter._rerank_results = fail_rerank  # type: ignore[method-assign]
 
-    results = await service.search(
-        "滑坡防治",
-        search_mode="keyword",
-        use_rerank=False,
-        top_k=10,
+    retrieved = await adapter.retrieve(
+        RetrievalQuery(
+            query_text="滑坡防治",
+            search_mode="keyword",
+            use_rerank=False,
+            top_k=10,
+        )
     )
+    results = [candidate.source_result for candidate in retrieved.candidates]
 
     assert [result.id for result in results] == ["first", "second"]
     assert all("rerank_score" not in result.metadata for result in results)

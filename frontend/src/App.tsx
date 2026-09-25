@@ -47,6 +47,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
+import { registerVectorDataset } from './gis/fileReferenceStore';
 
 type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
 
@@ -621,6 +622,7 @@ export default function App() {
 
   // 聊天加载状态
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const conversationIdRef = useRef<string | undefined>(undefined);
   // AbortController引用（用于中断请求）
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -714,41 +716,6 @@ export default function App() {
     }
   };
 
-  /**
-   * 从大模型回复中提取行政区划代码（ADCODE）并净化消息
-   * @param content 原始消息内容
-   * @returns 包含净化后内容和adcode的对象
-   */
-  const extractAdcodeAndPurify = (content: string): { purifiedContent: string; adcode?: string; name?: string } => {
-    // 正则表达式匹配Markdown JSON代码块，增强容错性
-    const regex = /```json\s*([\s\S]*?)\s*```/;
-    const match = content.match(regex);
-
-    if (!match) {
-      return { purifiedContent: content.trim() };
-    }
-
-    try {
-      const jsonStr = match[1];
-      const parsed = JSON.parse(jsonStr);
-      const adcode = parsed.adcode || parsed.ADCODE;
-      // 兼容多种可能的名称键名
-      const name = parsed.name || parsed.NAME || parsed.province || parsed.city || parsed.region_name;
-
-      if (adcode && /^\d{6}$/.test(String(adcode))) {
-        // 移除JSON代码块，净化内容
-        const purifiedContent = content.replace(regex, '').trim();
-        return { purifiedContent, adcode: String(adcode), name: name ? String(name) : undefined };
-      }
-    } catch (error) {
-      console.warn('解析ADCODE JSON失败:', error);
-    }
-
-    // 如果解析失败，只移除代码块
-    const purifiedContent = content.replace(regex, '').trim();
-    return { purifiedContent };
-  };
-
   // 聊天函数（集成AbortController）
   const handleChatSubmit = async (content: string) => {
     if (!content.trim()) return;
@@ -809,11 +776,12 @@ export default function App() {
       const queryForBackend = buildRegionAwareQuery(content, regionContext);
       const response = await chatService.sendMessage(
         queryForBackend,
-        undefined,
+        conversationIdRef.current,
         history,
         abortController.signal,
         followUpContext
       );
+      conversationIdRef.current = response.conversation_id;
       if (response.quota) {
         updateQuota(response.quota);
       }
@@ -834,28 +802,21 @@ export default function App() {
       // 转换references为文档
       const documents = (response.references || []).map(toFrontendDocumentFromResult);
 
-      // 提取ADCODE并净化消息内容
-      const { purifiedContent, adcode, name } = extractAdcodeAndPurify(response.message);
+      const structuredMap = response.map_action;
+      const purifiedContent = response.message.trim();
+      const adcode = structuredMap?.adcode;
+      const name = structuredMap?.name;
 
       // 如果提取到有效的ADCODE，写入全局 Store（双引擎自动响应）
       if (adcode) {
-        // 如果没有提取到名称，或者名称本身看起来像个代码，则尝试进行简单的本地映射补全（仅省份级）
+        // 如果没有名称，或者名称本身看起来像代码，则使用本地省级映射补全。
         let finalName = name;
         if (!finalName || /^\d+$/.test(String(finalName))) {
-          const provinceMap: Record<string, string> = {
-            '110000': '北京市', '120000': '天津市', '130000': '河北省', '140000': '山西省', '150000': '内蒙古自治区',
-            '210000': '辽宁省', '220000': '吉林省', '230000': '黑龙江省', '310000': '上海市', '320000': '江苏省',
-            '330000': '浙江省', '340000': '安徽省', '350000': '福建省', '360000': '江西省', '370000': '山东省',
-            '410000': '河南省', '420000': '湖北省', '430000': '湖南省', '440000': '广东省', '450000': '广西壮族自治区',
-            '460000': '海南省', '500000': '重庆市', '510000': '四川省', '520000': '贵州省', '530000': '云南省',
-            '540000': '西藏自治区', '610000': '陕西省', '620000': '甘肃省', '630000': '青海省', '640000': '宁夏回族自治区',
-            '650000': '新疆维吾尔自治区', '710000': '台湾省', '810000': '香港特别行政区', '820000': '澳门特别行政区'
-          };
-          finalName = PROVINCE_MAP[adcode] || adcode;
+          finalName = PROVINCE_MAP[String(adcode)] || String(adcode);
         }
 
         console.log(`提取到地理位置信息: ${finalName}(${adcode})，触发地图飞行`);
-        setActiveRegion({ adcode, name: String(finalName) });
+        setActiveRegion({ adcode: String(adcode), name: String(finalName) });
       }
 
       const assistantMessage: ChatMessageType = {
@@ -911,6 +872,11 @@ export default function App() {
       setIsChatLoading(false);
     }
   };
+
+  const handleVectorFilesSelected = useCallback(async (files: File[]) => {
+    const registered = await registerVectorDataset(files);
+    return registered.name;
+  }, []);
 
   // 获取文档详情
   const fetchDocumentDetails = async (documentId: string) => {
@@ -1277,6 +1243,7 @@ export default function App() {
             <Chat
               messages={messages}
               onSendMessage={handleChatSubmit}
+              onVectorFilesSelected={handleVectorFilesSelected}
               isLoading={isChatLoading}
               onStopGeneration={handleStopGeneration}
               inputValue={chatInput}

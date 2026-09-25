@@ -16,24 +16,77 @@ from pydantic import BaseModel
 from app.core.auth import UserIdentity
 from app.core.security import require_authenticated_user
 from app.models.search_models import FeedbackRequest, FeedbackResponse, FollowUpContext, SearchRequest, SearchResponse
+from app.core.llm_config import llm_config
+from app.services.agent.answer_generator import AnswerGenerator
+from app.services.agent.controller import MainController
+from app.services.agent.model_client import LLMConfigStageModelClient
+from app.services.agent.reviewer import GroundingReviewer
+from app.services.agent.runtime import AgentRuntime
+from app.services.agent.session import InMemoryAgentSessionStore
+from app.services.agent.tools import build_default_tool_registry
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
 from app.services.document_contract_service import DocumentContractService
 from app.services.document_asset_service import DocumentAssetService
 from app.services.search_feedback_service import SearchFeedbackService
+from app.services.search_application_service import (
+    RELAXED_VECTOR_THRESHOLD,
+    SearchApplicationService,
+)
 from app.services.search_service import SearchService
+from app.services.spatial_service import SpatialService
 
 logger = logging.getLogger(__name__)
 
 public_router = APIRouter()
 router = APIRouter()
 
-RELAXED_VECTOR_THRESHOLD = 0.35
-NON_SEARCH_INTENTS = {"greeting", "other", "dialog_management"}
+_agent_session_store = InMemoryAgentSessionStore()
 
 
 class HealthCheckResponse(BaseModel):
     status: str
     service: str
+
+
+def _build_search_application_service(
+    *,
+    search_service: SearchService,
+    asset_service: DocumentAssetService,
+    contract_service: DocumentContractService,
+) -> SearchApplicationService:
+    retrieval_port = search_service.get_retrieval_port()
+    model_client = LLMConfigStageModelClient(llm_config)
+    controller = MainController(
+        model_client=model_client,
+        tool_registry=build_default_tool_registry(),
+    )
+    runtime = AgentRuntime(
+        retrieval_port=retrieval_port,
+        controller=controller,
+        answer_generator=AnswerGenerator(model_client=model_client),
+        reviewer=GroundingReviewer(model_client=model_client),
+        session_store=_agent_session_store,
+        spatial_service=SpatialService(),
+    )
+    return SearchApplicationService(
+        search_service=search_service,
+        asset_service=asset_service,
+        contract_service=contract_service,
+        agent_runtime=runtime,
+        retrieval_port=retrieval_port,
+    )
+
+
+def get_search_application_service(
+    search_service: SearchService = Depends(SearchService),
+    asset_service: DocumentAssetService = Depends(DocumentAssetService),
+    contract_service: DocumentContractService = Depends(DocumentContractService),
+) -> SearchApplicationService:
+    return _build_search_application_service(
+        search_service=search_service,
+        asset_service=asset_service,
+        contract_service=contract_service,
+    )
 
 
 @public_router.get("/health", response_model=HealthCheckResponse)
@@ -45,13 +98,10 @@ async def health_check() -> HealthCheckResponse:
 async def search_documents(
     request: SearchRequest,
     current_user: UserIdentity = Depends(require_authenticated_user),
-    search_service: SearchService = Depends(SearchService),
-    asset_service: DocumentAssetService = Depends(DocumentAssetService),
-    contract_service: DocumentContractService = Depends(DocumentContractService),
+    application_service: SearchApplicationService = Depends(get_search_application_service),
     quota_service: DemoQuotaService = Depends(get_demo_quota_service),
 ):
     try:
-        start_time = datetime.now()
         quota_decision = await _consume_visitor_generation_quota(
             request,
             current_user,
@@ -60,130 +110,13 @@ async def search_documents(
         generation_allowed = request.use_generation and (
             quota_decision is None or quota_decision.allowed
         )
-
-        follow_up_context = request.follow_up_context
-        if (
-            follow_up_context is None
-            and request.use_generation
-            and search_service._is_document_summary_query(request.query)
-        ):
-            explicit_document_id = search_service.extract_explicit_document_id(request.query)
-            if explicit_document_id:
-                follow_up_context = FollowUpContext(
-                    target_document_id=explicit_document_id,
-                    candidate_documents=[],
-                    resolution_source="explicit_text",
-                )
-
-        follow_up_detail = None
-        if follow_up_context and follow_up_context.target_document_id:
-            follow_up_detail, follow_up_result = await search_service.load_follow_up_document_result(
-                follow_up_context,
-                asset_service,
-            )
-            if follow_up_detail and follow_up_result:
-                base_response = SearchResponse(
-                    query=request.query,
-                    results=[follow_up_result],
-                    total_count=1,
-                    search_time=(datetime.now() - start_time).total_seconds(),
-                    search_mode=request.search_mode,
-                )
-
-                base_response.quota = _quota_status(quota_decision)
-
-                if generation_allowed:
-                    try:
-                        generated_answer, generation_time = await search_service.generate_document_follow_up_answer(
-                            query=request.query,
-                            document_detail=follow_up_detail,
-                            history=request.history,
-                        )
-                        base_response.generated_answer = generated_answer
-                        base_response.generation_time = generation_time
-                    except Exception as exc:
-                        logger.error(
-                            "Document follow-up answer generation failed, falling back to search: %s",
-                            exc,
-                        )
-                    else:
-                        return base_response
-                return base_response
-
-        if not generation_allowed:
-            results = await _retrieve_results(request, search_service, asset_service, contract_service)
-            return SearchResponse(
-                query=request.query,
-                results=results,
-                total_count=len(results),
-                search_time=(datetime.now() - start_time).total_seconds(),
-                search_mode=request.search_mode,
-                quota=_quota_status(quota_decision),
-            )
-
-        intent = await search_service.detect_intent(request.query)
-        logger.info("Search intent detected for query=%r: %s", request.query, intent)
-
-        if intent in NON_SEARCH_INTENTS:
-            generated_answer = None
-            generation_time = None
-            if intent == "dialog_management":
-                generated_answer = await search_service.handle_dialog_management(
-                    query=request.query,
-                    history=request.history,
-                )
-            elif generation_allowed:
-                try:
-                    generated_answer, _ = await search_service.generate_chitchat_response(
-                        query=request.query,
-                        intent=intent,
-                        history=request.history,
-                    )
-                    generation_time = (datetime.now() - start_time).total_seconds()
-                except Exception:
-                    generated_answer = "您好，我主要负责标准检索、引用解读和相关文档查询。"
-            else:
-                generated_answer = None
-
-            return SearchResponse(
-                query=request.query,
-                results=[],
-                total_count=0,
-                search_time=(datetime.now() - start_time).total_seconds(),
-                search_mode=request.search_mode,
-                generated_answer=generated_answer if generation_allowed else None,
-                generation_time=generation_time if generation_allowed else None,
-                quota=_quota_status(quota_decision),
-            )
-
-        results = await _retrieve_results(request, search_service, asset_service, contract_service)
-
-        base_response = SearchResponse(
-            query=request.query,
-            results=results,
-            total_count=len(results),
-            search_time=(datetime.now() - start_time).total_seconds(),
-            search_mode=request.search_mode,
+        response = await application_service.execute(
+            request,
+            generation_allowed=generation_allowed,
+            principal_id=_principal_id(current_user),
         )
-
-        base_response.quota = _quota_status(quota_decision)
-
-        if not generation_allowed:
-            return base_response
-
-        try:
-            generated_answer, _ = await search_service.generate_answer(
-                query=request.query,
-                results=results,
-                top_context_docs=min(5, len(results)),
-                history=request.history,
-            )
-            base_response.generated_answer = generated_answer
-            base_response.generation_time = (datetime.now() - start_time).total_seconds()
-        except Exception as exc:
-            logger.error("Answer generation failed, returning search-only response: %s", exc)
-
-        return base_response
+        response.quota = _quota_status(quota_decision)
+        return response
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
 
@@ -196,13 +129,10 @@ async def search_documents(
 async def stream_search_documents(
     request: SearchRequest,
     current_user: UserIdentity = Depends(require_authenticated_user),
-    search_service: SearchService = Depends(SearchService),
-    asset_service: DocumentAssetService = Depends(DocumentAssetService),
-    contract_service: DocumentContractService = Depends(DocumentContractService),
+    application_service: SearchApplicationService = Depends(get_search_application_service),
     quota_service: DemoQuotaService = Depends(get_demo_quota_service),
 ):
     try:
-        start_time = datetime.now()
         quota_decision = await _consume_visitor_generation_quota(
             request,
             current_user,
@@ -211,30 +141,32 @@ async def stream_search_documents(
         generation_allowed = request.use_generation and (
             quota_decision is None or quota_decision.allowed
         )
-        results = await _retrieve_results(request, search_service, asset_service, contract_service)
-        base_response = SearchResponse(
-            query=request.query,
-            results=results,
-            total_count=len(results),
-            search_time=(datetime.now() - start_time).total_seconds(),
-            search_mode=request.search_mode,
-            quota=_quota_status(quota_decision),
-        )
 
         async def event_generator():
-            context_payload = json.dumps(base_response.model_dump(), ensure_ascii=False)
-            yield f"event: context\ndata: {context_payload}\n\n"
-
-            if not generation_allowed:
-                return
-
-            async for event_chunk in search_service.generate_stream_answer(
-                query=request.query,
-                results=results,
-                top_context_docs=min(5, len(results)),
-                history=request.history,
+            async for frame in application_service.stream(
+                request,
+                generation_allowed=generation_allowed,
+                principal_id=_principal_id(current_user),
             ):
-                yield event_chunk
+                if frame.event is not None:
+                    event = frame.event
+                    payload = {
+                        "session_id": event.session_id,
+                        "turn_id": event.turn_id,
+                        "trace_id": event.trace_id,
+                        "payload": dict(event.payload),
+                        "created_at": event.created_at.isoformat(),
+                    }
+                    yield (
+                        f"event: {event.event_type}\n"
+                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    )
+                    continue
+
+                if frame.response is not None:
+                    frame.response.quota = _quota_status(quota_decision)
+                    payload = json.dumps(frame.response.model_dump(), ensure_ascii=False, default=str)
+                    yield f"event: result\ndata: {payload}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as exc:
@@ -313,44 +245,6 @@ async def submit_search_feedback(
         raise HTTPException(status_code=500, detail=f"Feedback submission failed: {exc}") from exc
 
 
-async def _retrieve_results(
-    request: SearchRequest,
-    search_service: SearchService,
-    asset_service: DocumentAssetService,
-    contract_service: DocumentContractService | None = None,
-):
-    results = await search_service.search(
-        query=request.query,
-        top_k=request.top_k,
-        threshold=request.threshold,
-        spatial_filter=request.spatial_filter,
-        metadata_filter=request.metadata_filter,
-        search_mode=request.search_mode,
-        use_rerank=request.use_rerank,
-    )
-
-    if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
-        logger.info(
-            "Retrying search with relaxed threshold: %.2f -> %.2f",
-            request.threshold,
-            RELAXED_VECTOR_THRESHOLD,
-        )
-        results = await search_service.search(
-            query=request.query,
-            top_k=request.top_k,
-            threshold=RELAXED_VECTOR_THRESHOLD,
-            spatial_filter=request.spatial_filter,
-            metadata_filter=request.metadata_filter,
-            search_mode=request.search_mode,
-            use_rerank=request.use_rerank,
-        )
-
-    enriched_results = await asset_service.enrich_search_results(results)
-    if contract_service is None or not hasattr(contract_service, "filter_deleted_results"):
-        contract_service = DocumentContractService()
-    return await contract_service.filter_deleted_results(enriched_results)
-
-
 def _quota_status(quota_decision: DemoQuotaDecision | None):
     return quota_decision.quota if quota_decision else None
 
@@ -373,3 +267,11 @@ async def _consume_visitor_generation_quota(
         )
 
     return await quota_service.consume_generation(visitor_id, ip_hash)
+
+
+def _principal_id(current_user: UserIdentity) -> str:
+    if current_user.role == "visitor":
+        if not current_user.visitor_id:
+            raise RuntimeError("visitor identity is missing visitor_id")
+        return f"visitor:{current_user.visitor_id}"
+    return f"admin:{current_user.username}"

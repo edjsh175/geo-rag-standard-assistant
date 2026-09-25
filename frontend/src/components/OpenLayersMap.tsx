@@ -15,6 +15,8 @@ import type MapBrowserEvent from 'ol/MapBrowserEvent';
 import { loadProvinceCollection } from '../lib/bootstrap';
 import { getMapFitPadding, type MapLayoutMode } from '../lib/mapViewport';
 import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapStore';
+import { createBrowserGisRuntime } from '../gis/createBrowserGisRuntime';
+import { registerBrowserGisRuntime } from '../gis/browserBridge';
 
 // ============================================================
 //  OpenLayers 2D 地图引擎
@@ -312,6 +314,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       // 这样无论你怎么拖拽、缩放，由于底层只是一张图片在运动，60帧丝滑，也绝对不会出现白框
       imageRatio: 2,
     });
+    provincesLayer.setProperties({ gisLayerRef: 'system:provinces', gisLayerName: '行政区划', gisLayerKind: 'business' });
 
     provincesSourceRef.current = provincesSource;
     provincesLayerRef.current = provincesLayer;
@@ -328,6 +331,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       preload: 4,
       visible: !layers.wms && theme === 'light',
     });
+    cartoLightLayer.setProperties({ gisLayerRef: 'base:vector-light', gisLayerName: '矢量底图（浅色）', gisLayerKind: 'base' });
 
     // Dark mode reuses Tianditu through the same proxy for mainland reliability.
     const cartoDarkLayer = new TileLayer({
@@ -338,6 +342,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       preload: 4,
       visible: !layers.wms && theme === 'dark',
     });
+    cartoDarkLayer.setProperties({ gisLayerRef: 'base:vector-dark', gisLayerName: '矢量底图（深色）', gisLayerKind: 'base' });
 
     // 天地图中文注记
     const tdtCvaLayer = new TileLayer({
@@ -348,6 +353,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       preload: 4,
       visible: true, // 注记始终保持在上面（如果你希望在卫星下也显示的话。如果没有字就不显示，可以改为 !layers.wms）
     });
+    tdtCvaLayer.setProperties({ gisLayerRef: 'base:labels', gisLayerName: '中文注记', gisLayerKind: 'annotation' });
     // 如果用户希望保留原有逻辑(wms下没字)：
     tdtCvaLayer.setVisible(!layers.wms);
 
@@ -359,6 +365,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       preload: 4,
       visible: layers.wms,
     });
+    satelliteLayer.setProperties({ gisLayerRef: 'base:satellite', gisLayerName: '卫星影像', gisLayerKind: 'base' });
 
     baseLayersRef.current = { cartoLight: cartoLightLayer, cartoDark: cartoDarkLayer, tdtCva: tdtCvaLayer, satellite: satelliteLayer };
 
@@ -379,6 +386,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
     });
 
     mapRef.current = map;
+    const gisRuntime = createBrowserGisRuntime(map, () => getFitPadding(map));
+    const unregisterGisRuntime = registerBrowserGisRuntime(gisRuntime);
 
     // —————— Hover ——————
     map.on('pointermove', (evt: MapBrowserEvent<PointerEvent>) => {
@@ -513,6 +522,8 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
     })();
 
     return () => {
+      unregisterGisRuntime();
+      gisRuntime.dispose();
       viewport.removeEventListener('pointerleave', handlePointerLeave);
       map.setTarget(undefined);
     };

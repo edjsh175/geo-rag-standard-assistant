@@ -1,0 +1,848 @@
+[
+  {
+    "id": "K01",
+    "category": "knowledge",
+    "prompt": "查询滑坡监测相关标准并给出引用。",
+    "required_capabilities": [
+      "retrieve_kb",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "答案包含冻结证据引用"
+    ],
+    "scenario": "knowledge_grounding",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      },
+      {
+        "type": "response_has_citations"
+      }
+    ]
+  },
+  {
+    "id": "K02",
+    "category": "knowledge",
+    "prompt": "查询规划标准中的空间数据要求。",
+    "required_capabilities": [
+      "retrieve_kb",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "仅依据知识库证据回答"
+    ],
+    "scenario": "knowledge_grounding",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      },
+      {
+        "type": "response_has_citations"
+      }
+    ]
+  },
+  {
+    "id": "K03",
+    "category": "knowledge",
+    "prompt": "继续追问上一轮标准要求。",
+    "required_capabilities": [
+      "reuse_evidence",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "可复用历史证据"
+    ],
+    "scenario": "knowledge_grounding",
+    "depends_on": [
+      "K01"
+    ],
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "K04",
+    "category": "knowledge",
+    "prompt": "知识库无证据时说明限制。",
+    "required_capabilities": [
+      "retrieve_kb",
+      "limitation"
+    ],
+    "success_criteria": [
+      "不使用模型先验补答"
+    ],
+    "scenario": "knowledge_limits",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "response_contains_limit"
+      }
+    ]
+  },
+  {
+    "id": "K05",
+    "category": "knowledge",
+    "prompt": "问题主体不明确时请求澄清。",
+    "required_capabilities": [
+      "clarify"
+    ],
+    "success_criteria": [
+      "返回澄清而非猜测"
+    ],
+    "scenario": "knowledge_clarification",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "publication_state",
+        "state": "clarification_required"
+      }
+    ]
+  },
+  {
+    "id": "K06",
+    "category": "knowledge",
+    "prompt": "同时查询两个相关标准事实。",
+    "required_capabilities": [
+      "retrieve_kb",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "多证据可冻结并引用"
+    ],
+    "scenario": "knowledge_multi_evidence",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      },
+      {
+        "type": "response_has_citations"
+      }
+    ]
+  },
+  {
+    "id": "I01",
+    "category": "import",
+    "prompt": "导入一个 GeoJSON 文件。",
+    "required_capabilities": [
+      "import_vector_dataset"
+    ],
+    "success_criteria": [
+      "返回稳定 layer_ref"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "import_vector_dataset"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "import_vector_dataset"
+      }
+    ]
+  },
+  {
+    "id": "I02",
+    "category": "import",
+    "prompt": "导入一套 SHP 文件。",
+    "required_capabilities": [
+      "import_vector_dataset"
+    ],
+    "success_criteria": [
+      "SHP/DBF 被解析并生成图层"
+    ],
+    "scenario": "shapefile_import",
+    "depends_on": [],
+    "fixture": "sample_shapefile",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "import_vector_dataset"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "import_vector_dataset"
+      }
+    ]
+  },
+  {
+    "id": "I03",
+    "category": "import",
+    "prompt": "导入后再次引用同一图层。",
+    "required_capabilities": [
+      "layer_ref"
+    ],
+    "success_criteria": [
+      "后续调用无需 JS 对象地址"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "I01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "stable_layer_ref"
+      }
+    ]
+  },
+  {
+    "id": "I04",
+    "category": "import",
+    "prompt": "尝试导入 file_ref=\"vf_missing_e2e\"；该引用不存在时必须基于失败回执停止，不要假装导入成功。",
+    "required_capabilities": [
+      "import_vector_dataset",
+      "failure_receipt"
+    ],
+    "success_criteria": [
+      "明确失败并回传状态"
+    ],
+    "scenario": "import_failure",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "import_vector_dataset"
+      },
+      {
+        "type": "tool_receipt_failure"
+      }
+    ]
+  },
+  {
+    "id": "L01",
+    "category": "layer_control",
+    "prompt": "隐藏刚导入的图层。",
+    "required_capabilities": [
+      "set_layer_visibility"
+    ],
+    "success_criteria": [
+      "visible=false 且 receipt 成功"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "I01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "set_layer_visibility"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "set_layer_visibility"
+      }
+    ]
+  },
+  {
+    "id": "L02",
+    "category": "layer_control",
+    "prompt": "重新显示该图层。",
+    "required_capabilities": [
+      "set_layer_visibility"
+    ],
+    "success_criteria": [
+      "visible=true"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "L01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "set_layer_visibility"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "set_layer_visibility"
+      }
+    ]
+  },
+  {
+    "id": "L03",
+    "category": "layer_control",
+    "prompt": "把图层边线改成红色。",
+    "required_capabilities": [
+      "set_vector_style"
+    ],
+    "success_criteria": [
+      "样式状态回传"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "L02"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "set_vector_style"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "set_vector_style"
+      }
+    ]
+  },
+  {
+    "id": "L04",
+    "category": "layer_control",
+    "prompt": "修改填充透明度和点半径。",
+    "required_capabilities": [
+      "set_vector_style"
+    ],
+    "success_criteria": [
+      "部分样式补丁正确合并"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "L03"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "set_vector_style"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "set_vector_style"
+      }
+    ]
+  },
+  {
+    "id": "L05",
+    "category": "layer_control",
+    "prompt": "连续执行显隐、样式、定位。",
+    "required_capabilities": [
+      "layer_ref",
+      "browser_continuation"
+    ],
+    "success_criteria": [
+      "多工具后 layer_ref 不丢失"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "L04"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "stable_layer_ref"
+      }
+    ]
+  },
+  {
+    "id": "L06",
+    "category": "layer_control",
+    "prompt": "读取当前完整图层树。",
+    "required_capabilities": [
+      "layer_tree"
+    ],
+    "success_criteria": [
+      "包含底图、业务图层和用户图层"
+    ],
+    "scenario": "layer_tree_observation",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "map_context_present"
+      }
+    ]
+  },
+  {
+    "id": "V01",
+    "category": "viewport",
+    "prompt": "定位到成都坐标并设置缩放级别。",
+    "required_capabilities": [
+      "locate_map"
+    ],
+    "success_criteria": [
+      "动画完成后回传 viewport"
+    ],
+    "scenario": "viewport_control",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "locate_map"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "locate_map"
+      }
+    ]
+  },
+  {
+    "id": "V02",
+    "category": "viewport",
+    "prompt": "缩放到导入图层的完整范围。",
+    "required_capabilities": [
+      "fit_vector_layer"
+    ],
+    "success_criteria": [
+      "fit 完成后回传 receipt"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "I01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "fit_vector_layer"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "fit_vector_layer"
+      }
+    ]
+  },
+  {
+    "id": "V03",
+    "category": "viewport",
+    "prompt": "定位后继续修改同一图层样式。",
+    "required_capabilities": [
+      "browser_continuation",
+      "layer_ref"
+    ],
+    "success_criteria": [
+      "同一 turn/trace 继续规划"
+    ],
+    "scenario": "vector_layer_lifecycle",
+    "depends_on": [
+      "V02"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "stable_layer_ref"
+      }
+    ]
+  },
+  {
+    "id": "V04",
+    "category": "viewport",
+    "prompt": "调用地图定位到经度 999、纬度 999；坐标非法时必须基于失败回执停止，不要假装定位成功。",
+    "required_capabilities": [
+      "locate_map",
+      "failure_receipt"
+    ],
+    "success_criteria": [
+      "失败状态可被 Controller 观察"
+    ],
+    "scenario": "viewport_failure",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "locate_map"
+      },
+      {
+        "type": "tool_receipt_failure"
+      }
+    ]
+  },
+  {
+    "id": "F01",
+    "category": "feature_observation",
+    "prompt": "列出图层前 20 个要素属性。",
+    "required_capabilities": [
+      "inspect_layer_features"
+    ],
+    "success_criteria": [
+      "最多返回 20 个 feature_ref 与属性"
+    ],
+    "scenario": "feature_observation",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "inspect_layer_features"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "inspect_layer_features"
+      }
+    ]
+  },
+  {
+    "id": "F02",
+    "category": "feature_observation",
+    "prompt": "翻页读取下一批要素。",
+    "required_capabilities": [
+      "inspect_layer_features"
+    ],
+    "success_criteria": [
+      "offset/limit 生效"
+    ],
+    "scenario": "feature_observation",
+    "depends_on": [
+      "F01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "inspect_layer_features"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "inspect_layer_features"
+      }
+    ]
+  },
+  {
+    "id": "F03",
+    "category": "feature_observation",
+    "prompt": "读取指定 feature_ref 的精确几何。",
+    "required_capabilities": [
+      "get_feature_geometry"
+    ],
+    "success_criteria": [
+      "返回 EPSG:4326 GeoJSON"
+    ],
+    "scenario": "feature_observation",
+    "depends_on": [
+      "F01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "get_feature_geometry"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "get_feature_geometry"
+      }
+    ]
+  },
+  {
+    "id": "F04",
+    "category": "feature_observation",
+    "prompt": "重复读取同一要素。",
+    "required_capabilities": [
+      "feature_ref"
+    ],
+    "success_criteria": [
+      "feature_ref 保持稳定"
+    ],
+    "scenario": "feature_observation",
+    "depends_on": [
+      "F03"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "stable_feature_ref"
+      }
+    ]
+  },
+  {
+    "id": "F05",
+    "category": "feature_observation",
+    "prompt": "读取 feature_ref=\"uf_missing_e2e\" 的精确几何；不存在时必须报告真实失败。",
+    "required_capabilities": [
+      "get_feature_geometry",
+      "failure_receipt"
+    ],
+    "success_criteria": [
+      "明确 UNKNOWN_FEATURE"
+    ],
+    "scenario": "feature_failure",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "get_feature_geometry"
+      },
+      {
+        "type": "tool_receipt_failure"
+      }
+    ]
+  },
+  {
+    "id": "F06",
+    "category": "feature_observation",
+    "prompt": "从图层树定位用户图层再读取要素。",
+    "required_capabilities": [
+      "layer_tree",
+      "inspect_layer_features"
+    ],
+    "success_criteria": [
+      "状态观测与按需读取协同"
+    ],
+    "scenario": "feature_observation",
+    "depends_on": [
+      "F01"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "map_context_present"
+      },
+      {
+        "type": "tool_called",
+        "tool": "inspect_layer_features"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "inspect_layer_features"
+      }
+    ]
+  },
+  {
+    "id": "S01",
+    "category": "spatial_analysis",
+    "prompt": "判断两个 GeoJSON Polygon 是否相交：A=[[[104.00,30.60],[104.04,30.60],[104.04,30.64],[104.00,30.64],[104.00,30.60]]]；B=[[[104.03,30.61],[104.07,30.61],[104.07,30.65],[104.03,30.65],[104.03,30.61]]]。请使用确定性空间关系工具并给出结论。",
+    "required_capabilities": [
+      "query_spatial_relation"
+    ],
+    "success_criteria": [
+      "PostGIS 返回 authoritative predicate"
+    ],
+    "scenario": "spatial_geojson",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "S02",
+    "category": "spatial_analysis",
+    "prompt": "判断要素几何是否位于指定行政区。",
+    "required_capabilities": [
+      "get_feature_geometry",
+      "query_spatial_relation"
+    ],
+    "success_criteria": [
+      "feature geometry 与 spatial_regions 联合查询"
+    ],
+    "scenario": "spatial_feature_region",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "get_feature_geometry"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "get_feature_geometry"
+      },
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "S03",
+    "category": "spatial_analysis",
+    "prompt": "判断两个行政区空间实体是否接触。",
+    "required_capabilities": [
+      "query_spatial_relation"
+    ],
+    "success_criteria": [
+      "按 adcode/region_name 解析实体"
+    ],
+    "scenario": "spatial_regions",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "S04",
+    "category": "spatial_analysis",
+    "prompt": "计算两个 GeoJSON Polygon 的 intersection：A=[[[104.00,30.60],[104.04,30.60],[104.04,30.64],[104.00,30.64],[104.00,30.60]]]；B=[[[104.03,30.61],[104.07,30.61],[104.07,30.65],[104.03,30.65],[104.03,30.61]]]。",
+    "required_capabilities": [
+      "spatial_overlay"
+    ],
+    "success_criteria": [
+      "返回 intersection GeoJSON"
+    ],
+    "scenario": "spatial_overlay",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "S05",
+    "category": "spatial_analysis",
+    "prompt": "计算两个 GeoJSON Polygon 的 difference（A-B）：A=[[[104.00,30.60],[104.04,30.60],[104.04,30.64],[104.00,30.64],[104.00,30.60]]]；B=[[[104.03,30.61],[104.07,30.61],[104.07,30.65],[104.03,30.65],[104.03,30.61]]]。",
+    "required_capabilities": [
+      "spatial_overlay"
+    ],
+    "success_criteria": [
+      "返回 difference GeoJSON"
+    ],
+    "scenario": "spatial_overlay",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "S06",
+    "category": "spatial_analysis",
+    "prompt": "空间分析后基于结果生成带引用结论。",
+    "required_capabilities": [
+      "spatial_overlay",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "PostGIS 结果进入 Frozen Evidence"
+    ],
+    "scenario": "spatial_overlay",
+    "depends_on": [
+      "S04"
+    ],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "R01",
+    "category": "recovery",
+    "prompt": "尝试隐藏 layer_ref=\"ul_missing_e2e\"；浏览器返回图层不存在后，基于失败事实调整或安全停止，不要声称执行成功。",
+    "required_capabilities": [
+      "failure_receipt",
+      "controller_recovery"
+    ],
+    "success_criteria": [
+      "不伪造成功"
+    ],
+    "scenario": "recovery_unknown_layer",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "tool_receipt_failure"
+      },
+      {
+        "type": "no_false_success_after_failure"
+      }
+    ]
+  },
+  {
+    "id": "R02",
+    "category": "recovery",
+    "prompt": "查询不存在的行政区 adcode=999999 与成都的空间关系；实体解析失败后应调整或安全停止，不要声称关系判断成功。",
+    "required_capabilities": [
+      "query_spatial_relation",
+      "controller_recovery"
+    ],
+    "success_criteria": [
+      "失败 observation 非崩溃"
+    ],
+    "scenario": "recovery_unknown_region",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "published_answer_present"
+      },
+      {
+        "type": "response_contains_limit"
+      }
+    ]
+  },
+  {
+    "id": "R03",
+    "category": "recovery",
+    "prompt": "尝试读取 feature_ref=\"uf_missing_e2e\" 的精确几何，然后总结真实执行结果；浏览器失败事实必须进入最终回答，不要声称读取成功。",
+    "required_capabilities": [
+      "failure_receipt",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "失败 receipt 可冻结引用"
+    ],
+    "scenario": "recovery_browser_failure",
+    "depends_on": [],
+    "assertions": [
+      {
+        "type": "tool_receipt_failure"
+      },
+      {
+        "type": "published_answer_present"
+      }
+    ]
+  },
+  {
+    "id": "R04",
+    "category": "recovery",
+    "prompt": "知识检索后导入数据、改样式、定位并总结执行结果。",
+    "required_capabilities": [
+      "retrieve_kb",
+      "import_vector_dataset",
+      "set_vector_style",
+      "fit_vector_layer",
+      "compose_answer"
+    ],
+    "success_criteria": [
+      "知识与 GIS 工具统一编排且事实可引用"
+    ],
+    "scenario": "cross_tool_full_loop",
+    "depends_on": [],
+    "fixture": "sample_polygons.geojson",
+    "assertions": [
+      {
+        "type": "tool_called",
+        "tool": "import_vector_dataset"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "import_vector_dataset"
+      },
+      {
+        "type": "tool_called",
+        "tool": "set_vector_style"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "set_vector_style"
+      },
+      {
+        "type": "tool_called",
+        "tool": "fit_vector_layer"
+      },
+      {
+        "type": "tool_receipt_success",
+        "tool": "fit_vector_layer"
+      },
+      {
+        "type": "published_answer_present"
+      },
+      {
+        "type": "response_has_citations"
+      }
+    ]
+  }
+]

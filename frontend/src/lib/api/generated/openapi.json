@@ -1949,7 +1949,7 @@
           "files": {
             "items": {
               "type": "string",
-              "format": "binary"
+              "contentMediaType": "application/octet-stream"
             },
             "type": "array",
             "title": "Files",
@@ -1965,10 +1965,12 @@
       "Body_calculate_intersection_api_spatial_intersection_post": {
         "properties": {
           "geometry1": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Geometry1"
           },
           "geometry2": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Geometry2"
           }
@@ -1984,7 +1986,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "description": "Document to upload."
           },
@@ -2261,12 +2263,14 @@
             "title": "Content"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata"
           },
           "spatial_info": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2570,6 +2574,7 @@
             "description": "更新时间"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
             "description": "文档元数据"
@@ -2651,6 +2656,7 @@
             "description": "Similarity score."
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
             "description": "Metadata payload."
@@ -2658,6 +2664,7 @@
           "spatial_info": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2732,6 +2739,7 @@
           "metadata": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2745,6 +2753,7 @@
           "spatial_metadata": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3012,6 +3021,58 @@
         ],
         "title": "LoginResponse"
       },
+      "MapAction": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "adcode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adcode"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "target"
+        ],
+        "title": "MapAction"
+      },
       "MetadataFilter": {
         "properties": {
           "document_type": {
@@ -3075,6 +3136,7 @@
           "custom_filters": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3204,6 +3266,52 @@
             "description": "Whether to generate a natural-language answer.",
             "default": false
           },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Server-side Agent session identifier."
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "linear"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode",
+            "description": "Generation mode. Agent is the default when generation is enabled."
+          },
+          "reviewer_enabled": {
+            "type": "boolean",
+            "title": "Reviewer Enabled",
+            "description": "Whether to run the optional grounding reviewer for this request.",
+            "default": false
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking",
+            "description": "User preference for Controller reasoning when the endpoint supports it."
+          },
           "history": {
             "anyOf": [
               {
@@ -3229,6 +3337,42 @@
               }
             ],
             "description": "Optional document follow-up context resolved on the client."
+          },
+          "map_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Context",
+            "description": "Browser-authoritative WebGIS state snapshot for Agent planning."
+          },
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation Token",
+            "description": "Opaque server-issued token used only to resume a pending browser GIS tool call."
+          },
+          "browser_tool_receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserToolReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Receipt for the browser GIS tool call identified by continuation_token."
           }
         },
         "type": "object",
@@ -3320,6 +3464,93 @@
               }
             ],
             "description": "Visitor demo quota status."
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id",
+            "description": "Agent session identifier."
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id",
+            "description": "Runtime trace identifier for this turn."
+          },
+          "final_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "linear"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Mode",
+            "description": "Generation mode that produced the final answer."
+          },
+          "publication_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication State",
+            "description": "Runtime publication state such as published or clarification."
+          },
+          "map_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MapAction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structured map action for the frontend."
+          },
+          "pending_tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Tool Call Id",
+            "description": "Tool call identifier when browser execution is required before Agent continuation."
+          },
+          "continuation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuation Token",
+            "description": "Opaque token required to resume a pending browser GIS tool call."
           }
         },
         "type": "object",
@@ -3334,6 +3565,7 @@
           "geometry": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3368,6 +3600,7 @@
       "SpatialQuery": {
         "properties": {
           "geometry": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Geometry"
           },
@@ -3585,6 +3818,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
@@ -3594,6 +3834,70 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "BrowserToolReceipt": {
+        "properties": {
+          "tool_call_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Tool Call Id"
+          },
+          "tool_name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Tool Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "effect": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Effect"
+          },
+          "map_context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Map Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_call_id",
+          "tool_name",
+          "status",
+          "map_context"
+        ],
+        "title": "BrowserToolReceipt",
+        "description": "Browser-authoritative result for one pending GIS tool call."
       }
     }
   }

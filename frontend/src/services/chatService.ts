@@ -1,11 +1,14 @@
-import { apiPost } from '../lib/api/contractClient';
+import { apiPost, apiPostSse } from '../lib/api/contractClient';
 import type { components } from '../lib/api/generated/schema';
+import { executeBrowserTool, getBrowserMapContext } from '../gis/browserBridge';
+import type { BrowserMapAction } from '../gis/contracts';
 
 export type ChatHistoryMessage = components['schemas']['ChatHistoryMessage'];
 export type DocumentResult = components['schemas']['DocumentResult'];
 export type FollowUpContext = components['schemas']['FollowUpContext'];
 export type SearchResponse = components['schemas']['SearchResponse'];
 export type DemoQuotaStatus = components['schemas']['DemoQuotaStatus'];
+export type MapAction = components['schemas']['MapAction'];
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -27,6 +30,7 @@ export interface ChatResponse {
   references?: DocumentResult[];
   timestamp: string;
   quota?: DemoQuotaStatus;
+  map_action?: MapAction;
 }
 
 /**
@@ -34,6 +38,36 @@ export interface ChatResponse {
  * 注意：后端可能还没有专门的聊天端点，目前使用搜索服务生成答案
  */
 export const chatService = {
+  async runAgentRequest(
+    searchRequest: components['schemas']['SearchRequest'],
+    signal?: AbortSignal,
+  ): Promise<SearchResponse> {
+    let request = searchRequest;
+    for (let browserStep = 0; browserStep < 8; browserStep += 1) {
+      const response: SearchResponse = await apiPost('/api/search/query', request, {
+        config: { signal },
+      });
+      if (response.publication_state !== 'tool_execution_required') return response;
+      if (!response.trace_id || !response.pending_tool_call_id || !response.continuation_token || !response.map_action) {
+        throw new Error('browser tool continuation contract is incomplete');
+      }
+      const receipt = await executeBrowserTool(
+        response.trace_id,
+        response.pending_tool_call_id,
+        response.map_action as BrowserMapAction,
+      );
+      request = {
+        ...searchRequest,
+        session_id: response.session_id ?? searchRequest.session_id,
+        history: [],
+        map_context: receipt.map_context,
+        continuation_token: response.continuation_token,
+        browser_tool_receipt: receipt,
+      };
+    }
+    throw new Error('browser GIS continuation exceeded client safety limit');
+  },
+
   /**
    * 发送聊天消息
    */
@@ -50,13 +84,13 @@ export const chatService = {
         top_k: 5,
         use_generation: true,
         search_mode: 'semantic',
+        session_id: conversationId,
         history,
         follow_up_context: followUpContext,
+        map_context: getBrowserMapContext() ?? undefined,
       };
 
-      const searchResponse: SearchResponse = await apiPost('/api/search/query', searchRequest, {
-        config: { signal },
-      });
+      const searchResponse = await this.runAgentRequest(searchRequest, signal);
       const quota = searchResponse.quota;
 
       const fallbackMessage = quota?.exhausted
@@ -67,10 +101,11 @@ export const chatService = {
 
       return {
         message: searchResponse.generated_answer || fallbackMessage,
-        conversation_id: conversationId || `conv_${Date.now()}`,
+        conversation_id: searchResponse.session_id || conversationId || `conv_${Date.now()}`,
         references: searchResponse.results || [],
         timestamp: new Date().toISOString(),
         quota,
+        map_action: searchResponse.map_action ?? undefined,
       };
     } catch (error) {
       console.error('发送聊天消息失败:', error);
@@ -126,8 +161,65 @@ export const chatService = {
     followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
-      void onChunk;
-      return await this.sendMessage(message, conversationId, history, undefined, followUpContext);
+      let finalResponse: SearchResponse | null = null;
+      await apiPostSse('/api/search/query/stream', {
+          query: message,
+          search_mode: 'hybrid',
+          top_k: 10,
+          threshold: 0.6,
+          use_rerank: true,
+          use_generation: true,
+          session_id: conversationId,
+          history,
+          follow_up_context: followUpContext,
+        }, (eventType, data) => {
+        if (eventType === 'result') {
+          finalResponse = JSON.parse(data) as SearchResponse;
+        } else {
+          onChunk?.(data);
+        }
+      });
+      if (!finalResponse) throw new Error('stream completed without result event');
+
+      if (finalResponse.publication_state === 'tool_execution_required') {
+        if (!finalResponse.trace_id || !finalResponse.pending_tool_call_id || !finalResponse.continuation_token || !finalResponse.map_action) {
+          throw new Error('browser tool continuation contract is incomplete');
+        }
+        const receipt = await executeBrowserTool(
+          finalResponse.trace_id,
+          finalResponse.pending_tool_call_id,
+          finalResponse.map_action as BrowserMapAction,
+        );
+        finalResponse = await this.runAgentRequest({
+          query: message,
+          search_mode: 'hybrid',
+          top_k: 10,
+          threshold: 0.6,
+          use_rerank: true,
+          use_generation: true,
+          session_id: finalResponse.session_id || conversationId,
+          history: [],
+          follow_up_context: followUpContext,
+          map_context: receipt.map_context,
+          continuation_token: finalResponse.continuation_token,
+          browser_tool_receipt: receipt,
+        });
+      }
+
+      const quota = finalResponse.quota;
+      const fallbackMessage = quota?.exhausted
+        ? `${quota.contact_text}\n\n您仍可继续查看检索结果、引用文档和地图联动内容。`
+        : (finalResponse.results?.length ?? 0) > 0
+          ? '已检索到相关标准，请查看下方参考文档。'
+          : '未在库中检索到相关标准规定。';
+      return {
+        message: finalResponse.generated_answer || fallbackMessage,
+        conversation_id: finalResponse.session_id || conversationId || `conv_${Date.now()}`,
+        references: finalResponse.results || [],
+        timestamp: new Date().toISOString(),
+        quota,
+        map_action: finalResponse.map_action ?? undefined,
+      };
     } catch (error) {
       console.error('流式聊天失败:', error);
       return {

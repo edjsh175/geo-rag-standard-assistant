@@ -5,13 +5,13 @@ from contextlib import asynccontextmanager
 import pytest
 
 from app.models.search_models import MetadataFilter, SpatialFilter
+from app.services.rag.contracts import RetrievalQuery
 from app.services.rag.search_logger import RagSearchLogger
-from app.services.rag.types import SearchContext
 
 
-def make_context() -> SearchContext:
-    return SearchContext(
-        query="重庆滑坡防治",
+def make_context() -> RetrievalQuery:
+    return RetrievalQuery(
+        query_text="重庆滑坡防治",
         top_k=5,
         threshold=0.35,
         search_mode="hybrid",

@@ -5,11 +5,12 @@ Search request and response models.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.services.demo_quota_service import DemoQuotaStatus
+from app.services.agent.contracts import MapAction
 
 
 class SpatialFilter(BaseModel):
@@ -82,6 +83,18 @@ class ChatHistoryMessage(BaseModel):
     content: str = Field(..., min_length=1, max_length=4000, description="Message content.")
 
 
+class BrowserToolReceipt(BaseModel):
+    """Browser-authoritative result for one pending GIS tool call."""
+
+    tool_call_id: str = Field(..., min_length=1)
+    tool_name: str = Field(..., min_length=1)
+    status: Literal["succeeded", "failed"]
+    output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    effect: Dict[str, Any] = Field(default_factory=dict)
+    map_context: Dict[str, Any]
+
+
 class SearchRequest(BaseModel):
     """Search request payload."""
 
@@ -93,10 +106,35 @@ class SearchRequest(BaseModel):
     use_rerank: bool = Field(True, description="Whether to rerank results.")
     search_mode: str = Field("hybrid", description="semantic, keyword, or hybrid")
     use_generation: bool = Field(False, description="Whether to generate a natural-language answer.")
+    session_id: Optional[str] = Field(None, description="Server-side Agent session identifier.")
+    mode: Optional[Literal["agent", "linear"]] = Field(
+        None,
+        description="Generation mode. Agent is the default when generation is enabled.",
+    )
+    reviewer_enabled: bool = Field(
+        False,
+        description="Whether to run the optional grounding reviewer for this request.",
+    )
+    thinking: Optional[bool] = Field(
+        None,
+        description="User preference for Controller reasoning when the endpoint supports it.",
+    )
     history: Optional[List[ChatHistoryMessage]] = Field(default_factory=list, description="Conversation history.")
     follow_up_context: Optional[FollowUpContext] = Field(
         None,
         description="Optional document follow-up context resolved on the client.",
+    )
+    map_context: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Browser-authoritative WebGIS state snapshot for Agent planning.",
+    )
+    continuation_token: Optional[str] = Field(
+        None,
+        description="Opaque server-issued token used only to resume a pending browser GIS tool call.",
+    )
+    browser_tool_receipt: Optional[BrowserToolReceipt] = Field(
+        None,
+        description="Receipt for the browser GIS tool call identified by continuation_token.",
     )
 
 
@@ -112,6 +150,25 @@ class SearchResponse(BaseModel):
     generated_answer: Optional[str] = Field(None, description="Generated answer, if requested.")
     generation_time: Optional[float] = Field(None, description="Generation duration in seconds.")
     quota: Optional[DemoQuotaStatus] = Field(None, description="Visitor demo quota status.")
+    session_id: Optional[str] = Field(None, description="Agent session identifier.")
+    trace_id: Optional[str] = Field(None, description="Runtime trace identifier for this turn.")
+    final_mode: Optional[Literal["agent", "linear"]] = Field(
+        None,
+        description="Generation mode that produced the final answer.",
+    )
+    publication_state: Optional[str] = Field(
+        None,
+        description="Runtime publication state such as published or clarification.",
+    )
+    map_action: Optional[MapAction] = Field(None, description="Structured map action for the frontend.")
+    pending_tool_call_id: Optional[str] = Field(
+        None,
+        description="Tool call identifier when browser execution is required before Agent continuation.",
+    )
+    continuation_token: Optional[str] = Field(
+        None,
+        description="Opaque token required to resume a pending browser GIS tool call.",
+    )
 
 
 class SearchHistory(BaseModel):
