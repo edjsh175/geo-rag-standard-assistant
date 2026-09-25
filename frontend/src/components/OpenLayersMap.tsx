@@ -34,6 +34,7 @@ interface OpenLayersMapProps {
     wms: boolean;
   };
   onReady?: () => void;
+  onAgentLayerVisibilityChange?: (layerRef: string, visible: boolean) => void;
 }
 
 // ==================== 三态样式 ====================
@@ -71,6 +72,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
   viewportWidth = typeof window === 'undefined' ? 1920 : window.innerWidth,
   layers,
   onReady,
+  onAgentLayerVisibilityChange,
 }) => {
   const mapElement = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
@@ -386,8 +388,12 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
     });
 
     mapRef.current = map;
-    const gisRuntime = createBrowserGisRuntime(map, () => getFitPadding(map));
-    const unregisterGisRuntime = registerBrowserGisRuntime(gisRuntime);
+    const gisRuntime = createBrowserGisRuntime(
+      map,
+      () => getFitPadding(map),
+      onAgentLayerVisibilityChange,
+    );
+    const unregisterGisRuntime = registerBrowserGisRuntime('2d', gisRuntime);
 
     // —————— Hover ——————
     map.on('pointermove', (evt: MapBrowserEvent<PointerEvent>) => {
@@ -527,7 +533,7 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       viewport.removeEventListener('pointerleave', handlePointerLeave);
       map.setTarget(undefined);
     };
-  }, [loadProvincesData, flyToFeature, flyToOverview, notifyReady, setActiveRegion]);
+  }, [loadProvincesData, flyToFeature, flyToOverview, notifyReady, onAgentLayerVisibilityChange, setActiveRegion]);
 
   // ==================== 图层可见性 ====================
   useEffect(() => {

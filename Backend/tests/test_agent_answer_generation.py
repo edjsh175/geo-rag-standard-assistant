@@ -72,8 +72,9 @@ async def test_answer_generator_uses_frozen_evidence_and_reasoning_off() -> None
         [
             ModelResponse(
                 content=(
-                    '{"kind":"knowledge_answer","answer":"应按本标准执行。",'
-                    '"citations":["E1"]}'
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"应按本标准执行。","citations":["E1"]}'
+                    ']}'
                 )
             )
         ]
@@ -91,6 +92,8 @@ async def test_answer_generator_uses_frozen_evidence_and_reasoning_off() -> None
     assert client.calls[0].stage == "answer_generation"
     assert client.calls[0].request_reasoning is False
     assert "重庆市滑坡监测应按本标准执行" in client.calls[0].messages[-1]["content"]
+    assert '"const": "knowledge_answer"' in client.calls[0].messages[0]["content"]
+    assert '"enum": ["E1"]' in client.calls[0].messages[0]["content"]
 
 
 @pytest.mark.asyncio
@@ -107,8 +110,9 @@ async def test_empty_content_retries_once_without_reading_reasoning_content() ->
             ),
             ModelResponse(
                 content=(
-                    '{"kind":"knowledge_answer","answer":"干净重试成功",'
-                    '"citations":["E1"]}'
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"干净重试成功","citations":["E1"]}'
+                    ']}'
                 )
             ),
         ]

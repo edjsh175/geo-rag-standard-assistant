@@ -27,7 +27,9 @@ from app.services.rag.contracts import (
     RetrievalResult,
 )
 from app.services.rag.filters import RagFilterEngine
-from app.services.rag.reranker import RagReranker
+from app.services.rag.fusion import rrf_fuse
+from app.services.rag.query_planner import QueryPlanner
+from app.services.rag.reranker import BaseReranker, RagReranker
 
 logger = logging.getLogger(__name__)
 
@@ -116,13 +118,15 @@ def _region_aliases(name: str) -> list[str]:
 class PostgresRetrievalAdapter:
     """Compose exact, keyword and pgvector retrieval behind one storage port."""
 
-    def __init__(self) -> None:
+    def __init__(self, reranker: BaseReranker | None = None) -> None:
         self.filter_engine = RagFilterEngine()
-        self.reranker = RagReranker()
+        self.reranker = reranker or RagReranker()
+        self.query_planner = QueryPlanner()
 
     async def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
-        mode = query.mode
-        expanded_top_k = max(query.top_k * 2, query.top_k)
+        plan = self.query_planner.plan(query)
+        mode = plan.search_mode
+        expanded_top_k = plan.candidate_k
 
         exact_results: list[DocumentResult] = []
         keyword_results: list[DocumentResult] = []
@@ -206,11 +210,16 @@ class PostgresRetrievalAdapter:
                         )
                     )
 
-        candidate_results = self._merge_and_dedupe_results(
-            exact_results,
-            keyword_results,
-            vector_results,
-            top_k=max(query.top_k * 3, query.top_k),
+        candidate_results = rrf_fuse(
+            [exact_results, keyword_results, vector_results],
+            rrf_k=60,
+            top_k=plan.candidate_k,
+            weights=[
+                plan.channel_weights.get("exact", 1.5),
+                plan.channel_weights.get("keyword", 1.0),
+                plan.channel_weights.get("vector", 1.0),
+            ],
+            channel_labels=["exact", "keyword", "vector"],
         )
 
         if query.spatial_filter:
@@ -227,14 +236,14 @@ class PostgresRetrievalAdapter:
 
         if query.use_rerank:
             final_results = self.reranker.rerank(
-                query.query_text,
+                plan.query_text,
                 candidate_results,
-                top_k=query.top_k,
+                top_k=plan.top_k,
                 metadata_filter=query.metadata_filter,
                 spatial_filter=query.spatial_filter,
             )
         else:
-            final_results = candidate_results[: query.top_k]
+            final_results = candidate_results[: plan.top_k]
 
         return RetrievalResult(
             candidates=tuple(
@@ -543,7 +552,17 @@ class PostgresRetrievalAdapter:
                 )
                 for row in rows
             ]
-            uploaded_results = await self._uploaded_keyword_search(query, top_k, terms)
+            try:
+                uploaded_results = await self._uploaded_keyword_search(
+                    query, top_k, terms
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "Uploaded-document keyword retrieval unavailable; "
+                    "continuing with policy chunks: %s",
+                    exc.__cause__ or exc,
+                )
+                uploaded_results = []
             return self._merge_source_results(policy_results, uploaded_results, top_k)
         except Exception as exc:
             raise RuntimeError("keyword retrieval unavailable") from exc
@@ -683,12 +702,20 @@ class PostgresRetrievalAdapter:
                 for row in rows
                 if float(row.similarity) >= threshold
             ]
-            uploaded_results = await self._uploaded_vector_search(
-                query_embedding=query_embedding,
-                top_k=top_k,
-                threshold=threshold,
-                exclude_doc_id=exclude_doc_id,
-            )
+            try:
+                uploaded_results = await self._uploaded_vector_search(
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                    threshold=threshold,
+                    exclude_doc_id=exclude_doc_id,
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "Uploaded-document vector retrieval unavailable; "
+                    "continuing with policy chunks: %s",
+                    exc.__cause__ or exc,
+                )
+                uploaded_results = []
             return self._merge_source_results(policy_results, uploaded_results, top_k)
         except Exception as exc:
             raise RuntimeError("vector retrieval unavailable") from exc

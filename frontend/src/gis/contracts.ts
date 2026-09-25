@@ -49,7 +49,7 @@ export interface BrowserMapContext {
   [key: string]: unknown;
   schema_version: 2;
   revision: number;
-  dimension: '2d';
+  dimension: '2d' | '3d';
   ready: boolean;
   supported_tools: string[];
   viewport: { center: [number, number]; zoom: number; crs: 'EPSG:4326' } | null;

@@ -618,13 +618,36 @@ async def test_runtime_reports_invalid_controller_output_as_structured_failure()
     assert result.publication_state == "model_output_invalid"
     assert result.answer is None
     assert result.events[-1].payload["state"] == "model_output_invalid"
+    assert result.events[-1].payload["failure_stage"] == "controller"
+    assert "invalid controller output" in result.events[-1].payload["error"]
 
 
 @pytest.mark.asyncio
-async def test_runtime_reports_invalid_tool_arguments_as_structured_failure() -> None:
+async def test_runtime_returns_invalid_tool_arguments_to_controller_for_replanning() -> None:
+    class RecoveringController:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.seen_observations = []
+
+        async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+            self.calls += 1
+            self.seen_observations.append(tuple(observations))
+            if self.calls == 1:
+                return ToolCall(
+                    tool_call_id="invalid-args",
+                    name="retrieve_kb",
+                    arguments={"query": ""},
+                )
+            return ToolCall(
+                tool_call_id="clarify-after-denial",
+                name="clarify",
+                arguments={"question": "请补充具体的土地整治问题。"},
+            )
+
+    controller = RecoveringController()
     runtime = AgentRuntime(
         retrieval_port=FakeRetrievalPort(),
-        controller=InvalidArgumentsController(),
+        controller=controller,
         answer_generator=FakeAnswerGenerator(),
         session_store=InMemoryAgentSessionStore(),
     )
@@ -637,7 +660,16 @@ async def test_runtime_reports_invalid_tool_arguments_as_structured_failure() ->
         )
     )
 
-    assert result.publication_state == "model_output_invalid"
+    assert result.publication_state == "clarification"
+    assert controller.calls == 2
+    denied = controller.seen_observations[1][-1]
+    assert denied.status == "denied"
+    assert "invalid arguments for retrieve_kb" in denied.payload["error"]
+    assert any(
+        event.event_type == "tool_completed"
+        and event.payload.get("status") == "denied"
+        for event in result.events
+    )
 
 
 @pytest.mark.asyncio
@@ -662,6 +694,8 @@ async def test_runtime_reports_answer_generation_failure_as_structured_failure()
     )
 
     assert result.publication_state == "model_output_invalid"
+    assert result.events[-1].payload["failure_stage"] == "answer_generation"
+    assert "invalid structured answer" in result.events[-1].payload["error"]
 
 
 @pytest.mark.asyncio

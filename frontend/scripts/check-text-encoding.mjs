@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,7 +25,7 @@ const textExtensions = new Set([
 const textFileNames = new Set(['.editorconfig', '.gitattributes', '.gitignore']);
 
 const mojibakePatterns = [
-  { label: 'replacement character', regex: /�/u },
+  { label: 'replacement character', regex: /\uFFFD/u },
   { label: 'UTF-8-as-GBK mojibake: 鍖', regex: /鍖/u },
   { label: 'UTF-8-as-GBK mojibake: 绌', regex: /绌/u },
   { label: 'UTF-8-as-GBK mojibake: 鐪', regex: /鐪/u },
@@ -51,6 +51,9 @@ const failures = [];
 
 for (const relativePath of candidateFiles) {
   const absolutePath = path.join(repoRoot, relativePath);
+  if (!existsSync(absolutePath)) {
+    continue;
+  }
   const bytes = readFileSync(absolutePath);
   if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
     failures.push(`${relativePath}: UTF-8 BOM detected`);

@@ -91,6 +91,79 @@ class AnswerGenerator:
                 "answer generation failed to produce valid structured output"
             ) from exc
 
+    async def generate_repair(
+        self,
+        *,
+        question: str,
+        snapshot: FrozenEvidenceSnapshot,
+        base_answer: GeneratedAnswer,
+        repair_scope: Mapping[str, Any],
+        stage_policy: LLMStagePolicy,
+        model_name: str | None = None,
+    ) -> GeneratedAnswer:
+        evidence_text = "\n\n".join(
+            f"[{item.citation_id}] {item.title}\n{item.text}"
+            for item in snapshot.items
+        )
+        repair_instructions = (
+            "You are performing a constrained repair of a previous answer draft.\n"
+            f"Repair Contract Version: {repair_scope.get('contract_version')}\n"
+            f"Immutable Units (MUST be preserved exactly, no changes): {repair_scope.get('immutable_units')}\n"
+            f"Editable Units (Must be revised to adhere strictly to Frozen Evidence, or omitted): {json.dumps(repair_scope.get('editable_units'), ensure_ascii=False)}\n"
+            "Rules:\n"
+            "1. Preserved units must keep their exact unit_id, text, and citations.\n"
+            "2. Editable units must only reference allowed evidence from the Frozen Evidence.\n"
+            "3. Do not invent new facts or add new units.\n"
+            "4. Return valid JSON containing units array and answer string."
+        )
+        base_units_json = json.dumps(
+            [{"unit_id": u.unit_id, "text": u.text, "citations": list(u.citations)} for u in base_answer.units],
+            ensure_ascii=False,
+        )
+        messages = (
+            {
+                "role": "system",
+                "content": f"{repair_instructions}\n\nFrozen Evidence:\n{evidence_text}",
+            },
+            {
+                "role": "user",
+                "content": f"Question: {question}\n\nOriginal Draft Units:\n{base_units_json}\n\nRepair the draft according to the contract.",
+            },
+        )
+        execution = stage_policy.for_stage("answer_generation")
+        call_id = str(uuid4())
+        deadline_at = monotonic() + execution.timeout_seconds
+
+        async def generate_candidate(attempt):
+            remaining = deadline_at - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("answer generation repair model call deadline exceeded")
+            call = ModelRequest(
+                stage="answer_generation",
+                messages=messages,
+                request_reasoning=(
+                    execution.request_reasoning
+                    if attempt.request_reasoning is None
+                    else attempt.request_reasoning
+                ),
+                model_name=model_name,
+                temperature=(0.2 if attempt.temperature is None else attempt.temperature),
+                call_id=call_id,
+                attempt=attempt.protocol_attempt,
+                timeout_seconds=remaining,
+            )
+            return (await self.model_client.complete(call)).content
+
+        try:
+            return await execute_structured_candidate(
+                generate=generate_candidate,
+                validate=lambda content: self._parse(content, snapshot=snapshot),
+            )
+        except StructuredCandidateProtocolError as exc:
+            raise AnswerGenerationError(
+                "answer generation repair failed to produce valid structured output"
+            ) from exc
+
     def _build_request(
         self,
         *,
@@ -102,15 +175,16 @@ class AnswerGenerator:
             f"[{item.citation_id}] {item.title}\n{item.text}"
             for item in snapshot.items
         )
+        output_schema = self._output_schema(snapshot)
         messages = (
             {
                 "role": "system",
                 "content": (
                     "Generate only a grounded answer from the provided Frozen Evidence. "
-                    "Return JSON with kind, units, and optional map_action. Each unit must "
-                    "contain a stable unit_id, text, and citations. "
-                    "map_action may be null or an object with type, target, adcode, name, payload. "
-                    "Do not introduce external facts."
+                    "Return only JSON that satisfies the following schema exactly. "
+                    "Do not invent alternative kind labels such as summary or grounded_summary. "
+                    "Do not introduce external facts.\n\n"
+                    f"Output JSON Schema:\n{json.dumps(output_schema, ensure_ascii=False, sort_keys=True)}"
                 ),
             },
             {
@@ -126,6 +200,53 @@ class AnswerGenerator:
             ).request_reasoning,
             model_name=None,
         )
+
+    @staticmethod
+    def _output_schema(snapshot: FrozenEvidenceSnapshot) -> dict:
+        allowed_citations = [item.citation_id for item in snapshot.items]
+        return {
+            "type": "object",
+            "properties": {
+                "kind": {"const": "knowledge_answer"},
+                "units": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "unit_id": {"type": "string", "minLength": 1},
+                            "text": {"type": "string", "minLength": 1},
+                            "citations": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {"type": "string", "enum": allowed_citations},
+                            },
+                        },
+                        "required": ["unit_id", "text", "citations"],
+                        "additionalProperties": False,
+                    },
+                },
+                "map_action": {
+                    "anyOf": [
+                        {"type": "null"},
+                        {
+                            "type": "object",
+                            "properties": {
+                                "type": {"type": "string"},
+                                "target": {"type": "string"},
+                                "adcode": {"type": ["string", "null"]},
+                                "name": {"type": ["string", "null"]},
+                                "payload": {"type": ["object", "null"]},
+                            },
+                            "required": ["type", "target"],
+                            "additionalProperties": False,
+                        },
+                    ]
+                },
+            },
+            "required": ["kind", "units"],
+            "additionalProperties": False,
+        }
 
     @staticmethod
     def _parse(
@@ -144,7 +265,9 @@ class AnswerGenerator:
 
         kind = payload.get("kind")
         if kind != "knowledge_answer":
-            raise ValueError("invalid answer kind")
+            raise ValueError(
+                f"invalid answer kind: expected 'knowledge_answer', got {kind!r}"
+            )
 
         allowed = {item.citation_id for item in snapshot.items}
         raw_units = payload.get("units")

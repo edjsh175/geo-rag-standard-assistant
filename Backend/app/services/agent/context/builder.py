@@ -1,4 +1,9 @@
-"""Budgeted conversation projection for the Main Controller."""
+"""Compatibility context projection used by the current AgentRuntime.
+
+The context package is the canonical import boundary.  This builder preserves
+the existing Runtime contract while the richer ContextEngine is adopted by
+callers stage by stage.
+"""
 
 from __future__ import annotations
 
@@ -55,7 +60,6 @@ class AgentContextBuilder:
                 break
             if not selected and len(line) > self.max_characters:
                 selected.append(line[-self.max_characters :])
-                used = self.max_characters
                 break
             selected.append(line)
             used += extra

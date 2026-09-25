@@ -1,4 +1,6 @@
 import type OlMap from 'ol/Map';
+import LayerGroup from 'ol/layer/Group';
+import type BaseLayer from 'ol/layer/Base';
 import { fromLonLat } from 'ol/proj';
 import type { BrowserMapAction, BrowserMapContext } from './contracts';
 import { GisExecutionError } from './contracts';
@@ -15,10 +17,12 @@ export const createFrontendExecutor = ({
   map,
   capabilities,
   snapshot,
+  onLayerVisibilityChange,
 }: {
   map: OlMap;
   capabilities: ReturnType<typeof import('./userVectorCapabilities').createUserVectorCapabilities>;
   snapshot: () => BrowserMapContext;
+  onLayerVisibilityChange?: (layerRef: string, visible: boolean) => void;
 }) => {
   const calls = new globalThis.Map<string, { signature: string; promise: Promise<Record<string, unknown>> }>();
   let queue = Promise.resolve();
@@ -34,11 +38,32 @@ export const createFrontendExecutor = ({
       }
       const payload = structuredClone(action.payload ?? {});
       const promise = queue.then(async () => {
+        const findLayer = (layerRef: string): BaseLayer | null => {
+          const walk = (layers: BaseLayer[]): BaseLayer | null => {
+            for (const layer of layers) {
+              const ref = String(layer.get('gisLayerRef') ?? layer.get('gisUserLayerRef') ?? '');
+              if (ref === layerRef) return layer;
+              if (layer instanceof LayerGroup) {
+                const found = walk(layer.getLayers().getArray());
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+          return walk(map.getLayers().getArray());
+        };
         switch (action.type) {
           case 'import_vector_dataset':
             return capabilities.importVectorDataset({ file_ref: String(payload.file_ref ?? ''), name: typeof payload.name === 'string' ? payload.name : undefined });
           case 'set_layer_visibility':
-            return capabilities.setVisibility({ layer_ref: String(payload.layer_ref ?? ''), visible: Boolean(payload.visible) });
+          {
+            const layerRef = String(payload.layer_ref ?? '');
+            const layer = findLayer(layerRef);
+            if (!layer) throw new GisExecutionError('UNKNOWN_LAYER', `图层不存在: ${layerRef}`);
+            layer.setVisible(Boolean(payload.visible));
+            onLayerVisibilityChange?.(layerRef, layer.getVisible());
+            return { layer_ref: layerRef, visible: layer.getVisible() };
+          }
           case 'set_vector_style':
             if (!payload.style || typeof payload.style !== 'object') throw new GisExecutionError('INVALID_TOOL_CALL', '缺少 style');
             return capabilities.setVectorStyle({ layer_ref: String(payload.layer_ref ?? ''), style: payload.style as never });

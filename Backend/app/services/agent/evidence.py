@@ -182,6 +182,15 @@ class EvidenceLedger:
     def get(self, evidence_id: str) -> EvidenceItem | None:
         return self._items.get(evidence_id)
 
+    def all_items(self) -> tuple[EvidenceItem, ...]:
+        return tuple(self._items.values())
+
+    def historical_items(self, *, current_turn_id: str) -> tuple[EvidenceItem, ...]:
+        current_working_ids = set(self._working_by_turn.get(current_turn_id, []))
+        return tuple(
+            item for item in self._items.values() if item.evidence_id not in current_working_ids
+        )
+
     def _get_or_create_item(
         self,
         *,
@@ -224,6 +233,32 @@ class EvidenceLedger:
         )
         self._items[evidence_id] = item
         return item
+
+    def export_items(self) -> tuple[EvidenceItem, ...]:
+        """Export all current evidence items for persistence."""
+        return tuple(self._items.values())
+
+    def restore_items(
+        self,
+        items: Iterable[EvidenceItem],
+        working_by_turn: Mapping[str, Sequence[str]] | None = None,
+        next_citation_ordinal: int | None = None,
+    ) -> None:
+        """Restore evidence state from persistent records."""
+        for item in items:
+            self._items[item.evidence_id] = item
+        if working_by_turn:
+            for turn_id, ev_ids in working_by_turn.items():
+                self._working_by_turn[turn_id] = list(ev_ids)
+        if next_citation_ordinal is not None:
+            self._next_citation_ordinal = next_citation_ordinal
+        else:
+            max_ord = 0
+            for item in self._items.values():
+                ord_val = self._citation_ordinal(item.citation_id)
+                if ord_val < 10**9 and ord_val > max_ord:
+                    max_ord = ord_val
+            self._next_citation_ordinal = max(1, max_ord + 1)
 
     def _activate(self, *, turn_id: str, evidence_id: str) -> None:
         working = self._working_by_turn.setdefault(turn_id, [])

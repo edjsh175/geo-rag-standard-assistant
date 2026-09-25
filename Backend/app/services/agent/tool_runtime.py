@@ -122,18 +122,38 @@ class ToolRuntime:
         self.spatial_service = spatial_service
 
     async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
-        try:
-            arguments = self.registry.validate(call.name, call.arguments)
-        except (KeyError, ValueError) as exc:
-            raise ToolExecutionError(str(exc)) from exc
+        if self.resource_fuse is not None:
+            self.resource_fuse.consume_step(tool_name=call.name)
+        from app.services.agent.tools import (
+            CONTROL_ACTION_NAMES,
+            ComposeAnswerInput,
+            ClarifyInput,
+            LimitationInput,
+        )
+        if call.name in CONTROL_ACTION_NAMES:
+            model_map = {
+                "compose_answer": ComposeAnswerInput,
+                "clarify": ClarifyInput,
+                "limitation": LimitationInput,
+            }
+            input_model = model_map.get(call.name)
+            if input_model is not None:
+                try:
+                    arguments = input_model.model_validate(dict(call.arguments)).model_dump()
+                except Exception as exc:
+                    raise ToolExecutionError(str(exc)) from exc
+            else:
+                arguments = dict(call.arguments)
+        else:
+            try:
+                arguments = self.registry.validate(call.name, call.arguments)
+            except (KeyError, ValueError) as exc:
+                raise ToolExecutionError(str(exc)) from exc
         call = ToolCall(
             tool_call_id=call.tool_call_id,
             name=call.name,
             arguments=arguments,
         )
-        if self.resource_fuse is not None:
-            self.resource_fuse.consume_step(tool_name=call.name)
-
         if call.name == "retrieve_kb":
             observation = await self._retrieve_kb(turn_id=turn_id, call=call)
         elif call.name == "reuse_evidence":
@@ -282,10 +302,14 @@ class ToolRuntime:
         )
 
     def _compose_answer(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
-        raw_ids = call.arguments.get("evidence_ids")
+        raw_ids = call.arguments.get("selected_evidence_ids") or call.arguments.get("evidence_ids")
         if not isinstance(raw_ids, (list, tuple)):
-            raise ToolExecutionError("evidence_ids must be a list of strings")
+            raise ToolExecutionError("selected_evidence_ids must be a list of strings")
         evidence_ids = [str(value).strip() for value in raw_ids if str(value).strip()]
+        # If any selected evidence exists in ledger memory from prior turns, activate it into current turn
+        existing_in_ledger = [eid for eid in evidence_ids if self.evidence_ledger.get(eid) is not None]
+        if existing_in_ledger:
+            self.evidence_ledger.activate_existing(turn_id=turn_id, evidence_ids=existing_in_ledger)
         snapshot = self.evidence_ledger.freeze(
             turn_id=turn_id,
             evidence_ids=evidence_ids,

@@ -11,6 +11,7 @@ from app.services.agent.contracts import MapAction
 class PublicationDecision(str, Enum):
     PUBLISH = "PUBLISH"
     SAFE_FALLBACK = "SAFE_FALLBACK"
+    CONTINUE = "CONTINUE"
 
 
 class PublicationStateError(ValueError):
@@ -18,6 +19,7 @@ class PublicationStateError(ValueError):
 
 
 _PUBLISHABLE_STATES = {"published", "clarification", "limitation"}
+_CONTINUATION_STATES = {"tool_execution_required"}
 _BLOCKED_STATES = {
     "resource_fuse",
     "model_output_invalid",
@@ -80,3 +82,71 @@ class PublishedResult:
             fallback_text=fallback_text.strip(),
             map_action=None,
         )
+
+    @classmethod
+    def continuation(
+        cls,
+        *,
+        publication_state: str = "tool_execution_required",
+        map_action: MapAction | None = None,
+        pending_tool_call_id: str | None = None,
+        continuation_token: str | None = None,
+    ) -> "PublishedResult":
+        state = str(publication_state).strip()
+        if state not in _CONTINUATION_STATES:
+            raise PublicationStateError(f"state is not a continuation state: {state}")
+        return cls(
+            publication_state=state,
+            decision=PublicationDecision.CONTINUE,
+            answer=None,
+            fallback_text=None,
+            map_action=map_action,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DirectAnswerResult:
+    text: str
+    user_visible: bool = True
+    logical_turn_completed: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeAnswerResult:
+    text: str
+    citations: tuple[str, ...]
+    user_visible: bool = True
+    logical_turn_completed: bool = True
+    map_action: MapAction | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ClarificationRequired:
+    question: str
+    user_visible: bool = True
+    logical_turn_completed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserToolExecutionRequired:
+    tool_call_id: str
+    tool_name: str
+    continuation_token: str
+    map_action: MapAction
+    user_visible: bool = False
+    logical_turn_completed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SafeLimitation:
+    message: str
+    user_visible: bool = True
+    logical_turn_completed: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class NoSafeAnswer:
+    reason: str
+    user_visible: bool = True
+    logical_turn_completed: bool = True
+

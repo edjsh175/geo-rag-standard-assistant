@@ -168,3 +168,80 @@ class GroundingReviewer:
         if normalized_verdict == "OVERSTATED" and "OVERSTATED" not in finding_statuses:
             raise ValueError("overstated verdict conflicts with review findings")
         return ReviewResult(verdict=normalized_verdict, findings=tuple(findings))
+
+
+def build_answer_repair_scope(
+    answer: GeneratedAnswer,
+    review: Any,
+    snapshot: FrozenEvidenceSnapshot,
+) -> dict[str, Any]:
+    """Construct deterministic repair scope for rejected answer draft."""
+    raw_findings = getattr(review, "findings", ()) or ()
+    findings_by_unit = {getattr(f, "unit_id", ""): f for f in raw_findings}
+    immutable_units: list[str] = []
+    editable_units: list[dict[str, Any]] = []
+    allowed_evidence = [item.citation_id for item in snapshot.items]
+
+    for unit in answer.units:
+        finding = findings_by_unit.get(unit.unit_id)
+        if finding and finding.status == "SUPPORTED":
+            immutable_units.append(unit.unit_id)
+        else:
+            editable_units.append({
+                "unit_id": unit.unit_id,
+                "status": finding.status if finding else "UNSUPPORTED",
+                "current_text": unit.text,
+                "allowed_evidence_ids": allowed_evidence,
+            })
+
+    return {
+        "contract_version": "answer_repair_scope_v1",
+        "immutable_units": immutable_units,
+        "editable_units": editable_units,
+        "forbid_new_units": True,
+    }
+
+
+def validate_answer_repair_draft(
+    base_answer: GeneratedAnswer,
+    repaired_answer: GeneratedAnswer,
+    repair_scope: Mapping[str, Any],
+) -> None:
+    """Deterministically validate that repaired answer adheres strictly to repair scope."""
+    immutable_unit_ids = set(repair_scope.get("immutable_units", []))
+    editable_dict = {
+        item["unit_id"]: item for item in repair_scope.get("editable_units", [])
+    }
+
+    base_by_id = {u.unit_id: u for u in base_answer.units}
+    repaired_by_id = {u.unit_id: u for u in repaired_answer.units}
+
+    # 1. No new units allowed
+    new_units = set(repaired_by_id) - set(base_by_id)
+    if new_units:
+        raise ValueError(f"answer_repair_new_unit_forbidden: new units {new_units} added in repair")
+
+    # 2. Immutable units must be present and unmodified
+    for uid in immutable_unit_ids:
+        if uid not in repaired_by_id:
+            raise ValueError(f"answer_repair_immutable_unit_missing: immutable unit '{uid}' was removed")
+        base_unit = base_by_id[uid]
+        repaired_unit = repaired_by_id[uid]
+        if repaired_unit.text != base_unit.text:
+            raise ValueError(f"answer_repair_immutable_unit_changed: text of '{uid}' was modified")
+        if set(repaired_unit.citations) != set(base_unit.citations):
+            raise ValueError(f"answer_repair_immutable_unit_changed: citations of '{uid}' were modified")
+
+    # 3. Relative order of units must be preserved
+    base_order = [u.unit_id for u in base_answer.units if u.unit_id in repaired_by_id]
+    repaired_order = [u.unit_id for u in repaired_answer.units]
+    if base_order != repaired_order:
+        raise ValueError("answer_repair_unit_order_changed: unit order was changed in repair")
+
+    # 4. Editable units must only reference allowed evidence
+    for uid, unit in repaired_by_id.items():
+        if uid in editable_dict:
+            allowed = set(editable_dict[uid].get("allowed_evidence_ids", []))
+            for cit in unit.citations:
+                if cit not in allowed:
+                    raise ValueError(f"answer_repair_new_evidence_forbidden: unit '{uid}' used unallowed citation '{cit}'")

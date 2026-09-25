@@ -28,6 +28,7 @@ class PendingBrowserExecution:
     max_elapsed_seconds: float
     retrieval_constraints: Any
     main_model_name: str | None
+    session_id: str = ""
 
 
 @dataclass(slots=True)

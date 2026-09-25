@@ -28,12 +28,15 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
+ollama pull qwen3-embedding:4b-q4_K_M
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 `Backend/.env` must point to usable PostgreSQL and MySQL instances. PostgreSQL stores vector and spatial retrieval data such as `policy_chunks`; MySQL stores standard metadata in `disaster_knowledge.geoai_metadata`. The backend fails fast if either core database is unavailable. Redis is used as a cache dependency, but the backend can still start when Redis is unavailable.
 
 `Backend/.env` 必须指向可用的 PostgreSQL 和 MySQL。PostgreSQL 存储 `policy_chunks` 等向量/空间检索数据，MySQL 使用 `disaster_knowledge.geoai_metadata` 存储标准元数据；任一核心数据库不可用时后端会启动失败。Redis 仅作为缓存依赖，不可用时后端仍可启动。
+
+默认向量模型为本地 Ollama 上的 `qwen3-embedding:4b-q4_K_M`，首次运行前执行 `ollama pull qwen3-embedding:4b-q4_K_M`。项目检索向量固定为 2048 维；切换 embedding 模型后，必须用同一模型重新生成已有 `policy_chunks` 的向量。
 
 API docs:
 

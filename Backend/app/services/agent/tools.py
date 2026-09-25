@@ -8,6 +8,19 @@ from typing import Any, Mapping
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 
+BROWSER_TOOL_NAMES = frozenset(
+    {
+        "import_vector_dataset",
+        "set_layer_visibility",
+        "set_vector_style",
+        "fit_vector_layer",
+        "locate_map",
+        "inspect_layer_features",
+        "get_feature_geometry",
+    }
+)
+
+
 class RetrieveKbInput(BaseModel):
     query: str = Field(..., min_length=1)
 
@@ -19,6 +32,15 @@ class ReuseEvidenceInput(BaseModel):
 
 class ComposeAnswerInput(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
+    selected_evidence_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unify_ids(self) -> "ComposeAnswerInput":
+        if not self.evidence_ids and self.selected_evidence_ids:
+            self.evidence_ids = list(self.selected_evidence_ids)
+        elif not self.selected_evidence_ids and self.evidence_ids:
+            self.selected_evidence_ids = list(self.evidence_ids)
+        return self
 
 
 class ClarifyInput(BaseModel):
@@ -139,6 +161,10 @@ class ToolRegistry:
     def specs(self) -> tuple[ToolSpec, ...]:
         return tuple(self._specs.values())
 
+    def specs_for(self, names: set[str] | frozenset[str] | Sequence[str]) -> tuple[ToolSpec, ...]:
+        name_set = set(names)
+        return tuple(spec for spec in self._specs.values() if spec.name in name_set)
+
     def get(self, name: str) -> ToolSpec:
         try:
             return self._specs[name]
@@ -151,6 +177,47 @@ class ToolRegistry:
             return spec.input_model.model_validate(dict(arguments)).model_dump()
         except ValidationError as exc:
             raise ValueError(f"invalid arguments for {name}: {exc}") from exc
+
+    def validate_arguments(self, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        return self.validate(name, arguments)
+
+
+CONTROL_ACTION_NAMES = frozenset(
+    {
+        "compose_answer",
+        "direct_answer",
+        "clarify",
+        "limitation",
+    }
+)
+
+
+def executable_tool_names(
+    registry: ToolRegistry,
+    map_context: Mapping[str, Any] | None,
+) -> frozenset[str]:
+    """Return the physical capability tool surface executable for the current request.
+
+    Control actions (compose_answer, direct_answer, clarify, limitation) are control
+    protocol actions, not tools, and are strictly excluded from the capability surface.
+    Non-browser tools are runtime-owned capabilities and always remain available. Browser
+    tools are admitted only when the active browser runtime explicitly reports
+    them through map_context.supported_tools.
+    """
+    non_browser = (registry.names() - BROWSER_TOOL_NAMES) - CONTROL_ACTION_NAMES
+    if not isinstance(map_context, Mapping):
+        return frozenset(non_browser)
+    if map_context.get("ready") is not True:
+        return frozenset(non_browser)
+    raw_supported = map_context.get("supported_tools")
+    if not isinstance(raw_supported, (list, tuple, set, frozenset)):
+        return frozenset(non_browser)
+    supported = {
+        str(name)
+        for name in raw_supported
+        if isinstance(name, str) and name in BROWSER_TOOL_NAMES
+    }
+    return frozenset(non_browser | (supported & registry.names()))
 
 
 def build_default_tool_registry() -> ToolRegistry:
@@ -173,31 +240,6 @@ def build_default_tool_registry() -> ToolRegistry:
                     "activate selected matches for the current turn."
                 ),
                 input_model=ReuseEvidenceInput,
-            ),
-            ToolSpec(
-                name="compose_answer",
-                description=(
-                    "Select current working evidence and freeze it as the immutable "
-                    "citation snapshot used by answer generation."
-                ),
-                input_model=ComposeAnswerInput,
-            ),
-            ToolSpec(
-                name="clarify",
-                description=(
-                    "Return a clarification question when the Controller cannot safely "
-                    "continue without user input."
-                ),
-                input_model=ClarifyInput,
-            ),
-            ToolSpec(
-                name="limitation",
-                description=(
-                    "End the turn with a bounded limitation when the available knowledge "
-                    "base evidence cannot support a knowledge answer and no clarification "
-                    "from the user would resolve that evidence gap."
-                ),
-                input_model=LimitationInput,
             ),
             ToolSpec(
                 name="import_vector_dataset",

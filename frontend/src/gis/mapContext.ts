@@ -9,6 +9,16 @@ export const createMapContextReader = (map: Map, readUserLayers: () => UserVecto
   let revision = 0;
   let signature = '';
   return () => {
+    const userLayers = readUserLayers();
+    const availableFiles = listVectorDatasets();
+    const supportedTools = ['locate_map', 'set_layer_visibility'];
+    if (availableFiles.length > 0) supportedTools.push('import_vector_dataset');
+    if (userLayers.length > 0) {
+      supportedTools.push('set_vector_style', 'fit_vector_layer', 'inspect_layer_features');
+    }
+    if (userLayers.some((layer) => layer.feature_refs.length > 0)) {
+      supportedTools.push('get_feature_geometry');
+    }
     const center3857 = map.getView().getCenter();
     const center = center3857 ? toLonLat(center3857) : null;
     const zoom = map.getView().getZoom();
@@ -31,13 +41,13 @@ export const createMapContextReader = (map: Map, readUserLayers: () => UserVecto
       schema_version: 2 as const,
       dimension: '2d' as const,
       ready: Boolean(map.getTargetElement()),
-      supported_tools: ['import_vector_dataset', 'set_layer_visibility', 'set_vector_style', 'fit_vector_layer', 'locate_map', 'inspect_layer_features', 'get_feature_geometry'],
+      supported_tools: supportedTools,
       viewport: center && Number.isFinite(zoom)
         ? { center: [center[0], center[1]] as [number, number], zoom: zoom!, crs: 'EPSG:4326' as const }
         : null,
       layer_tree: map.getLayers().getArray().map((layer, index) => mapLayer(layer, undefined, index)),
-      user_layers: readUserLayers(),
-      available_files: listVectorDatasets(),
+      user_layers: userLayers,
+      available_files: availableFiles,
     };
     const next = JSON.stringify(context);
     if (next !== signature) {
