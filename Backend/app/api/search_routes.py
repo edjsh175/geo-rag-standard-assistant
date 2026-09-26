@@ -67,7 +67,10 @@ def _build_search_application_service(
     document_repository: DocumentRepository | None = None,
 ) -> SearchApplicationService:
     retrieval_port = search_service.get_retrieval_port()
-    model_client = LLMConfigStageModelClient(llm_config)
+    model_client = LLMConfigStageModelClient(
+        llm_config,
+        audit_sink=_agent_session_store.save_model_input_audit,
+    )
     controller = MainController(
         model_client=model_client,
         tool_registry=build_default_tool_registry(),

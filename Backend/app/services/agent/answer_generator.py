@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from time import monotonic
+from typing import Any, Mapping
 from uuid import uuid4
 
 from app.services.agent.contracts import FrozenEvidenceSnapshot
@@ -47,6 +48,7 @@ class AnswerGenerator:
         snapshot: FrozenEvidenceSnapshot | None,
         stage_policy: LLMStagePolicy,
         model_name: str | None = None,
+        audit_context: Mapping[str, Any] | None = None,
     ) -> GeneratedAnswer:
         if snapshot is None or not snapshot.items:
             raise AnswerGenerationError(
@@ -78,6 +80,10 @@ class AnswerGenerator:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
+                audit_context={
+                    **dict(audit_context or {}),
+                    "frozen_evidence_snapshot_id": snapshot.snapshot_id,
+                } if audit_context is not None else None,
             )
             return (await self.model_client.complete(call)).content
 
@@ -100,6 +106,7 @@ class AnswerGenerator:
         repair_scope: Mapping[str, Any],
         stage_policy: LLMStagePolicy,
         model_name: str | None = None,
+        audit_context: Mapping[str, Any] | None = None,
     ) -> GeneratedAnswer:
         evidence_text = "\n\n".join(
             f"[{item.citation_id}] {item.title}\n{item.text}"
@@ -151,6 +158,10 @@ class AnswerGenerator:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
+                audit_context={
+                    **dict(audit_context or {}),
+                    "frozen_evidence_snapshot_id": snapshot.snapshot_id,
+                } if audit_context is not None else None,
             )
             return (await self.model_client.complete(call)).content
 

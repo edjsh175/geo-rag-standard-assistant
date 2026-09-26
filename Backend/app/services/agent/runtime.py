@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass, field
+import inspect
 import json
 from typing import Any, AsyncIterator, Callable, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -37,6 +38,15 @@ from app.services.agent.tool_runtime import (
 )
 from app.services.agent.tools import CONTROL_ACTION_NAMES, build_default_tool_registry
 from app.services.rag.contracts import RetrievalPort
+
+
+def _supported_kwargs(callable_obj: Callable[..., Any], kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Filter optional runtime kwargs for compatibility stubs without hiding production errors."""
+    signature = inspect.signature(callable_obj)
+    parameters = signature.parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return dict(kwargs)
+    return {key: value for key, value in kwargs.items() if key in parameters}
 
 
 @dataclass(frozen=True, slots=True)
@@ -714,6 +724,12 @@ class AgentRuntime:
                     action_state=action_state,
                     observations=tuple(observations),
                     stage_policy=stage_policy,
+                    audit_context={
+                        "principal_id": request.principal_id,
+                        "session_id": session.session_id,
+                        "turn_id": turn_id,
+                        "context_snapshot_id": snapshot_ctrl.snapshot_id,
+                    },
                     # Backward compatibility for legacy test stubs:
                     question=proj_ctrl.user_question,
                     context_summary=proj_ctrl.conversation_text,
@@ -723,13 +739,9 @@ class AgentRuntime:
                 )
                 if main_model_name is not None:
                     controller_kwargs["model_name"] = main_model_name
-                import inspect
-                sig = inspect.signature(self.controller.decide)
-                accepted_params = sig.parameters
-                has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in accepted_params.values())
-                if not has_varkw:
-                    controller_kwargs = {k: v for k, v in controller_kwargs.items() if k in accepted_params}
-                call = await self.controller.decide(**controller_kwargs)
+                call = await self.controller.decide(
+                    **_supported_kwargs(self.controller.decide, controller_kwargs)
+                )
                 self._validate_decision_against_action_state(call, action_state)
             except TimeoutError:
                 return await resource_fuse_result()
@@ -1246,10 +1258,18 @@ class AgentRuntime:
                 question=question,
                 snapshot=snapshot,
                 stage_policy=stage_policy,
+                audit_context={
+                    "principal_id": request.principal_id,
+                    "session_id": session.session_id,
+                    "turn_id": turn_id,
+                    "context_snapshot_id": snapshot_ans.snapshot_id,
+                },
             )
             if main_model_name is not None:
                 answer_kwargs["model_name"] = main_model_name
-            answer = await self.answer_generator.generate(**answer_kwargs)
+            answer = await self.answer_generator.generate(
+                **_supported_kwargs(self.answer_generator.generate, answer_kwargs)
+            )
         except TimeoutError:
             return await resource_fuse_result()
         except AnswerGenerationError as exc:
@@ -1304,10 +1324,18 @@ class AgentRuntime:
                     answer=answer,
                     snapshot=snapshot,
                     stage_policy=stage_policy,
+                    audit_context={
+                        "principal_id": request.principal_id,
+                        "session_id": session.session_id,
+                        "turn_id": turn_id,
+                        "context_snapshot_id": snapshot_rev.snapshot_id,
+                    },
                 )
                 if main_model_name is not None:
                     reviewer_kwargs["model_name"] = main_model_name
-                review = await self.reviewer.review(**reviewer_kwargs)
+                review = await self.reviewer.review(
+                    **_supported_kwargs(self.reviewer.review, reviewer_kwargs)
+                )
             except TimeoutError:
                 return await resource_fuse_result()
             except Exception as exc:
@@ -1380,21 +1408,40 @@ class AgentRuntime:
                 repaired_ok = False
                 if repair_scope.get("editable_units") and hasattr(self.answer_generator, "generate_repair"):
                     try:
+                        repair_kwargs = {
+                            "question": question,
+                            "snapshot": snapshot,
+                            "base_answer": answer,
+                            "repair_scope": repair_scope,
+                            "stage_policy": stage_policy,
+                            "model_name": main_model_name,
+                            "audit_context": {
+                                "principal_id": request.principal_id,
+                                "session_id": session.session_id,
+                                "turn_id": turn_id,
+                            },
+                        }
                         answer_v2 = await self.answer_generator.generate_repair(
-                            question=question,
-                            snapshot=snapshot,
-                            base_answer=answer,
-                            repair_scope=repair_scope,
-                            stage_policy=stage_policy,
-                            model_name=main_model_name,
+                            **_supported_kwargs(
+                                self.answer_generator.generate_repair,
+                                repair_kwargs,
+                            )
                         )
                         validate_answer_repair_draft(answer, answer_v2, repair_scope)
+                        reviewer_2_kwargs = {
+                            "question": question,
+                            "answer": answer_v2,
+                            "snapshot": snapshot,
+                            "stage_policy": stage_policy,
+                            "model_name": main_model_name,
+                            "audit_context": {
+                                "principal_id": request.principal_id,
+                                "session_id": session.session_id,
+                                "turn_id": turn_id,
+                            },
+                        }
                         review_2 = await self.reviewer.review(
-                            question=question,
-                            answer=answer_v2,
-                            snapshot=snapshot,
-                            stage_policy=stage_policy,
-                            model_name=main_model_name,
+                            **_supported_kwargs(self.reviewer.review, reviewer_2_kwargs)
                         )
                         if await self._is_cancellation_requested(
                             request.principal_id,

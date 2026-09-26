@@ -4,8 +4,86 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import hashlib
+import json
 from time import monotonic
-from typing import Mapping, Protocol
+from typing import Any, Awaitable, Callable, Mapping, Protocol
+
+from app.models.agent_context import ModelInputAuditRecord
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _sha256(value: Any) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def model_request_messages_hash(messages: tuple[Mapping[str, str], ...]) -> str:
+    return _sha256([dict(message) for message in messages])
+
+
+def build_model_input_audit_record(request: "ModelRequest") -> ModelInputAuditRecord:
+    context = dict(request.audit_context or {})
+    if not request.call_id:
+        raise ValueError("audited ModelRequest requires call_id")
+    required_context = ("principal_id", "session_id", "turn_id")
+    missing = [key for key in required_context if not str(context.get(key) or "").strip()]
+    if missing:
+        raise ValueError(
+            "audited ModelRequest missing audit context: " + ", ".join(missing)
+        )
+    return ModelInputAuditRecord(
+        audit_id=f"{request.call_id}:{request.attempt}",
+        principal_id=str(context["principal_id"]),
+        session_id=str(context["session_id"]),
+        turn_id=str(context["turn_id"]),
+        stage=request.stage,
+        call_id=request.call_id,
+        attempt=int(request.attempt),
+        model_name=request.model_name,
+        request_reasoning=bool(request.request_reasoning),
+        temperature=float(request.temperature),
+        timeout_seconds=request.timeout_seconds,
+        response_schema_hash=(
+            _sha256(dict(request.response_schema))
+            if request.response_schema is not None
+            else None
+        ),
+        messages_hash=model_request_messages_hash(request.messages),
+        messages_section_hashes=tuple(
+            _sha256(dict(message)) for message in request.messages
+        ),
+        context_snapshot_id=(
+            str(context["context_snapshot_id"])
+            if context.get("context_snapshot_id")
+            else None
+        ),
+        frozen_evidence_snapshot_id=(
+            str(context["frozen_evidence_snapshot_id"])
+            if context.get("frozen_evidence_snapshot_id")
+            else None
+        ),
+        action_surface_hash=(
+            str(context["action_surface_hash"])
+            if context.get("action_surface_hash")
+            else (_sha256(context["action_surface"]) if "action_surface" in context else None)
+        ),
+        tool_contract_hash=(
+            str(context["tool_contract_hash"])
+            if context.get("tool_contract_hash")
+            else (_sha256(context["tool_contracts"]) if "tool_contracts" in context else None)
+        ),
+        created_at=datetime.now(timezone.utc),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +97,7 @@ class ModelRequest:
     attempt: int = 1
     timeout_seconds: float | None = None
     response_schema: Mapping[str, Any] | None = None
+    audit_context: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +136,14 @@ class LLMConfigStageModelClient:
     provider-neutral; provider/model selection stays inside the LLM adapter.
     """
 
-    def __init__(self, llm_config) -> None:
+    def __init__(
+        self,
+        llm_config,
+        *,
+        audit_sink: Callable[[ModelInputAuditRecord], Awaitable[None]] | None = None,
+    ) -> None:
         self.llm_config = llm_config
+        self.audit_sink = audit_sink
         self.audit_log: deque[ModelCallAudit] = deque(maxlen=1000)
 
     @property
@@ -74,6 +159,11 @@ class LLMConfigStageModelClient:
     async def complete(self, request: ModelRequest) -> ModelResponse:
         started_at = monotonic()
         outcome = "error"
+        if request.audit_context is not None:
+            audit_record = build_model_input_audit_record(request)
+            if self.audit_sink is None:
+                raise RuntimeError("audited ModelRequest requires an audit sink")
+            await self.audit_sink(audit_record)
         from app.core.config import settings
         is_deepseek = (
             getattr(settings, "LLM_PROVIDER", None) == "deepseek"

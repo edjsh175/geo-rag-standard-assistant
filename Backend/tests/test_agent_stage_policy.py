@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.agent.model_client import LLMConfigStageModelClient, ModelRequest
+from app.services.agent.model_client import (
+    LLMConfigStageModelClient,
+    ModelRequest,
+    model_request_messages_hash,
+)
 from app.services.agent.stage_policy import LLMStagePolicy
 
 
@@ -159,3 +163,93 @@ async def test_resolved_main_model_identity_stays_stable_across_stages() -> None
 
     assert [call["model"] for call in llm.calls] == ["reasoning-main", "reasoning-main"]
     assert [call["request_reasoning"] for call in llm.calls] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_model_input_audit_hashes_the_exact_request_before_provider_call() -> None:
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+        def __init__(self) -> None:
+            self.provider_calls = 0
+
+        async def chat_completion(self, **kwargs):
+            self.provider_calls += 1
+            return "{}"
+
+    saved = []
+    llm = FakeLLMConfig()
+
+    async def audit_sink(record):
+        assert llm.provider_calls == 0
+        saved.append(record)
+
+    client = LLMConfigStageModelClient(llm, audit_sink=audit_sink)
+    request = ModelRequest(
+        stage="controller",
+        messages=(
+            {"role": "system", "content": "system contract"},
+            {"role": "user", "content": "actual prompt"},
+        ),
+        request_reasoning=True,
+        model_name="main-model",
+        temperature=0.1,
+        call_id="call-audit-1",
+        attempt=2,
+        timeout_seconds=9.5,
+        response_schema={"type": "object"},
+        audit_context={
+            "principal_id": "admin:test",
+            "session_id": "session-audit",
+            "turn_id": "turn-7",
+            "context_snapshot_id": "snap-controller",
+            "action_surface_hash": "action-hash",
+            "tool_contract_hash": "tool-hash",
+        },
+    )
+
+    await client.complete(request)
+
+    assert len(saved) == 1
+    record = saved[0]
+    assert record.audit_id == "call-audit-1:2"
+    assert record.messages_hash == model_request_messages_hash(request.messages)
+    assert record.principal_id == "admin:test"
+    assert record.session_id == "session-audit"
+    assert record.turn_id == "turn-7"
+    assert record.context_snapshot_id == "snap-controller"
+    assert record.action_surface_hash == "action-hash"
+    assert record.tool_contract_hash == "tool-hash"
+    assert record.attempt == 2
+    assert record.model_name == "main-model"
+    assert record.request_reasoning is True
+    assert record.response_schema_hash
+    assert len(record.messages_section_hashes) == 2
+    assert llm.provider_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_model_input_audit_requires_call_id_when_audit_context_is_present() -> None:
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+        async def chat_completion(self, **kwargs):
+            raise AssertionError("provider must not be called for unauditable request")
+
+    async def audit_sink(record):
+        raise AssertionError("invalid audit record must not be persisted")
+
+    client = LLMConfigStageModelClient(FakeLLMConfig(), audit_sink=audit_sink)
+
+    with pytest.raises(ValueError, match="call_id"):
+        await client.complete(
+            ModelRequest(
+                stage="controller",
+                messages=({"role": "user", "content": "prompt"},),
+                audit_context={
+                    "principal_id": "admin:test",
+                    "session_id": "session-audit",
+                    "turn_id": "turn-1",
+                },
+            )
+        )

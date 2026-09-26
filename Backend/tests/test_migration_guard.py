@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.core.migration_guard import (
     DatabaseMigrationError,
+    REQUIRED_TABLE_MIGRATION_MAP,
     verify_required_database_tables,
 )
 
@@ -45,3 +46,9 @@ async def test_migration_guard_passes_when_all_tables_exist() -> None:
 async def test_migration_guard_raises_on_none_engine() -> None:
     with pytest.raises(DatabaseMigrationError, match="engine is not initialized"):
         await verify_required_database_tables(None)
+
+
+def test_model_input_audit_table_is_required_by_migration_guard() -> None:
+    assert REQUIRED_TABLE_MIGRATION_MAP["geoai_model_input_audits"] == (
+        "Backend/migrations/20260926_model_input_audit.sql"
+    )

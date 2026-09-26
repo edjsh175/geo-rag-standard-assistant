@@ -266,6 +266,7 @@ async def test_invalid_continuation_is_rejected_before_provider_probe() -> None:
 
 def test_search_application_builder_wires_server_authorities_to_correct_layers() -> None:
     from app.api.search_routes import (
+        _agent_session_store,
         _build_search_application_service,
         _provider_health_service,
     )
@@ -284,3 +285,7 @@ def test_search_application_builder_wires_server_authorities_to_correct_layers()
 
     assert application_service.document_repository is document_repository
     assert application_service.agent_runtime.provider_health_provider is _provider_health_service
+    model_client = application_service.agent_runtime.controller.model_client
+    assert model_client.audit_sink is not None
+    assert model_client.audit_sink.__self__ is _agent_session_store
+    assert model_client.audit_sink.__func__.__name__ == "save_model_input_audit"

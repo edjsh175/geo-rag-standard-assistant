@@ -18,7 +18,7 @@ from typing import Any, Mapping, Sequence
 from sqlalchemy import text
 
 from app.core.database import db_manager
-from app.models.agent_context import ContextSnapshotRecord
+from app.models.agent_context import ContextSnapshotRecord, ModelInputAuditRecord
 from app.services.agent.contracts import EvidenceItem
 from app.services.agent.events import AgentEvent
 from app.services.agent.evidence import EvidenceLedger
@@ -226,6 +226,19 @@ class AgentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def save_model_input_audit(self, record: ModelInputAuditRecord) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_model_input_audits(
+        self,
+        principal_id: str,
+        session_id: str,
+        turn_id: str | None = None,
+    ) -> list[ModelInputAuditRecord]:
+        raise NotImplementedError
+
+    @abstractmethod
     async def save_pending_execution(
         self,
         principal_id: str,
@@ -273,6 +286,7 @@ class InMemoryAgentStore(AgentStore):
         self._evidence: dict[tuple[str, str], dict[str, EvidenceItem]] = {}
         self._evidence_activations: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
         self._snapshots: dict[tuple[str, str], list[ContextSnapshotRecord]] = {}
+        self._model_input_audits: dict[tuple[str, str], list[ModelInputAuditRecord]] = {}
         self._pending: dict[tuple[str, str], tuple[PendingBrowserExecution, datetime]] = {}
 
     async def get_or_create_session(
@@ -291,6 +305,7 @@ class InMemoryAgentStore(AgentStore):
                     self._evidence.pop(oldest_key, None)
                     self._evidence_activations.pop(oldest_key, None)
                     self._snapshots.pop(oldest_key, None)
+                    self._model_input_audits.pop(oldest_key, None)
                     self._pending.pop(oldest_key, None)
                 ledger = EvidenceLedger(session_id=key[1])
                 session = AgentSession(
@@ -303,6 +318,7 @@ class InMemoryAgentStore(AgentStore):
                 self._evidence[key] = {}
                 self._evidence_activations[key] = {}
                 self._snapshots[key] = []
+                self._model_input_audits[key] = []
             return session
 
     async def get_session(
@@ -365,6 +381,7 @@ class InMemoryAgentStore(AgentStore):
                 self._events.setdefault(key, [])
                 self._evidence.setdefault(key, {})
                 self._snapshots.setdefault(key, [])
+                self._model_input_audits.setdefault(key, [])
             turn_number = session.next_turn_number
             session.next_turn_number += 1
             return f"turn-{turn_number}"
@@ -472,6 +489,32 @@ class InMemoryAgentStore(AgentStore):
                 if stage is None or sn.stage == stage:
                     return sn
             return None
+
+    async def save_model_input_audit(self, record: ModelInputAuditRecord) -> None:
+        key = (record.principal_id.strip(), record.session_id.strip())
+        async with self._lock:
+            rows = self._model_input_audits.setdefault(key, [])
+            existing = next((row for row in rows if row.audit_id == record.audit_id), None)
+            if existing is not None:
+                if existing != record:
+                    raise RuntimeError(
+                        f"model input audit conflict for audit_id={record.audit_id}"
+                    )
+                return
+            rows.append(record)
+
+    async def list_model_input_audits(
+        self,
+        principal_id: str,
+        session_id: str,
+        turn_id: str | None = None,
+    ) -> list[ModelInputAuditRecord]:
+        key = (principal_id.strip(), session_id.strip())
+        async with self._lock:
+            rows = list(self._model_input_audits.get(key, ()))
+        if turn_id is not None:
+            rows = [row for row in rows if row.turn_id == turn_id]
+        return rows
 
     async def save_pending_execution(
         self,
@@ -1203,6 +1246,157 @@ class PostgresAgentStore(AgentStore):
             snapshot_payload=_json_loads(row["snapshot_payload"]) or {},
             token_usage_estimate=int(row["token_usage_estimate"] or 0),
             source_event_ids=tuple(_json_loads(row["source_event_ids"]) or ()),
+            created_at=row["created_at"],
+        )
+
+    async def save_model_input_audit(self, record: ModelInputAuditRecord) -> None:
+        if not self._is_postgres_available:
+            return await self._fallback.save_model_input_audit(record)
+
+        async with self._manager.get_postgres_session() as db_session:
+            result = await db_session.execute(
+                text(
+                    """
+                    INSERT INTO geoai_model_input_audits (
+                        audit_id, principal_id, session_id, turn_id, stage,
+                        call_id, attempt, model_name, request_reasoning, temperature,
+                        timeout_seconds, response_schema_hash, messages_hash,
+                        messages_section_hashes, context_snapshot_id,
+                        frozen_evidence_snapshot_id, action_surface_hash,
+                        tool_contract_hash, created_at
+                    )
+                    VALUES (
+                        :audit_id, :principal_id, :session_id, :turn_id, :stage,
+                        :call_id, :attempt, :model_name, :request_reasoning, :temperature,
+                        :timeout_seconds, :response_schema_hash, :messages_hash,
+                        CAST(:messages_section_hashes AS jsonb), :context_snapshot_id,
+                        :frozen_evidence_snapshot_id, :action_surface_hash,
+                        :tool_contract_hash, :created_at
+                    )
+                    ON CONFLICT (audit_id) DO NOTHING
+                    RETURNING audit_id
+                    """
+                ),
+                {
+                    "audit_id": record.audit_id,
+                    "principal_id": record.principal_id,
+                    "session_id": record.session_id,
+                    "turn_id": record.turn_id,
+                    "stage": record.stage,
+                    "call_id": record.call_id,
+                    "attempt": record.attempt,
+                    "model_name": record.model_name,
+                    "request_reasoning": record.request_reasoning,
+                    "temperature": record.temperature,
+                    "timeout_seconds": record.timeout_seconds,
+                    "response_schema_hash": record.response_schema_hash,
+                    "messages_hash": record.messages_hash,
+                    "messages_section_hashes": _json_dumps(list(record.messages_section_hashes)),
+                    "context_snapshot_id": record.context_snapshot_id,
+                    "frozen_evidence_snapshot_id": record.frozen_evidence_snapshot_id,
+                    "action_surface_hash": record.action_surface_hash,
+                    "tool_contract_hash": record.tool_contract_hash,
+                    "created_at": record.created_at,
+                },
+            )
+            inserted = result.mappings().first()
+            if inserted is not None:
+                return
+
+            existing_result = await db_session.execute(
+                text(
+                    """
+                    SELECT audit_id, principal_id, session_id, turn_id, stage,
+                           call_id, attempt, model_name, request_reasoning, temperature,
+                           timeout_seconds, response_schema_hash, messages_hash,
+                           messages_section_hashes, context_snapshot_id,
+                           frozen_evidence_snapshot_id, action_surface_hash,
+                           tool_contract_hash, created_at
+                    FROM geoai_model_input_audits
+                    WHERE audit_id = :audit_id
+                    LIMIT 1
+                    """
+                ),
+                {"audit_id": record.audit_id},
+            )
+            row = existing_result.mappings().first()
+            if row is None:
+                raise RuntimeError(
+                    f"model input audit insert lost for audit_id={record.audit_id}"
+                )
+            existing = self._model_input_audit_from_row(row)
+            if existing != record:
+                raise RuntimeError(
+                    f"model input audit conflict for audit_id={record.audit_id}"
+                )
+
+    async def list_model_input_audits(
+        self,
+        principal_id: str,
+        session_id: str,
+        turn_id: str | None = None,
+    ) -> list[ModelInputAuditRecord]:
+        if not self._is_postgres_available:
+            return await self._fallback.list_model_input_audits(
+                principal_id,
+                session_id,
+                turn_id,
+            )
+
+        condition = "AND turn_id = :turn_id" if turn_id is not None else ""
+        params: dict[str, Any] = {
+            "principal_id": principal_id.strip(),
+            "session_id": session_id.strip(),
+        }
+        if turn_id is not None:
+            params["turn_id"] = turn_id
+        async with self._manager.get_postgres_session() as db_session:
+            result = await db_session.execute(
+                text(
+                    f"""
+                    SELECT audit_id, principal_id, session_id, turn_id, stage,
+                           call_id, attempt, model_name, request_reasoning, temperature,
+                           timeout_seconds, response_schema_hash, messages_hash,
+                           messages_section_hashes, context_snapshot_id,
+                           frozen_evidence_snapshot_id, action_surface_hash,
+                           tool_contract_hash, created_at
+                    FROM geoai_model_input_audits
+                    WHERE principal_id = :principal_id AND session_id = :session_id {condition}
+                    ORDER BY created_at ASC, attempt ASC
+                    """
+                ),
+                params,
+            )
+            rows = result.mappings().fetchall()
+        return [self._model_input_audit_from_row(row) for row in rows]
+
+    @staticmethod
+    def _model_input_audit_from_row(row: Mapping[str, Any]) -> ModelInputAuditRecord:
+        return ModelInputAuditRecord(
+            audit_id=row["audit_id"],
+            principal_id=row["principal_id"],
+            session_id=row["session_id"],
+            turn_id=row["turn_id"],
+            stage=row["stage"],
+            call_id=row["call_id"],
+            attempt=int(row["attempt"]),
+            model_name=row["model_name"],
+            request_reasoning=bool(row["request_reasoning"]),
+            temperature=float(row["temperature"]),
+            timeout_seconds=(
+                float(row["timeout_seconds"])
+                if row["timeout_seconds"] is not None
+                else None
+            ),
+            response_schema_hash=row["response_schema_hash"],
+            messages_hash=row["messages_hash"],
+            messages_section_hashes=tuple(
+                str(value) for value in (_json_loads(row["messages_section_hashes"]) or ())
+            ),
+            context_snapshot_id=row["context_snapshot_id"],
+            frozen_evidence_snapshot_id=row["frozen_evidence_snapshot_id"],
+            action_surface_hash=row["action_surface_hash"],
+            tool_contract_hash=row["tool_contract_hash"],
             created_at=row["created_at"],
         )
 

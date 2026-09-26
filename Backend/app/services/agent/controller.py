@@ -57,6 +57,7 @@ class MainController:
         working_evidence: Sequence[Mapping[str, Any]] | None = None,
         available_tool_names: set[str] | frozenset[str] | None = None,
         available_control_actions: set[str] | frozenset[str] | None = None,
+        audit_context: Mapping[str, Any] | None = None,
     ) -> ControllerDecision:
         # Unpack from projection if provided
         if projection is not None:
@@ -251,6 +252,19 @@ class MainController:
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
                 response_schema=decision_schema,
+                audit_context={
+                    **dict(audit_context or {}),
+                    "action_surface": {
+                        "available_capabilities": sorted(action_state.available_capabilities),
+                        "available_control_actions": sorted(action_state.available_control_actions),
+                        "selectable_evidence_ids": sorted(action_state.selectable_evidence_ids),
+                        "allowed_answer_kinds": sorted(action_state.allowed_answer_kinds),
+                    },
+                    "tool_contracts": {
+                        "tools_text": tools_text,
+                        "control_actions_text": control_text,
+                    },
+                } if audit_context is not None else None,
             )
             return (await self.model_client.complete(request)).content
 

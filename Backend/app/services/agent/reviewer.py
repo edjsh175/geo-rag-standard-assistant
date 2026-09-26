@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from time import monotonic
+from typing import Any, Mapping
 from uuid import uuid4
 
 from app.services.agent.answer_generator import GeneratedAnswer
@@ -43,6 +44,7 @@ class GroundingReviewer:
         snapshot: FrozenEvidenceSnapshot,
         stage_policy: LLMStagePolicy,
         model_name: str | None = None,
+        audit_context: Mapping[str, Any] | None = None,
     ) -> ReviewResult:
         evidence_text = "\n\n".join(
             f"[{item.citation_id}] {item.text}" for item in snapshot.items
@@ -87,6 +89,10 @@ class GroundingReviewer:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
+                audit_context={
+                    **dict(audit_context or {}),
+                    "frozen_evidence_snapshot_id": snapshot.snapshot_id,
+                } if audit_context is not None else None,
             )
             return (await self.model_client.complete(request)).content
 

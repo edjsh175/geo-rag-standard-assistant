@@ -67,6 +67,29 @@ class ContextSnapshotRecord:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@dataclass(frozen=True, slots=True)
+class ModelInputAuditRecord:
+    audit_id: str
+    principal_id: str
+    session_id: str
+    turn_id: str
+    stage: str
+    call_id: str
+    attempt: int
+    model_name: str | None
+    request_reasoning: bool
+    temperature: float
+    timeout_seconds: float | None
+    response_schema_hash: str | None
+    messages_hash: str
+    messages_section_hashes: tuple[str, ...]
+    context_snapshot_id: str | None = None
+    frozen_evidence_snapshot_id: str | None = None
+    action_surface_hash: str | None = None
+    tool_contract_hash: str | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 @dataclass(slots=True)
 class PendingBrowserExecutionRecord:
     token: str

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 import re
 import pytest
 
-from app.models.agent_context import ContextSnapshotRecord
+from app.models.agent_context import ContextSnapshotRecord, ModelInputAuditRecord
 from app.services.agent.contracts import EvidenceItem
 from app.services.agent.events import AgentEvent
 from app.services.agent.session import PendingBrowserExecution
@@ -112,6 +113,32 @@ class _SessionInsertContractManager:
     def __init__(self) -> None:
         self.postgres_sessionmaker = object()
         self.session = _SessionInsertContractSession()
+
+    @asynccontextmanager
+    async def get_postgres_session(self):
+        yield self.session
+
+
+class _ModelAuditContractSession:
+    def __init__(self) -> None:
+        self.row = None
+
+    async def execute(self, sql, params):
+        statement = str(sql)
+        if "INSERT INTO geoai_model_input_audits" in statement:
+            self.row = dict(params)
+            return _FakeResult({"audit_id": params["audit_id"]})
+        if "FROM geoai_model_input_audits" in statement and "WHERE principal_id" in statement:
+            return _FakeResult([dict(self.row)] if self.row is not None else [])
+        if "FROM geoai_model_input_audits" in statement and "WHERE audit_id" in statement:
+            return _FakeResult(dict(self.row) if self.row is not None else None)
+        return _FakeResult()
+
+
+class _ModelAuditContractManager:
+    def __init__(self) -> None:
+        self.postgres_sessionmaker = object()
+        self.session = _ModelAuditContractSession()
 
     @asynccontextmanager
     async def get_postgres_session(self):
@@ -262,6 +289,41 @@ async def test_in_memory_agent_store_snapshots():
 
 
 @pytest.mark.asyncio
+async def test_in_memory_model_input_audit_is_idempotent_and_conflict_safe():
+    store = InMemoryAgentStore()
+    created_at = datetime.now(timezone.utc)
+    record = ModelInputAuditRecord(
+        audit_id="call-1:1",
+        principal_id="user-1",
+        session_id="sess-1",
+        turn_id="turn-1",
+        stage="controller",
+        call_id="call-1",
+        attempt=1,
+        model_name="main-model",
+        request_reasoning=True,
+        temperature=0.2,
+        timeout_seconds=10.0,
+        response_schema_hash="schema-hash",
+        messages_hash="messages-hash",
+        messages_section_hashes=("system-hash", "user-hash"),
+        context_snapshot_id="snap-1",
+        action_surface_hash="action-hash",
+        tool_contract_hash="tool-hash",
+        created_at=created_at,
+    )
+
+    await store.save_model_input_audit(record)
+    await store.save_model_input_audit(record)
+    rows = await store.list_model_input_audits("user-1", "sess-1", "turn-1")
+    assert rows == [record]
+
+    conflicting = replace(record, messages_hash="different-hash")
+    with pytest.raises(RuntimeError, match="model input audit conflict"):
+        await store.save_model_input_audit(conflicting)
+
+
+@pytest.mark.asyncio
 async def test_in_memory_agent_store_pending_browser_execution():
     store = InMemoryAgentStore()
     pending = PendingBrowserExecution(
@@ -364,6 +426,38 @@ async def test_postgres_get_or_create_session_insert_has_matching_column_value_a
     assert manager.session.seen_insert is True
     assert session.principal_id == "user-1"
     assert session.session_id == "sess-create"
+
+
+@pytest.mark.asyncio
+async def test_postgres_model_input_audit_roundtrip_contract():
+    manager = _ModelAuditContractManager()
+    store = PostgresAgentStore(manager=manager)
+    record = ModelInputAuditRecord(
+        audit_id="call-pg:1",
+        principal_id="user-1",
+        session_id="sess-audit",
+        turn_id="turn-1",
+        stage="controller",
+        call_id="call-pg",
+        attempt=1,
+        model_name="main-model",
+        request_reasoning=False,
+        temperature=0.2,
+        timeout_seconds=5.0,
+        response_schema_hash="schema-hash",
+        messages_hash="messages-hash",
+        messages_section_hashes=("system-hash", "user-hash"),
+        context_snapshot_id="snap-1",
+        frozen_evidence_snapshot_id=None,
+        action_surface_hash="action-hash",
+        tool_contract_hash="tool-hash",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    await store.save_model_input_audit(record)
+    rows = await store.list_model_input_audits("user-1", "sess-audit", "turn-1")
+
+    assert rows == [record]
 
 
 @pytest.mark.asyncio

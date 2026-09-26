@@ -35,6 +35,7 @@ REQUIRED_TABLE_MIGRATION_MAP: dict[str, str] = {
     "geoai_agent_evidence": "Backend/migrations/20260925_agent_context_persistence.sql",
     "geoai_agent_evidence_activations": "Backend/migrations/20260926_agent_evidence_activations.sql",
     "geoai_context_snapshots": "Backend/migrations/20260925_agent_context_persistence.sql",
+    "geoai_model_input_audits": "Backend/migrations/20260926_model_input_audit.sql",
     "geoai_pending_browser_executions": "Backend/migrations/20260925_agent_context_persistence.sql",
 }
 
