@@ -1,0 +1,61 @@
+"""Agent observability, execution trace, and diagnostics routes."""
+
+from __future__ import annotations
+
+from typing import Any
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from app.core.auth import AdminIdentity
+from app.core.security import require_authenticated_admin
+from app.services.agent.store import PostgresAgentStore
+from app.services.agent.trace_service import AgentTraceService
+
+router = APIRouter()
+_trace_service = AgentTraceService(PostgresAgentStore())
+
+
+def get_agent_trace_service() -> AgentTraceService:
+    return _trace_service
+
+
+@router.get("/sessions/{session_id}/turns/{turn_id}")
+async def get_turn_trace(
+    session_id: str,
+    turn_id: str,
+    principal_id: str | None = Query(None, description="Optional principal_id override; defaults to current admin"),
+    current_admin: AdminIdentity = Depends(require_authenticated_admin),
+    trace_service: AgentTraceService = Depends(get_agent_trace_service),
+) -> dict[str, Any]:
+    """Retrieve structured execution trace, ordered events, model calls, and snapshot refs for a turn."""
+    effective_principal = principal_id or f"admin:{current_admin.username}"
+    trace = await trace_service.get_turn_trace(
+        principal_id=effective_principal,
+        session_id=session_id,
+        turn_id=turn_id,
+    )
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Turn trace not found for session_id='{session_id}', turn_id='{turn_id}'",
+        )
+    return trace
+
+
+@router.get("/traces/{trace_id}")
+async def get_trace_by_id(
+    trace_id: str,
+    current_admin: AdminIdentity = Depends(require_authenticated_admin),
+    trace_service: AgentTraceService = Depends(get_agent_trace_service),
+) -> dict[str, Any]:
+    """Retrieve turn execution trace by its unique trace_id."""
+    effective_principal = f"admin:{current_admin.username}"
+    trace = await trace_service.get_trace_by_id(
+        principal_id=effective_principal,
+        trace_id=trace_id,
+    )
+    if trace is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution trace not found for trace_id='{trace_id}'",
+        )
+    return trace

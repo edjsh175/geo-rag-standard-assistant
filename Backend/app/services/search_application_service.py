@@ -268,6 +268,8 @@ class SearchApplicationService:
             map_action=published.map_action,
             pending_tool_call_id=getattr(run_result, "pending_tool_call_id", None),
             continuation_token=getattr(run_result, "continuation_token", None),
+            remaining_steps=getattr(run_result, "remaining_steps", None),
+            remaining_seconds=getattr(run_result, "remaining_seconds", None),
         )
 
     async def stream(
@@ -340,6 +342,8 @@ class SearchApplicationService:
                     map_action=published.map_action,
                     pending_tool_call_id=run_result.pending_tool_call_id,
                     continuation_token=run_result.continuation_token,
+                    remaining_steps=getattr(run_result, "remaining_steps", None),
+                    remaining_seconds=getattr(run_result, "remaining_seconds", None),
                 )
             )
 

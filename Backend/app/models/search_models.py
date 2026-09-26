@@ -184,6 +184,15 @@ class SearchResponse(BaseModel):
         None,
         description="Opaque token required to resume a pending browser GIS tool call.",
     )
+    remaining_steps: Optional[int] = Field(
+        None,
+        description="Authoritative remaining steps from backend ResourceFuse.",
+    )
+    remaining_seconds: Optional[float] = Field(
+        None,
+        description="Authoritative remaining seconds from backend ResourceFuse.",
+    )
+
 
     @field_serializer("map_action", when_used="always")
     def serialize_map_action(self, value: Optional[MapAction]) -> Optional[Dict[str, Any]]:

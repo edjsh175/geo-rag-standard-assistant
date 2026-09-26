@@ -90,6 +90,8 @@ class AgentRunResult:
     events: tuple[AgentEvent, ...]
     pending_tool_call_id: str | None = None
     continuation_token: str | None = None
+    remaining_steps: int | None = None
+    remaining_seconds: float | None = None
 
     @property
     def typed_result(
@@ -911,6 +913,7 @@ class AgentRuntime:
                         "principal_id": request.principal_id,
                         "session_id": session.session_id,
                         "turn_id": turn_id,
+                        "trace_id": trace_id,
                         "context_snapshot_id": snapshot_ctrl.snapshot_id,
                     },
                     # Backward compatibility for legacy test stubs:
@@ -1465,6 +1468,8 @@ class AgentRuntime:
                     events=tuple(turn_events),
                     pending_tool_call_id=call.tool_call_id,
                     continuation_token=continuation_token,
+                    remaining_steps=fuse.remaining_steps,
+                    remaining_seconds=round(max(fuse.remaining_seconds, 0.0), 3),
                 )
 
         if "snapshot" not in locals() or snapshot is None:
@@ -1507,6 +1512,7 @@ class AgentRuntime:
                     "principal_id": request.principal_id,
                     "session_id": session.session_id,
                     "turn_id": turn_id,
+                    "trace_id": trace_id,
                     "context_snapshot_id": snapshot_ans.snapshot_id,
                 },
             )
@@ -1626,6 +1632,7 @@ class AgentRuntime:
                         "principal_id": request.principal_id,
                         "session_id": session.session_id,
                         "turn_id": turn_id,
+                        "trace_id": trace_id,
                         "context_snapshot_id": snapshot_rev.snapshot_id,
                     },
                 )
@@ -1749,6 +1756,7 @@ class AgentRuntime:
                                 "principal_id": request.principal_id,
                                 "session_id": session.session_id,
                                 "turn_id": turn_id,
+                                "trace_id": trace_id,
                                 "context_snapshot_id": snapshot_rev_2.snapshot_id,
                             },
                         }
@@ -1854,6 +1862,8 @@ class AgentRuntime:
             frozen_evidence=snapshot,
             review=review,
             events=tuple(turn_events),
+            remaining_steps=fuse.remaining_steps,
+            remaining_seconds=round(max(fuse.remaining_seconds, 0.0), 3),
         )
 
     async def stream(self, request: AgentRunRequest) -> AsyncIterator[AgentStreamFrame]:

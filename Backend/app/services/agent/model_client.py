@@ -200,9 +200,11 @@ class LLMConfigStageModelClient:
         llm_config,
         *,
         audit_sink: Callable[[ModelInputAuditRecord], Awaitable[None]] | None = None,
+        call_audit_sink: Callable[[ModelCallAudit, Mapping[str, Any] | None], Awaitable[None]] | None = None,
     ) -> None:
         self.llm_config = llm_config
         self.audit_sink = audit_sink
+        self.call_audit_sink = call_audit_sink
         self.audit_log: deque[ModelCallAudit] = deque(maxlen=1000)
 
     @property
@@ -279,14 +281,19 @@ class LLMConfigStageModelClient:
             outcome = "success"
             return ModelResponse(content=content)
         finally:
-            self.audit_log.append(
-                ModelCallAudit(
-                    call_id=request.call_id,
-                    stage=request.stage,
-                    attempt=request.attempt,
-                    model_name=effective_model_name,
-                    timeout_seconds=request.timeout_seconds,
-                    elapsed_seconds=max(0.0, monotonic() - started_at),
-                    outcome=outcome,
-                )
+            audit_entry = ModelCallAudit(
+                call_id=request.call_id,
+                stage=request.stage,
+                attempt=request.attempt,
+                model_name=effective_model_name,
+                timeout_seconds=request.timeout_seconds,
+                elapsed_seconds=max(0.0, monotonic() - started_at),
+                outcome=outcome,
             )
+            self.audit_log.append(audit_entry)
+            if self.call_audit_sink is not None:
+                try:
+                    await self.call_audit_sink(audit_entry, effective_request.audit_context)
+                except Exception:
+                    pass
+

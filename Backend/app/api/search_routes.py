@@ -28,7 +28,8 @@ from app.core.llm_config import llm_config
 from app.services.agent.answer_generator import AnswerGenerator
 from app.services.agent.conversation_memory import ConversationMemorySummarizer
 from app.services.agent.controller import MainController
-from app.services.agent.model_client import LLMConfigStageModelClient
+from app.services.agent.events import AgentEvent
+from app.services.agent.model_client import LLMConfigStageModelClient, ModelCallAudit
 from app.services.agent.provider_health import ProviderHealthService
 from app.services.agent.reviewer import GroundingReviewer
 from app.services.agent.runtime import AgentRuntime
@@ -67,10 +68,49 @@ def _build_search_application_service(
     contract_service: DocumentContractService,
     document_repository: DocumentRepository | None = None,
 ) -> SearchApplicationService:
+    async def _durable_call_audit_sink(
+        audit: ModelCallAudit,
+        audit_context: Mapping[str, Any] | None,
+    ) -> None:
+        if not audit_context:
+            return
+        principal_id = str(audit_context.get("principal_id") or "").strip()
+        session_id = str(audit_context.get("session_id") or "").strip()
+        turn_id = str(audit_context.get("turn_id") or "").strip()
+        trace_id = str(audit_context.get("trace_id") or "").strip()
+        if not principal_id or not session_id:
+            return
+        event = AgentEvent(
+            event_type="model_call_audited",
+            session_id=session_id,
+            turn_id=turn_id or "turn-0",
+            trace_id=trace_id,
+            payload={
+                "call_id": audit.call_id,
+                "stage": audit.stage,
+                "attempt": audit.attempt,
+                "model_name": audit.model_name,
+                "timeout_seconds": audit.timeout_seconds,
+                "elapsed_seconds": audit.elapsed_seconds,
+                "outcome": audit.outcome,
+                "context_snapshot_id": audit_context.get("context_snapshot_id"),
+                "frozen_evidence_snapshot_id": audit_context.get("frozen_evidence_snapshot_id"),
+            },
+        )
+        if hasattr(_agent_session_store, "append_event"):
+            try:
+                await _agent_session_store.append_event(
+                    principal_id=principal_id,
+                    event=event,
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist model_call_audited event: %s", exc)
+
     retrieval_port = search_service.get_retrieval_port()
     model_client = LLMConfigStageModelClient(
         llm_config,
         audit_sink=_agent_session_store.save_model_input_audit,
+        call_audit_sink=_durable_call_audit_sink,
     )
     controller = MainController(
         model_client=model_client,
