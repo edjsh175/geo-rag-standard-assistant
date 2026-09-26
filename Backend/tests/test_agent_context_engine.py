@@ -47,6 +47,33 @@ def test_context_frame_immutability():
     assert len(d["conversation"]) == 1
 
 
+def test_context_frame_preserves_authority_classes_without_promoting_client_hints():
+    engine = ContextEngine()
+    frame = engine.build_frame(
+        session_id="session-authority",
+        principal_id="admin:test",
+        question="这个文档讲什么？",
+        events=(),
+        working_evidence=(),
+        spatial_context={"zoom": 10},
+        metadata={
+            "user_ui_selections": {
+                "document": {"document_id": "14741", "title": "权威标题"}
+            },
+            "client_hints": {
+                "document_selection": {"document_id": "untrusted", "admission_status": "rejected"}
+            },
+        },
+        current_turn_id="turn-1",
+    )
+
+    payload = frame.to_dict()
+    assert payload["user_ui_selections"]["document"]["document_id"] == "14741"
+    assert payload["client_hints"]["document_selection"]["document_id"] == "untrusted"
+    assert "client_hints" not in payload["runtime_facts"]
+    assert "user_ui_selections" not in payload["runtime_facts"]
+
+
 def test_budget_manager_controller_trimming():
     # Configure tight controller budget: 200 tokens available
     config = ContextBudgetConfig(

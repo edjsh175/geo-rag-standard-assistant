@@ -20,6 +20,8 @@ class ControllerContextProjection:
     working_evidence: tuple[Mapping[str, Any], ...] = ()
     evidence_catalog: tuple[Mapping[str, Any], ...] = ()
     runtime_facts: Mapping[str, Any] = field(default_factory=_empty_mapping)
+    user_ui_selections: Mapping[str, Any] = field(default_factory=_empty_mapping)
+    client_hints: Mapping[str, Any] = field(default_factory=_empty_mapping)
     map_context: Mapping[str, Any] | None = None
     tool_contracts_text: str = ""
     tool_names: str = ""
@@ -34,6 +36,8 @@ class ControllerContextProjection:
             "working_evidence": list(self.working_evidence),
             "evidence_catalog": list(self.evidence_catalog),
             "runtime_facts": dict(self.runtime_facts or {}),
+            "user_ui_selections": dict(self.user_ui_selections or {}),
+            "client_hints": dict(self.client_hints or {}),
             "map_context": dict(self.map_context or {}),
             "tool_contracts": self.tool_contracts_text,
             "tool_names": self.tool_names,

@@ -56,6 +56,9 @@ class ContextFrame:
     evidence_catalog: tuple[Mapping[str, Any], ...] = ()
     runtime_facts: Mapping[str, Any] = field(default_factory=_empty_mapping)
     observations: tuple[Mapping[str, Any], ...] = ()
+    browser_observations: Mapping[str, Any] = field(default_factory=_empty_mapping)
+    user_ui_selections: Mapping[str, Any] = field(default_factory=_empty_mapping)
+    client_hints: Mapping[str, Any] = field(default_factory=_empty_mapping)
     runtime_capabilities: Mapping[str, Any] = field(default_factory=_empty_mapping)
     source_event_ids: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=_empty_mapping)
@@ -73,6 +76,9 @@ class ContextFrame:
         evidence_catalog: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
         runtime_facts: Mapping[str, Any] | None = None,
         observations: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
+        browser_observations: Mapping[str, Any] | None = None,
+        user_ui_selections: Mapping[str, Any] | None = None,
+        client_hints: Mapping[str, Any] | None = None,
         runtime_capabilities: Mapping[str, Any] | None = None,
         source_event_ids: list[str] | tuple[str, ...] | None = None,
         metadata: Mapping[str, Any] | None = None,
@@ -90,6 +96,9 @@ class ContextFrame:
             evidence_catalog=tuple(_freeze(v) for v in (evidence_catalog or ())),
             runtime_facts=_freeze(runtime_facts or {}),
             observations=tuple(_freeze(v) for v in (observations or ())),
+            browser_observations=_freeze(browser_observations or {}),
+            user_ui_selections=_freeze(user_ui_selections or {}),
+            client_hints=_freeze(client_hints or {}),
             runtime_capabilities=_freeze(runtime_capabilities or {}),
             source_event_ids=clean_event_ids,
             metadata=_freeze(metadata or {}),
@@ -106,6 +115,9 @@ class ContextFrame:
             "evidence_catalog": [_thaw(v) for v in self.evidence_catalog],
             "runtime_facts": _thaw(self.runtime_facts),
             "observations": [_thaw(v) for v in self.observations],
+            "browser_observations": _thaw(self.browser_observations),
+            "user_ui_selections": _thaw(self.user_ui_selections),
+            "client_hints": _thaw(self.client_hints),
             "runtime_capabilities": _thaw(self.runtime_capabilities),
             "source_event_ids": list(self.source_event_ids),
             "metadata": _thaw(self.metadata),
@@ -131,6 +143,8 @@ class ContextFrame:
             working_evidence=self.working_evidence,
             evidence_catalog=self.evidence_catalog or self.working_evidence,
             runtime_facts=self.runtime_facts,
+            user_ui_selections=self.user_ui_selections,
+            client_hints=self.client_hints,
             map_context=self.spatial if self.spatial else None,
             tool_contracts_text=tool_contracts_text,
             tool_names=tool_names,

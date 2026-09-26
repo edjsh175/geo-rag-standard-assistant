@@ -182,8 +182,10 @@ class ContextEngine:
             if current_turn_id is not None
             else extract_previous_turn_runtime_facts(events)
         )
-        if metadata:
-            runtime_facts.update({k: v for k, v in metadata.items() if k not in runtime_facts})
+        admitted_metadata = dict(metadata or {})
+        browser_observations = admitted_metadata.get("browser_observations") or {}
+        user_ui_selections = admitted_metadata.get("user_ui_selections") or {}
+        client_hints = admitted_metadata.get("client_hints") or {}
 
         return ContextFrame.create(
             session={"session_id": session_id, "principal_id": principal_id},
@@ -194,9 +196,12 @@ class ContextEngine:
             working_evidence=list(working_evidence),
             evidence_catalog=catalog,
             runtime_facts=runtime_facts,
+            browser_observations=browser_observations,
+            user_ui_selections=user_ui_selections,
+            client_hints=client_hints,
             runtime_capabilities=tool_contracts or {},
             source_event_ids=source_event_ids,
-            metadata=metadata or {},
+            metadata={},
         )
 
     def project_for_controller(

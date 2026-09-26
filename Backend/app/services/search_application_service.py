@@ -37,12 +37,61 @@ class SearchApplicationService:
         contract_service,
         agent_runtime,
         retrieval_port,
+        document_repository=None,
     ) -> None:
         self.search_service = search_service
         self.asset_service = asset_service
         self.contract_service = contract_service
         self.agent_runtime = agent_runtime
         self.retrieval_port = retrieval_port
+        self.document_repository = document_repository
+
+    async def _build_agent_request_context(self, request: SearchRequest) -> dict:
+        """Admit client context by authority before it reaches Agent Runtime."""
+        context: dict = {}
+        if request.map_context is not None:
+            context["browser_observations"] = {"map_context": request.map_context}
+
+        follow_up = request.follow_up_context
+        target_id = str(follow_up.target_document_id).strip() if follow_up and follow_up.target_document_id else ""
+        if not target_id:
+            return context
+
+        detail = None
+        if target_id.isdigit():
+            detail = await self.asset_service.get_document_detail_payload(target_id)
+            if detail is not None:
+                detail = await self.contract_service.apply_document_overrides(target_id, detail)
+        elif self.document_repository is not None:
+            try:
+                detail = await self.document_repository.get_uploaded_document_detail(target_id)
+            except (ValueError, TypeError):
+                detail = None
+
+        if detail:
+            metadata = dict(detail.get("metadata") or {})
+            title = str(
+                metadata.get("title")
+                or detail.get("title")
+                or detail.get("document_name")
+                or ""
+            ).strip()
+            context["user_ui_selections"] = {
+                "document": {
+                    "document_id": str(detail.get("id") or target_id),
+                    "title": title,
+                    "source": "server_materialized_selected_document",
+                }
+            }
+        else:
+            context["client_hints"] = {
+                "document_selection": {
+                    "document_id": target_id,
+                    "resolution_source": follow_up.resolution_source,
+                    "admission_status": "rejected",
+                }
+            }
+        return context
 
     async def execute(
         self,
@@ -160,6 +209,7 @@ class SearchApplicationService:
             )
 
         session_id = request.session_id or f"session-{uuid4()}"
+        request_context = await self._build_agent_request_context(request)
         run_result = await self.agent_runtime.run(
             AgentRunRequest(
                 question=request.query,
@@ -167,14 +217,7 @@ class SearchApplicationService:
                 principal_id=principal_id,
                 reviewer_enabled=request.reviewer_enabled,
                 thinking=bool(request.thinking),
-                request_context={
-                    "follow_up_context": (
-                        request.follow_up_context.model_dump()
-                        if request.follow_up_context is not None
-                        else None
-                    ),
-                    "map_context": request.map_context,
-                },
+                request_context=request_context,
                 continuation_token=request.continuation_token,
                 browser_tool_receipt=(
                     request.browser_tool_receipt.model_dump()
@@ -231,20 +274,14 @@ class SearchApplicationService:
 
         started_at = datetime.now()
         session_id = request.session_id or f"session-{uuid4()}"
+        request_context = await self._build_agent_request_context(request)
         run_request = AgentRunRequest(
             question=request.query,
             session_id=session_id,
             principal_id=principal_id,
             reviewer_enabled=request.reviewer_enabled,
             thinking=bool(request.thinking),
-            request_context={
-                "follow_up_context": (
-                    request.follow_up_context.model_dump()
-                    if request.follow_up_context is not None
-                    else None
-                ),
-                "map_context": request.map_context,
-            },
+            request_context=request_context,
             continuation_token=request.continuation_token,
             browser_tool_receipt=(
                 request.browser_tool_receipt.model_dump()

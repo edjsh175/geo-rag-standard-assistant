@@ -27,6 +27,7 @@ from app.services.agent.tools import build_default_tool_registry
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
 from app.services.document_contract_service import DocumentContractService
 from app.services.document_asset_service import DocumentAssetService
+from app.services.document_repository import DocumentRepository
 from app.services.search_feedback_service import SearchFeedbackService
 from app.services.search_application_service import (
     RELAXED_VECTOR_THRESHOLD,
@@ -53,6 +54,7 @@ def _build_search_application_service(
     search_service: SearchService,
     asset_service: DocumentAssetService,
     contract_service: DocumentContractService,
+    document_repository: DocumentRepository | None = None,
 ) -> SearchApplicationService:
     retrieval_port = search_service.get_retrieval_port()
     model_client = LLMConfigStageModelClient(llm_config)
@@ -62,6 +64,7 @@ def _build_search_application_service(
     )
     runtime = AgentRuntime(
         retrieval_port=retrieval_port,
+        document_repository=document_repository,
         controller=controller,
         answer_generator=AnswerGenerator(model_client=model_client),
         reviewer=GroundingReviewer(model_client=model_client),
@@ -81,11 +84,13 @@ def get_search_application_service(
     search_service: SearchService = Depends(SearchService),
     asset_service: DocumentAssetService = Depends(DocumentAssetService),
     contract_service: DocumentContractService = Depends(DocumentContractService),
+    document_repository: DocumentRepository = Depends(DocumentRepository),
 ) -> SearchApplicationService:
     return _build_search_application_service(
         search_service=search_service,
         asset_service=asset_service,
         contract_service=contract_service,
+        document_repository=document_repository,
     )
 
 

@@ -55,10 +55,18 @@ class AssetServiceStub:
     async def enrich_search_results(self, results):
         return results
 
+    async def get_document_detail_payload(self, doc_id):
+        if doc_id == "14741":
+            return {"id": "14741", "metadata": {"title": "服务端权威标题"}}
+        return None
+
 
 class ContractServiceStub:
     async def filter_deleted_results(self, results):
         return results
+
+    async def apply_document_overrides(self, doc_id, detail):
+        return detail
 
 
 class RetrievalPortStub:
@@ -187,7 +195,7 @@ async def test_generation_true_defaults_to_agent_runtime_without_intent_router()
 
 
 @pytest.mark.asyncio
-async def test_agent_request_forwards_follow_up_context_as_factual_runtime_context() -> None:
+async def test_agent_request_materializes_selected_document_as_server_authoritative_fact() -> None:
     runtime = AgentRuntimeStub()
     service = SearchApplicationService(
         search_service=SearchServiceStub(),
@@ -211,7 +219,46 @@ async def test_agent_request_forwards_follow_up_context_as_factual_runtime_conte
         principal_id="admin:test",
     )
 
-    assert runtime.requests[0].request_context["follow_up_context"]["target_document_id"] == "14741"
+    context = runtime.requests[0].request_context
+    assert "follow_up_context" not in context
+    assert context["user_ui_selections"]["document"] == {
+        "document_id": "14741",
+        "title": "服务端权威标题",
+        "source": "server_materialized_selected_document",
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_request_rejects_unresolvable_selected_document_context() -> None:
+    runtime = AgentRuntimeStub()
+    service = SearchApplicationService(
+        search_service=SearchServiceStub(),
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=runtime,
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    await service.execute(
+        SearchRequest(
+            query="这个文档主要讲什么？",
+            use_generation=True,
+            follow_up_context=FollowUpContext(
+                target_document_id="missing",
+                candidate_documents=[],
+                resolution_source="selected_document",
+            ),
+        ),
+        generation_allowed=True,
+        principal_id="admin:test",
+    )
+
+    assert runtime.requests[0].request_context.get("user_ui_selections") is None
+    assert runtime.requests[0].request_context["client_hints"]["document_selection"] == {
+        "document_id": "missing",
+        "resolution_source": "selected_document",
+        "admission_status": "rejected",
+    }
 
 
 @pytest.mark.asyncio

@@ -228,7 +228,9 @@ class AgentRuntime:
             turn_id = pending.turn_id
             trace_id = pending.trace_id
             effective_request_context = dict(pending.request_context)
-            effective_request_context["map_context"] = receipt.get("map_context")
+            effective_request_context["browser_observations"] = {
+                "map_context": receipt.get("map_context") or {}
+            }
             reviewer_enabled = pending.reviewer_enabled
             thinking = pending.thinking
             retrieval_constraints = pending.retrieval_constraints
@@ -499,7 +501,16 @@ class AgentRuntime:
                 }
                 for item in historical_items
             ]
-            map_ctx = effective_request_context.get("map_context") if isinstance(effective_request_context, Mapping) else None
+            browser_observations = (
+                effective_request_context.get("browser_observations")
+                if isinstance(effective_request_context, Mapping)
+                else None
+            )
+            map_ctx = (
+                browser_observations.get("map_context")
+                if isinstance(browser_observations, Mapping)
+                else None
+            )
             frame = self.context_engine.build_frame(
                 session_id=session.session_id,
                 principal_id=request.principal_id,
@@ -555,10 +566,7 @@ class AgentRuntime:
                     stage_policy=stage_policy,
                     # Backward compatibility for legacy test stubs:
                     question=proj_ctrl.user_question,
-                    context_summary=self._merge_request_context(
-                        proj_ctrl.conversation_text,
-                        effective_request_context,
-                    ),
+                    context_summary=proj_ctrl.conversation_text,
                     working_evidence=proj_ctrl.working_evidence,
                     available_tool_names=action_state.available_capabilities,
                     available_control_actions=action_state.available_control_actions,
@@ -1327,23 +1335,6 @@ class AgentRuntime:
                 payload={"text": text.strip()},
             )
         )
-
-    @staticmethod
-    def _merge_request_context(
-        summary: str,
-        request_context: Mapping[str, Any],
-    ) -> str:
-        if not request_context:
-            return summary
-        factual_context = json.dumps(
-            dict(request_context),
-            ensure_ascii=False,
-            default=str,
-            sort_keys=True,
-        )
-        if not summary:
-            return f"request_context: {factual_context}"
-        return f"{summary}\nrequest_context: {factual_context}"
 
     @staticmethod
     def _seed_legacy_history(
