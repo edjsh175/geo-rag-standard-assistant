@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -40,6 +40,7 @@ class ContextSnapshot:
     projection_hash: str
     token_usage_estimate: int
     created_at: str
+    action_surface_identity: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -52,6 +53,7 @@ class ContextSnapshot:
         projection_sections: Mapping[str, Any],
         source_event_ids: tuple[str, ...] | list[str] = (),
         token_usage_estimate: int = 0,
+        action_surface_identity: Mapping[str, Any] | None = None,
     ) -> "ContextSnapshot":
         section_rows = tuple(
             ContextSnapshotSection(name=str(name), content_hash=_sha256(content))
@@ -73,6 +75,7 @@ class ContextSnapshot:
             projection_hash=projection_hash,
             token_usage_estimate=max(0, int(token_usage_estimate)),
             created_at=now_iso,
+            action_surface_identity=dict(action_surface_identity or {}),
         )
 
     def to_record(self, principal_id: str) -> ContextSnapshotRecord:
@@ -86,6 +89,7 @@ class ContextSnapshot:
             snapshot_payload={
                 "sections": [{"name": s.name, "hash": s.content_hash} for s in self.sections],
                 "frame_hash": self.frame_hash,
+                "action_surface_identity": dict(self.action_surface_identity),
             },
             token_usage_estimate=self.token_usage_estimate,
             source_event_ids=self.source_event_ids,

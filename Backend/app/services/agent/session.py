@@ -43,6 +43,7 @@ class AgentSession:
     pending_browser_execution: PendingBrowserExecution | None = None
     identity_resolution: IdentityResolution | None = None
     conversation_memory: ConversationMemoryStateRecord | None = None
+    audit_degraded: bool = False
 
     def new_turn_id(self) -> str:
         turn_id = f"turn-{self.next_turn_number}"

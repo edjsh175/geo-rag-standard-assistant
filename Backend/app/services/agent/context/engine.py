@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Mapping, Sequence
 
@@ -287,34 +288,54 @@ class ContextEngine:
                 )
             memory_text = "\n".join(memory_parts)
 
-        summary, trimmed_evidence, trimmed_map, tokens = self.budget_manager.trim_controller_context(
+        trimming_res = self.budget_manager.trim_controller_context(
             question=frame.user_question,
             conversation_lines=conv_lines,
             conversation_memory_text=memory_text,
             working_evidence=frame.working_evidence,
-            map_context=frame.spatial if frame.spatial else None,
-            tool_contracts_text=tool_contracts_text,
-        )
-
-        projection = ControllerContextProjection(
-            user_question=frame.user_question,
-            conversation_text=summary,
-            working_evidence=tuple(trimmed_evidence),
             evidence_catalog=frame.evidence_catalog,
             runtime_facts=frame.runtime_facts,
             user_ui_selections=frame.user_ui_selections,
             client_hints=frame.client_hints,
-            map_context=trimmed_map,
+            map_context=frame.spatial if frame.spatial else None,
+            tool_contracts_text=tool_contracts_text,
+            publication_evidence_budget=publication_evidence_budget,
+        )
+
+        projection = ControllerContextProjection(
+            user_question=frame.user_question,
+            conversation_text=trimming_res.summary,
+            working_evidence=tuple(trimming_res.working_evidence),
+            evidence_catalog=tuple(trimming_res.evidence_catalog),
+            catalog_metadata=trimming_res.catalog_metadata,
+            runtime_facts=trimming_res.runtime_facts or {},
+            user_ui_selections=frame.user_ui_selections,
+            client_hints=frame.client_hints,
+            map_context=trimming_res.map_context,
             tool_contracts_text=tool_contracts_text,
             tool_names=tool_names,
             available_capabilities=tuple(available_capabilities),
             available_control_actions=tuple(available_control_actions),
             publication_evidence_budget=publication_evidence_budget or {},
-            estimated_tokens=tokens,
+            estimated_tokens=trimming_res.total_tokens,
         )
 
         session_id = str(frame.session.get("session_id") or "")
         turn_id = _snapshot_turn_id(frame)
+
+        # R-10: Durable Action Surface and Version Identity
+        tool_contracts_hash = hashlib.sha256(tool_contracts_text.encode("utf-8")).hexdigest()
+        map_hash = hashlib.sha256(json.dumps(dict(trimming_res.map_context or {}), sort_keys=True).encode("utf-8")).hexdigest()
+        action_surface_identity = {
+            "schema_version": "v3",
+            "available_capabilities": list(available_capabilities),
+            "available_control_actions": list(available_control_actions),
+            "tool_names": tool_names,
+            "tool_contracts_hash": tool_contracts_hash,
+            "map_context_hash": map_hash,
+            "selectable_evidence_count": len(trimming_res.evidence_catalog),
+            "catalog_truncated": trimming_res.catalog_metadata.get("truncated", False),
+        }
 
         snapshot = ContextSnapshot.create(
             stage="controller",
@@ -323,7 +344,8 @@ class ContextEngine:
             frame_payload=frame.to_dict(),
             projection_sections=projection.sections(),
             source_event_ids=frame.source_event_ids,
-            token_usage_estimate=tokens,
+            token_usage_estimate=trimming_res.total_tokens,
+            action_surface_identity=action_surface_identity,
         )
         return projection, snapshot
 

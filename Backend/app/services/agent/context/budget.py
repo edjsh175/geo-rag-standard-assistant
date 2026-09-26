@@ -95,6 +95,28 @@ class ReviewerBudgetCheck:
         }
 
 
+@dataclass
+class ControllerContextTrimmingResult:
+    """Result of trimming Controller context under budget constraints."""
+
+    summary: str
+    working_evidence: list[Mapping[str, Any]]
+    map_context: dict[str, Any] | None
+    total_tokens: int
+    evidence_catalog: list[Mapping[str, Any]] = field(default_factory=list)
+    runtime_facts: dict[str, Any] | None = None
+    catalog_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __iter__(self):
+        """Preserve backward compatibility with 4-tuple unpacking:
+        summary, working_evidence, map_context, tokens = manager.trim_controller_context(...)
+        """
+        return iter((self.summary, self.working_evidence, self.map_context, self.total_tokens))
+
+    def __getitem__(self, index: int) -> Any:
+        return (self.summary, self.working_evidence, self.map_context, self.total_tokens)[index]
+
+
 class ContextBudgetManager:
     """Manages token estimation and deterministic multi-stage context trimming."""
 
@@ -385,49 +407,110 @@ class ContextBudgetManager:
         question: str,
         conversation_lines: Sequence[str],
         conversation_memory_text: str = "",
-        working_evidence: Sequence[Mapping[str, Any]],
-        map_context: Mapping[str, Any] | None,
-        tool_contracts_text: str,
-    ) -> tuple[str, list[Mapping[str, Any]], dict[str, Any] | None, int]:
-        """Trim Controller context to fit within the controller budget.
+        working_evidence: Sequence[Mapping[str, Any]] = (),
+        evidence_catalog: Sequence[Mapping[str, Any]] = (),
+        runtime_facts: Mapping[str, Any] | None = None,
+        user_ui_selections: Mapping[str, Any] | None = None,
+        client_hints: Mapping[str, Any] | None = None,
+        map_context: Mapping[str, Any] | None = None,
+        tool_contracts_text: str = "",
+        observations: Sequence[Any] = (),
+        publication_evidence_budget: Mapping[str, Any] | None = None,
+    ) -> ControllerContextTrimmingResult:
+        """Trim Controller context to fit strictly within the controller budget.
 
-        Trimming priority:
-        1. Conversation history (oldest first)
-        2. Working evidence (lowest score or non-essential first)
-        3. Map context (compacting GeoJSON features)
+        Full Controller prompt sections:
+        - Question (protected)
+        - Tool contracts & decision schema (protected)
+        - UI selections & client hints & observations (protected)
+        - Conversation memory (capped by budget allowance)
+        - Conversation history (trimmed oldest-first)
+        - Evidence catalog & working evidence (prioritized retention & budgeted)
+        - Runtime facts (authoritative current turn protected, historical compacted)
+        - Map context (GeoJSON compacting)
         """
         budget = self.config.controller
+        effective_catalog = list(evidence_catalog) if evidence_catalog else list(working_evidence)
+
         if not self.config.enabled:
             recent_text = "\n".join(conversation_lines)
             summary = "\n".join(
                 value for value in (conversation_memory_text, recent_text) if value
             )
-            tokens = self.estimator.estimate(summary + question + tool_contracts_text)
-            return summary, list(working_evidence), dict(map_context or {}), tokens
+            tokens = self.estimator.estimate(
+                summary
+                + question
+                + tool_contracts_text
+                + json.dumps(effective_catalog, ensure_ascii=False, default=str)
+                + (json.dumps(dict(runtime_facts), ensure_ascii=False, default=str) if runtime_facts else "")
+            )
+            return ControllerContextTrimmingResult(
+                summary=summary,
+                working_evidence=list(working_evidence),
+                map_context=dict(map_context or {}) if map_context else None,
+                total_tokens=tokens,
+                evidence_catalog=effective_catalog,
+                runtime_facts=dict(runtime_facts) if runtime_facts else None,
+                catalog_metadata={"truncated": False, "total_count": len(effective_catalog), "projected_count": len(effective_catalog)},
+            )
 
         target_limit = budget.available_context_tokens
-        # Tool contracts and current question are strictly protected
-        protected_cost = (
-            self.estimator.estimate(question)
-            + self.estimator.estimate(tool_contracts_text)
-        )
+
+        # 1. Protected costs: question, contracts, observations, UI selections, client hints, pub budget
+        question_cost = self.estimator.estimate(question)
+        contracts_cost = self.estimator.estimate(tool_contracts_text)
+        ui_cost = self._json_token_cost(user_ui_selections) if user_ui_selections else 0
+        hints_cost = self._json_token_cost(client_hints) if client_hints else 0
+        pub_cost = self._json_token_cost(publication_evidence_budget) if publication_evidence_budget else 0
+        obs_cost = self._json_token_cost(list(observations)) if observations else 0
+
+        protected_cost = question_cost + contracts_cost + ui_cost + hints_cost + pub_cost + obs_cost
         optional_budget = max(0, target_limit - protected_cost)
-        # Rolling memory is compressed historical semantics. It must never crowd
-        # out the fresher/authoritative sections or make the projection exceed
-        # the stage context limit.
-        memory_allowance = int(optional_budget * 0.40)
+
+        # 2. Rolling memory allowance (max 40% of optional budget)
+        marker_cost = self.estimator.estimate("\n[conversation-memory-truncated]")
+        memory_allowance = max(
+            int(optional_budget * 0.40),
+            min(optional_budget, marker_cost) if conversation_memory_text else 0,
+        )
         projected_memory = self._truncate_text_to_budget(
             conversation_memory_text,
             memory_allowance,
         )
-        memory_cost = self.estimator.estimate(projected_memory)
-        fixed_cost = protected_cost + memory_cost
+        memory_cost = self.estimator.estimate(projected_memory) if projected_memory else 0
         remaining = max(0, optional_budget - memory_cost)
 
-        # 1. Trimming conversation lines (most recent first)
+        # 3. Runtime facts budgeting (current_turn is protected; historical turns compacted if needed)
+        trimmed_facts: dict[str, Any] | None = None
+        facts_cost = 0
+        if runtime_facts:
+            facts_allowance = max(50, int(remaining * 0.20))
+            full_facts_cost = self._json_token_cost(runtime_facts)
+            if full_facts_cost <= facts_allowance:
+                trimmed_facts = dict(runtime_facts)
+                facts_cost = full_facts_cost
+            else:
+                # Retain current_turn, compact/truncate previous_turn
+                compacted_facts: dict[str, Any] = {}
+                if "current_turn" in runtime_facts:
+                    compacted_facts["current_turn"] = runtime_facts["current_turn"]
+                if "previous_turn" in runtime_facts:
+                    prev = runtime_facts["previous_turn"]
+                    if isinstance(prev, Mapping):
+                        compacted_facts["previous_turn"] = {
+                            "turn_id": prev.get("turn_id"),
+                            "status": prev.get("status"),
+                            "_truncated": True,
+                        }
+                compacted_facts["_facts_truncated"] = True
+                trimmed_facts = compacted_facts
+                facts_cost = self._json_token_cost(trimmed_facts)
+        remaining = max(0, remaining - facts_cost)
+
+        # 4. Trimming conversation lines (most recent first)
         selected_lines: list[str] = []
         conv_cost = 0
-        conversation_allowance = int(remaining * 0.5)
+        conversation_allowance = int(remaining * 0.35)
         for line in reversed(conversation_lines):
             line_cost = self.estimator.estimate(line)
             if conv_cost + line_cost > conversation_allowance:
@@ -438,32 +521,75 @@ class ContextBudgetManager:
         trimmed_summary = "\n".join(
             value for value in (projected_memory, recent_text) if value
         )
+        remaining = max(0, remaining - conv_cost)
 
-        # 2. Trimming evidence
-        evidence_remaining = max(0, remaining - conv_cost)
-        evidence_allowance = int(evidence_remaining * 0.7)
-        selected_evidence: list[Mapping[str, Any]] = []
-        ev_cost = 0
-        # Sort evidence by score descending
-        sorted_evidence = sorted(
-            working_evidence,
+        # 5. Prioritized Evidence Catalog & Working Evidence budgeting
+        # Retention priority:
+        # P1: Items referenced in question, active working items, or marked is_active
+        # P2: Items sorted by relevance score descending
+        # P3: Historical evidence without score
+        evidence_allowance = int(remaining * 0.75)
+        ref_keys = ("evidence_id", "title")
+
+        def _is_priority_item(item: Mapping[str, Any]) -> bool:
+            if item.get("is_active"):
+                return True
+            for k in ref_keys:
+                v = str(item.get(k) or "")
+                if v and v in question:
+                    return True
+            return False
+
+        priority_items: list[Mapping[str, Any]] = []
+        other_items: list[Mapping[str, Any]] = []
+        for item in effective_catalog:
+            if isinstance(item, Mapping):
+                if _is_priority_item(item):
+                    priority_items.append(item)
+                else:
+                    other_items.append(item)
+
+        other_sorted = sorted(
+            other_items,
             key=lambda x: float(x.get("score") or 0.0),
             reverse=True,
         )
-        for ev in sorted_evidence:
+        ordered_catalog = priority_items + other_sorted
+
+        selected_catalog: list[Mapping[str, Any]] = []
+        ev_cost = 0
+        for ev in ordered_catalog:
             ev_str = json.dumps(ev, ensure_ascii=False, default=str)
             item_cost = self.estimator.estimate(ev_str)
-            if ev_cost + item_cost > evidence_allowance:
+            if ev_cost + item_cost > evidence_allowance and selected_catalog:
                 continue
-            selected_evidence.append(ev)
+            selected_catalog.append(ev)
             ev_cost += item_cost
 
-        # 3. Trimming / compacting map context
+        catalog_truncated = len(selected_catalog) < len(effective_catalog)
+        catalog_metadata = {
+            "truncated": catalog_truncated,
+            "total_count": len(effective_catalog),
+            "projected_count": len(selected_catalog),
+        }
+
+        # Keep working evidence in sync with selected catalog
+        selected_catalog_ids = {
+            ev.get("evidence_id") for ev in selected_catalog if isinstance(ev, Mapping) and ev.get("evidence_id")
+        }
+        trimmed_working = [
+            ev for ev in working_evidence
+            if isinstance(ev, Mapping) and ev.get("evidence_id") in selected_catalog_ids
+        ]
+        if not trimmed_working and working_evidence and selected_catalog:
+            trimmed_working = [ev for ev in working_evidence if ev in selected_catalog]
+
+        # 6. Trimming / compacting map context
         trimmed_map: dict[str, Any] | None = None
         if map_context:
             map_str = json.dumps(map_context, ensure_ascii=False, default=str)
             map_cost = self.estimator.estimate(map_str)
-            map_allowance = max(0, remaining - conv_cost - ev_cost)
+            map_allowance = max(0, remaining - ev_cost)
             if map_cost <= map_allowance:
                 trimmed_map = dict(map_context)
             elif map_allowance > 0:
@@ -474,7 +600,6 @@ class ContextBudgetManager:
                         allowance_tokens=map_allowance,
                     )
                 else:
-                    # Compatibility path for older/non-browser map context shapes.
                     trimmed_map = {
                         k: v for k, v in map_context.items()
                         if k in {"bbox", "center", "zoom", "layers", "active_layer"}
@@ -496,11 +621,31 @@ class ContextBudgetManager:
                     if projected_map_cost > map_allowance:
                         trimmed_map = None
 
-        total_tokens = fixed_cost + conv_cost + ev_cost + (
-            self.estimator.estimate(json.dumps(trimmed_map, ensure_ascii=False, default=lambda o: dict(o) if hasattr(o, "items") else str(o)))
+        map_cost = (
+            self.estimator.estimate(
+                json.dumps(trimmed_map, ensure_ascii=False, default=lambda o: dict(o) if hasattr(o, "items") else str(o))
+            )
             if trimmed_map else 0
         )
-        return trimmed_summary, selected_evidence, trimmed_map, total_tokens
+
+        total_tokens = (
+            protected_cost
+            + memory_cost
+            + facts_cost
+            + conv_cost
+            + ev_cost
+            + map_cost
+        )
+
+        return ControllerContextTrimmingResult(
+            summary=trimmed_summary,
+            working_evidence=trimmed_working,
+            map_context=trimmed_map,
+            total_tokens=total_tokens,
+            evidence_catalog=selected_catalog,
+            runtime_facts=trimmed_facts,
+            catalog_metadata=catalog_metadata,
+        )
 
     def trim_answer_context(
         self,

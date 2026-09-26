@@ -12,6 +12,10 @@ from app.services.agent.context.projection import (
     ControllerContextProjection,
     ReviewerContextProjection,
 )
+from app.services.agent.context.reconstruct import (
+    ContextReconstructionResult,
+    GeoAIHistoricalContextReconstructor,
+)
 from app.services.agent.context.snapshot import ContextSnapshot
 
 __all__ = [
@@ -25,4 +29,6 @@ __all__ = [
     "AnswerContextProjection",
     "ReviewerContextProjection",
     "ContextSnapshot",
+    "GeoAIHistoricalContextReconstructor",
+    "ContextReconstructionResult",
 ]

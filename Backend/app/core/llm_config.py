@@ -44,15 +44,20 @@ class LLMConfig:
         # 初始化 OpenAI 客户端
         if settings.OPENAI_API_KEY:
             proxy = (settings.OPENAI_PROXY or "").strip() or None
+            client_kwargs: dict[str, Any] = {
+                "timeout": 60.0,
+                "limits": httpx.Limits(max_connections=100, max_keepalive_connections=20),
+                "trust_env": False,
+            }
+            if proxy:
+                if "proxy" in inspect.signature(httpx.AsyncClient.__init__).parameters:
+                    client_kwargs["proxy"] = proxy
+                else:
+                    client_kwargs["proxies"] = proxy
             self.openai_client = AsyncOpenAI(
                 api_key=settings.OPENAI_API_KEY,
                 base_url=settings.OPENAI_BASE_URL,
-                http_client=httpx.AsyncClient(
-                    timeout=60.0,
-                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
-                    proxies=proxy,
-                    trust_env=False,
-                )
+                http_client=httpx.AsyncClient(**client_kwargs),
             )
             logger.info("OpenAI 客户端初始化成功")
         else:

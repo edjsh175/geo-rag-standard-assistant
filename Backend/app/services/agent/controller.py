@@ -214,10 +214,16 @@ class MainController:
             "- For knowledge questions, never use direct_answer. Retrieve evidence when needed; use compose_answer only when evidence is available and that action is in the current Action Space."
         )
 
+        catalog_header = "Evidence Catalog (Working & Historical)"
+        if projection is not None and getattr(projection, "catalog_metadata", None):
+            meta = projection.catalog_metadata
+            if meta.get("truncated"):
+                catalog_header += f" [TRUNCATED: projected {meta.get('projected_count')}/{meta.get('total_count')} items]"
+
         user_content_parts = [
             f"Question:\n{effective_question}\n",
             f"Context:\n{effective_context_summary}\n",
-            f"Evidence Catalog (Working & Historical):\n{evidence_text}\n",
+            f"{catalog_header}:\n{evidence_text}\n",
             "Runtime Facts (current_turn describes this request; previous_turn is historical and does not count as current execution or retrieval):\n"
             f"{runtime_facts_text}\n",
             "Publication Evidence Budget (deterministic physical limit; selected evidence must stay within this budget and catalog token costs are estimates of full evidence text):\n"

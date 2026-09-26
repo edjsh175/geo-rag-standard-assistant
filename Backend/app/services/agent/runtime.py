@@ -7,9 +7,12 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 import inspect
 import json
+import logging
 from time import monotonic
 from typing import Any, AsyncIterator, Callable, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
+
+logger = logging.getLogger(__name__)
 
 from app.services.agent.answer_generator import AnswerGenerationError, GeneratedAnswer
 from app.services.agent.conversation_memory import (
@@ -888,11 +891,15 @@ class AgentRuntime:
                 available_control_actions=tuple(action_state.available_control_actions),
                 publication_evidence_budget=publication_budget,
             )
-            if hasattr(self.session_store, "save_snapshot"):
-                try:
-                    await self.session_store.save_snapshot(snapshot_ctrl.to_record(request.principal_id))
-                except Exception:
-                    pass
+            await self._save_snapshot_audited(
+                snapshot=snapshot_ctrl,
+                session=session,
+                request=request,
+                stage="controller",
+                session_events=session.events,
+                turn_events=turn_events,
+                event_listener=event_listener,
+            )
 
             try:
                 controller_kwargs = dict(
@@ -1481,11 +1488,15 @@ class AgentRuntime:
             ),
             conversation_summary=conv_summary,
         )
-        if hasattr(self.session_store, "save_snapshot"):
-            try:
-                await self.session_store.save_snapshot(snapshot_ans.to_record(request.principal_id))
-            except Exception:
-                pass
+        await self._save_snapshot_audited(
+            snapshot=snapshot_ans,
+            session=session,
+            request=request,
+            stage="answer",
+            session_events=session.events,
+            turn_events=turn_events,
+            event_listener=event_listener,
+        )
 
         try:
             answer_kwargs = dict(
@@ -1596,11 +1607,15 @@ class AgentRuntime:
                 review_frame,
                 draft_answer=answer.answer,
             )
-            if hasattr(self.session_store, "save_snapshot"):
-                try:
-                    await self.session_store.save_snapshot(snapshot_rev.to_record(request.principal_id))
-                except Exception:
-                    pass
+            await self._save_snapshot_audited(
+                snapshot=snapshot_rev,
+                session=session,
+                request=request,
+                stage="reviewer",
+                session_events=session.events,
+                turn_events=turn_events,
+                event_listener=event_listener,
+            )
             try:
                 reviewer_kwargs = dict(
                     question=question,
@@ -1715,10 +1730,15 @@ class AgentRuntime:
                             review_frame,
                             draft_answer=answer_v2.answer,
                         )
-                        if hasattr(self.session_store, "save_snapshot"):
-                            await self.session_store.save_snapshot(
-                                snapshot_rev_2.to_record(request.principal_id)
-                            )
+                        await self._save_snapshot_audited(
+                            snapshot=snapshot_rev_2,
+                            session=session,
+                            request=request,
+                            stage="reviewer_repair",
+                            session_events=session.events,
+                            turn_events=turn_events,
+                            event_listener=event_listener,
+                        )
                         reviewer_2_kwargs = {
                             "question": question,
                             "answer": answer_v2,
@@ -1957,6 +1977,54 @@ class AgentRuntime:
         if event_listener is not None:
             event_listener(persisted_event)
         return persisted_event
+
+    async def _save_snapshot_audited(
+        self,
+        *,
+        snapshot: Any,
+        session: AgentSession,
+        request: AgentRunRequest,
+        stage: str,
+        session_events: list[AgentEvent] | None = None,
+        turn_events: list[AgentEvent] | None = None,
+        event_listener: Callable[[AgentEvent], None] | None = None,
+    ) -> None:
+        if not hasattr(self.session_store, "save_snapshot"):
+            return
+        try:
+            await self.session_store.save_snapshot(snapshot.to_record(request.principal_id))
+        except Exception as exc:
+            logger.warning(
+                "Context snapshot persist failed for %s (session=%s): %s",
+                stage,
+                session.session_id,
+                exc,
+            )
+            if getattr(self, "strict_audit", False):
+                raise
+            session.audit_degraded = True
+            fail_event = AgentEvent(
+                event_type="context_snapshot_persist_failed",
+                session_id=session.session_id,
+                turn_id=session.active_turn_id if hasattr(session, "active_turn_id") and session.active_turn_id else (session.events[-1].turn_id if session.events else "current"),
+                event_id=f"evt-{uuid4().hex[:12]}",
+                payload={
+                    "stage": stage,
+                    "snapshot_id": getattr(snapshot, "snapshot_id", ""),
+                    "error": str(exc),
+                    "audit_degraded": True,
+                },
+            )
+            if session_events is not None and turn_events is not None:
+                await self._append_event(
+                    principal_id=request.principal_id,
+                    session_events=session_events,
+                    turn_events=turn_events,
+                    event=fail_event,
+                    event_listener=event_listener,
+                )
+            else:
+                await self._persist_event(request.principal_id, fail_event)
 
     async def _persist_event(
         self,

@@ -28,6 +28,7 @@ class ControllerContextProjection:
     available_capabilities: tuple[str, ...] = ()
     available_control_actions: tuple[str, ...] = ()
     publication_evidence_budget: Mapping[str, Any] = field(default_factory=_empty_mapping)
+    catalog_metadata: Mapping[str, Any] = field(default_factory=_empty_mapping)
     estimated_tokens: int = 0
 
     def sections(self) -> dict[str, Any]:
@@ -36,6 +37,7 @@ class ControllerContextProjection:
             "conversation": self.conversation_text,
             "working_evidence": list(self.working_evidence),
             "evidence_catalog": list(self.evidence_catalog),
+            "catalog_metadata": dict(self.catalog_metadata or {}),
             "runtime_facts": dict(self.runtime_facts or {}),
             "user_ui_selections": dict(self.user_ui_selections or {}),
             "client_hints": dict(self.client_hints or {}),
