@@ -138,6 +138,21 @@ class SearchRequest(BaseModel):
     )
 
 
+class AgentCancelRequest(BaseModel):
+    """Request cancellation of one server-authoritative Agent turn."""
+
+    session_id: str = Field(..., min_length=1, max_length=255)
+    turn_id: str = Field(..., min_length=1, max_length=64)
+    reason: str = Field("user_requested", min_length=1, max_length=128)
+
+
+class AgentCancelResponse(BaseModel):
+    session_id: str
+    turn_id: str
+    status: Literal["cancel_requested"] = "cancel_requested"
+    event_id: str
+
+
 class SearchResponse(BaseModel):
     """Search response payload."""
 

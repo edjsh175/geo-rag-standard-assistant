@@ -46,6 +46,21 @@ class SearchApplicationService:
         self.retrieval_port = retrieval_port
         self.document_repository = document_repository
 
+    async def request_cancellation(
+        self,
+        *,
+        principal_id: str,
+        session_id: str,
+        turn_id: str,
+        reason: str = "user_requested",
+    ) -> AgentEvent:
+        return await self.agent_runtime.request_cancellation(
+            principal_id=principal_id,
+            session_id=session_id,
+            turn_id=turn_id,
+            reason=reason,
+        )
+
     async def _build_agent_request_context(self, request: SearchRequest) -> dict:
         """Admit client context by authority before it reaches Agent Runtime."""
         context: dict = {}

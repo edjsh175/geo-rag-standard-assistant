@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field
 import json
 from typing import Any, AsyncIterator, Callable, Mapping
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.services.agent.answer_generator import AnswerGenerationError, GeneratedAnswer
 from app.services.agent.controller import ControllerOutputError
@@ -176,6 +177,74 @@ class AgentRuntime:
         self.endpoint_supports_reasoning = bool(
             getattr(model_client, "supports_reasoning", False)
         )
+
+    async def request_cancellation(
+        self,
+        *,
+        principal_id: str,
+        session_id: str,
+        turn_id: str,
+        reason: str = "user_requested",
+    ) -> AgentEvent:
+        events = await self._list_runtime_events(principal_id, session_id)
+        turn_events = [event for event in events if event.turn_id == turn_id]
+        if not turn_events:
+            raise ValueError("unknown agent turn")
+        existing_request = next(
+            (event for event in turn_events if event.event_type == "run_cancel_requested"),
+            None,
+        )
+        if any(event.event_type == "publication_completed" for event in turn_events):
+            raise ValueError("agent turn is already terminal")
+        if any(event.event_type == "run_cancelled" for event in turn_events):
+            if existing_request is not None:
+                return existing_request
+            raise ValueError("agent turn is already terminal")
+        trace_id = next(
+            (event.trace_id for event in reversed(turn_events) if event.trace_id),
+            "",
+        )
+        event = AgentEvent(
+            event_type="run_cancel_requested",
+            session_id=session_id,
+            turn_id=turn_id,
+            trace_id=trace_id,
+            payload={"reason": reason or "user_requested"},
+            event_id=self._cancellation_event_id(
+                principal_id,
+                session_id,
+                turn_id,
+                "run_cancel_requested",
+            ),
+        )
+        persisted = await self._persist_event(principal_id, event)
+
+        pending = None
+        if hasattr(self.session_store, "get_pending_execution"):
+            pending = await self.session_store.get_pending_execution(
+                principal_id,
+                session_id,
+            )
+        if pending is not None and pending.turn_id == turn_id:
+            if hasattr(self.session_store, "clear_pending_execution"):
+                await self.session_store.clear_pending_execution(principal_id, session_id)
+            await self._persist_event(
+                principal_id,
+                AgentEvent(
+                    event_type="run_cancelled",
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    payload={"reason": reason or "user_requested"},
+                    event_id=self._cancellation_event_id(
+                        principal_id,
+                        session_id,
+                        turn_id,
+                        "run_cancelled",
+                    ),
+                ),
+            )
+        return persisted
 
     async def run(
         self,
@@ -487,6 +556,41 @@ class AgentRuntime:
                 events=tuple(turn_events),
             )
 
+        async def cancelled_result(reason: str = "cancel_requested") -> AgentRunResult:
+            limitation = "Agent 运行已取消。"
+            event = AgentEvent(
+                event_type="run_cancelled",
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                payload={"reason": reason},
+                event_id=self._cancellation_event_id(
+                    request.principal_id,
+                    session.session_id,
+                    turn_id,
+                    "run_cancelled",
+                ),
+            )
+            await self._append_event(
+                request.principal_id,
+                session.events,
+                turn_events,
+                event,
+                event_listener,
+            )
+            return AgentRunResult(
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                publication_state="cancelled",
+                answer=None,
+                clarification=None,
+                limitation=limitation,
+                frozen_evidence=None,
+                review=None,
+                events=tuple(turn_events),
+            )
+
         provider_health: Mapping[str, bool] = {}
         if self.provider_health_provider is not None:
             try:
@@ -520,6 +624,12 @@ class AgentRuntime:
                 fuse.ensure_within_limits()
             except ResourceFuseExceeded:
                 return await resource_fuse_result()
+            if await self._is_cancellation_requested(
+                request.principal_id,
+                session.session_id,
+                turn_id,
+            ):
+                return await cancelled_result()
             working_items = session.evidence_ledger.working_evidence(turn_id=turn_id)
             working_ev_dicts = [
                 {
@@ -628,6 +738,13 @@ class AgentRuntime:
                     failure_stage="controller",
                     error=str(exc),
                 )
+
+            if await self._is_cancellation_requested(
+                request.principal_id,
+                session.session_id,
+                turn_id,
+            ):
+                return await cancelled_result()
 
             # Direct Answer control action bypasses tool execution and generator/reviewer
             if getattr(call, "action", None) == "direct_answer" or call.name == "direct_answer":
@@ -951,6 +1068,13 @@ class AgentRuntime:
                 event_listener,
             )
 
+            if await self._is_cancellation_requested(
+                request.principal_id,
+                session.session_id,
+                turn_id,
+            ):
+                return await cancelled_result()
+
             if not observation.is_terminal:
                 continue
 
@@ -1128,6 +1252,13 @@ class AgentRuntime:
                 failure_stage="answer_generation",
                 error=str(exc),
             )
+
+        if await self._is_cancellation_requested(
+            request.principal_id,
+            session.session_id,
+            turn_id,
+        ):
+            return await cancelled_result()
         await self._append_event(
             request.principal_id,
             session.events,
@@ -1214,6 +1345,13 @@ class AgentRuntime:
                     review=None,
                     events=tuple(turn_events),
                 )
+
+            if await self._is_cancellation_requested(
+                request.principal_id,
+                session.session_id,
+                turn_id,
+            ):
+                return await cancelled_result()
             verdict = str(getattr(review, "verdict", "")).strip().upper()
             if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
                 from app.services.agent.reviewer import (
@@ -1253,6 +1391,12 @@ class AgentRuntime:
                             stage_policy=stage_policy,
                             model_name=main_model_name,
                         )
+                        if await self._is_cancellation_requested(
+                            request.principal_id,
+                            session.session_id,
+                            turn_id,
+                        ):
+                            return await cancelled_result()
                         verdict_2 = str(getattr(review_2, "verdict", "")).strip().upper()
                         if verdict_2 in {"SUPPORTED", "PASS", "PASSED"}:
                             answer = answer_v2
@@ -1298,6 +1442,13 @@ class AgentRuntime:
                         review=review,
                         events=tuple(turn_events),
                     )
+
+        if await self._is_cancellation_requested(
+            request.principal_id,
+            session.session_id,
+            turn_id,
+        ):
+            return await cancelled_result()
 
         await self._append_event(
             request.principal_id,
@@ -1347,6 +1498,8 @@ class AgentRuntime:
         queue: asyncio.Queue[AgentEvent | object] = asyncio.Queue()
         sentinel = object()
         result_holder: list[AgentRunResult] = []
+        observed_turn_id: str | None = None
+        observed_trace_id = ""
 
         async def execute() -> None:
             try:
@@ -1359,14 +1512,53 @@ class AgentRuntime:
                 queue.put_nowait(sentinel)
 
         task = asyncio.create_task(execute())
-        while True:
-            item = await queue.get()
-            if item is sentinel:
-                break
-            yield AgentStreamFrame(event=item)  # type: ignore[arg-type]
+        try:
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                if isinstance(item, AgentEvent):
+                    observed_turn_id = item.turn_id
+                    observed_trace_id = item.trace_id
+                yield AgentStreamFrame(event=item)  # type: ignore[arg-type]
 
-        await task
-        yield AgentStreamFrame(result=result_holder[0])
+            await task
+            yield AgentStreamFrame(result=result_holder[0])
+        finally:
+            if not task.done():
+                cancellation_accepted = False
+                if observed_turn_id:
+                    try:
+                        await self.request_cancellation(
+                            principal_id=request.principal_id,
+                            session_id=request.session_id,
+                            turn_id=observed_turn_id,
+                            reason="stream_closed",
+                        )
+                        cancellation_accepted = True
+                    except ValueError:
+                        cancellation_accepted = False
+                if cancellation_accepted or observed_turn_id is None:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                if cancellation_accepted and observed_turn_id:
+                    await self._persist_event(
+                        request.principal_id,
+                        AgentEvent(
+                            event_type="run_cancelled",
+                            session_id=request.session_id,
+                            turn_id=observed_turn_id,
+                            trace_id=observed_trace_id,
+                            payload={"reason": "stream_closed"},
+                            event_id=self._cancellation_event_id(
+                                request.principal_id,
+                                request.session_id,
+                                observed_turn_id,
+                                "run_cancelled",
+                            ),
+                        ),
+                    )
 
     @staticmethod
     def _validate_decision_against_action_state(call: Any, action_state: Any) -> None:
@@ -1430,6 +1622,51 @@ class AgentRuntime:
         if hasattr(self.session_store, "append_event"):
             return await self.session_store.append_event(principal_id, event)
         return event
+
+    async def _list_runtime_events(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> list[AgentEvent]:
+        if hasattr(self.session_store, "list_events"):
+            return list(await self.session_store.list_events(principal_id, session_id))
+        session = self.session_store.get(principal_id, session_id)
+        return list(session.events) if session is not None else []
+
+    async def _is_cancellation_requested(
+        self,
+        principal_id: str,
+        session_id: str,
+        turn_id: str,
+    ) -> bool:
+        events = await self._list_runtime_events(principal_id, session_id)
+        requested_sequence = max(
+            (
+                event.sequence
+                for event in events
+                if event.turn_id == turn_id and event.event_type == "run_cancel_requested"
+            ),
+            default=0,
+        )
+        cancelled_sequence = max(
+            (
+                event.sequence
+                for event in events
+                if event.turn_id == turn_id and event.event_type == "run_cancelled"
+            ),
+            default=0,
+        )
+        return requested_sequence > cancelled_sequence
+
+    @staticmethod
+    def _cancellation_event_id(
+        principal_id: str,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+    ) -> str:
+        identity = "|".join((principal_id, session_id, turn_id, event_type))
+        return uuid5(NAMESPACE_URL, identity).hex
 
     async def _persist_evidence_state(
         self,

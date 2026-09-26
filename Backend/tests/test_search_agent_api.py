@@ -6,10 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.search_models import (
+    AgentCancelRequest,
     DocumentResult,
     FollowUpContext,
     SearchRequest,
 )
+from app.api.search_routes import cancel_agent_run
 from app.services.agent.publication import PublishedResult
 from app.services.search_application_service import SearchApplicationService
 
@@ -81,6 +83,7 @@ class RetrievalPortStub:
 class AgentRuntimeStub:
     def __init__(self) -> None:
         self.requests = []
+        self.cancellation_requests = []
         self.answer_generator = SimpleNamespace(generate=self._generate)
 
     async def _generate(self, **kwargs):
@@ -104,6 +107,10 @@ class AgentRuntimeStub:
                 map_action=None,
             ),
         )
+
+    async def request_cancellation(self, **kwargs):
+        self.cancellation_requests.append(kwargs)
+        return SimpleNamespace(event_id="cancel-event-1")
 
 
 @pytest.mark.asyncio
@@ -192,6 +199,57 @@ async def test_generation_true_defaults_to_agent_runtime_without_intent_router()
     assert response.trace_id == "trace-1"
     assert response.final_mode == "agent"
     assert response.publication_state == "published"
+
+
+@pytest.mark.asyncio
+async def test_application_service_delegates_agent_cancellation_to_runtime() -> None:
+    runtime = AgentRuntimeStub()
+    service = SearchApplicationService(
+        search_service=SearchServiceStub(),
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=runtime,
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    event = await service.request_cancellation(
+        principal_id="admin:test",
+        session_id="session-42",
+        turn_id="turn-3",
+        reason="user_requested",
+    )
+
+    assert event.event_id == "cancel-event-1"
+    assert runtime.cancellation_requests == [
+        {
+            "principal_id": "admin:test",
+            "session_id": "session-42",
+            "turn_id": "turn-3",
+            "reason": "user_requested",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_route_uses_authenticated_principal_and_returns_event_id() -> None:
+    runtime = AgentRuntimeStub()
+    service = SearchApplicationService(
+        search_service=SearchServiceStub(),
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=runtime,
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    response = await cancel_agent_run(
+        AgentCancelRequest(session_id="session-42", turn_id="turn-3"),
+        SimpleNamespace(role="admin", username="alice", visitor_id=None),
+        service,
+    )
+
+    assert response.status == "cancel_requested"
+    assert response.event_id == "cancel-event-1"
+    assert runtime.cancellation_requests[0]["principal_id"] == "admin:alice"
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,15 @@ from pydantic import BaseModel
 
 from app.core.auth import UserIdentity
 from app.core.security import require_authenticated_user
-from app.models.search_models import FeedbackRequest, FeedbackResponse, FollowUpContext, SearchRequest, SearchResponse
+from app.models.search_models import (
+    AgentCancelRequest,
+    AgentCancelResponse,
+    FeedbackRequest,
+    FeedbackResponse,
+    FollowUpContext,
+    SearchRequest,
+    SearchResponse,
+)
 from app.core.llm_config import llm_config
 from app.services.agent.answer_generator import AnswerGenerator
 from app.services.agent.controller import MainController
@@ -179,6 +187,28 @@ async def stream_search_documents(
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Stream search failed: {exc}") from exc
+
+
+@router.post("/query/cancel", response_model=AgentCancelResponse)
+async def cancel_agent_run(
+    request: AgentCancelRequest,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    application_service: SearchApplicationService = Depends(get_search_application_service),
+) -> AgentCancelResponse:
+    try:
+        event = await application_service.request_cancellation(
+            principal_id=_principal_id(current_user),
+            session_id=request.session_id,
+            turn_id=request.turn_id,
+            reason=request.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return AgentCancelResponse(
+        session_id=request.session_id,
+        turn_id=request.turn_id,
+        event_id=event.event_id,
+    )
 
 
 @router.post("/hybrid", response_model=SearchResponse)
