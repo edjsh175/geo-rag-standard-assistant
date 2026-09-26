@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
+from app.models.search_models import DocumentResult
 from app.services.agent.controller import ControllerOutputError
 from app.services.agent.runtime import AgentRunRequest, AgentRuntime
 from app.services.agent.store import InMemoryAgentStore
 from app.services.agent.tool_runtime import ToolCall
 from app.services.rag.contracts import (
     RetrievalChannelDiagnostic,
+    RetrievalCandidate,
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
@@ -73,6 +77,42 @@ class UnavailableRetrievalPort(EmptyRetrievalPort):
                 ),
             ),
         )
+
+
+class OneCandidateRetrievalPort(EmptyRetrievalPort):
+    async def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
+        result = DocumentResult(
+            id="chunk-1",
+            title="Planning standard",
+            content="durable evidence",
+            similarity=0.95,
+            metadata={"chunk_id": "chunk-1", "match_type": "keyword"},
+            spatial_info=None,
+            file_type="pdf",
+            file_size=0,
+            upload_time=datetime.now(),
+            source_url=None,
+        )
+        return RetrievalResult(
+            candidates=(RetrievalCandidate.from_document_result(result),),
+            embedding_available=False,
+            diagnostics=RetrievalDiagnostics(keyword_count=1),
+        )
+
+
+class RetrieveThenInvalidController:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def decide(self, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return ToolCall(
+                tool_call_id="retrieve-once",
+                name="retrieve_kb",
+                arguments={"query": "test"},
+            )
+        raise ControllerOutputError("invalid after retrieval")
 
 
 async def assert_terminal_state_is_durable(
@@ -217,3 +257,30 @@ async def test_durable_append_failure_happens_before_event_listener_visibility()
 
     assert visible_events == []
     assert await store.list_events("durable-user", "durable-failure") == []
+
+
+@pytest.mark.asyncio
+async def test_evidence_activation_is_durable_even_when_next_controller_step_fails() -> None:
+    store = InMemoryAgentStore()
+    runtime = AgentRuntime(
+        retrieval_port=OneCandidateRetrievalPort(),
+        controller=RetrieveThenInvalidController(),
+        answer_generator=UnusedAnswerGenerator(),
+        session_store=store,
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="retrieve then fail",
+            principal_id="durable-user",
+            session_id="durable-evidence",
+        )
+    )
+
+    assert result.publication_state == "model_output_invalid"
+    activations = await store.list_evidence_activations(
+        "durable-user",
+        "durable-evidence",
+    )
+    assert list(activations) == [result.turn_id]
+    assert len(activations[result.turn_id]) == 1

@@ -283,6 +283,7 @@ class AgentRuntime:
                 payload={**dict(observations[-1].payload), "evidence_id": receipt_evidence.evidence_id},
                 is_terminal=False,
             )
+            await self._persist_evidence_state(request.principal_id, session)
             session.pending_browser_execution = None
             await self._append_event(
                 request.principal_id,
@@ -836,6 +837,7 @@ class AgentRuntime:
                     turn_id=turn_id,
                     evidence_ids=selected_ids,
                 )
+                await self._persist_evidence_state(request.principal_id, session)
                 await self._append_event(
                     request.principal_id,
                     session.events,
@@ -930,6 +932,7 @@ class AgentRuntime:
                 continue
 
             observations.append(observation)
+            await self._persist_evidence_state(request.principal_id, session)
             await self._append_event(
                 request.principal_id,
                 session.events,
@@ -1427,6 +1430,24 @@ class AgentRuntime:
         if hasattr(self.session_store, "append_event"):
             return await self.session_store.append_event(principal_id, event)
         return event
+
+    async def _persist_evidence_state(
+        self,
+        principal_id: str,
+        session: AgentSession,
+    ) -> None:
+        if hasattr(self.session_store, "save_evidence_items"):
+            await self.session_store.save_evidence_items(
+                principal_id,
+                session.session_id,
+                session.evidence_ledger.export_items(),
+            )
+        if hasattr(self.session_store, "save_evidence_activations"):
+            await self.session_store.save_evidence_activations(
+                principal_id,
+                session.session_id,
+                session.evidence_ledger.export_working_by_turn(),
+            )
 
     async def _append_assistant_message(
         self,

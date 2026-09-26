@@ -197,6 +197,23 @@ class AgentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def save_evidence_activations(
+        self,
+        principal_id: str,
+        session_id: str,
+        working_by_turn: Mapping[str, Sequence[str]],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_evidence_activations(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        raise NotImplementedError
+
+    @abstractmethod
     async def save_snapshot(self, record: ContextSnapshotRecord) -> None:
         raise NotImplementedError
 
@@ -255,6 +272,7 @@ class InMemoryAgentStore(AgentStore):
         self._sessions: dict[tuple[str, str], AgentSession] = {}
         self._events: dict[tuple[str, str], list[AgentEvent]] = {}
         self._evidence: dict[tuple[str, str], dict[str, EvidenceItem]] = {}
+        self._evidence_activations: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
         self._snapshots: dict[tuple[str, str], list[ContextSnapshotRecord]] = {}
         self._pending: dict[tuple[str, str], tuple[PendingBrowserExecution, datetime]] = {}
 
@@ -273,6 +291,7 @@ class InMemoryAgentStore(AgentStore):
                     self._sessions.pop(oldest_key, None)
                     self._events.pop(oldest_key, None)
                     self._evidence.pop(oldest_key, None)
+                    self._evidence_activations.pop(oldest_key, None)
                     self._snapshots.pop(oldest_key, None)
                     self._pending.pop(oldest_key, None)
                 ledger = EvidenceLedger(session_id=key[1])
@@ -284,6 +303,7 @@ class InMemoryAgentStore(AgentStore):
                 self._sessions[key] = session
                 self._events[key] = []
                 self._evidence[key] = {}
+                self._evidence_activations[key] = {}
                 self._snapshots[key] = []
             return session
 
@@ -321,6 +341,7 @@ class InMemoryAgentStore(AgentStore):
                 ev_dict = self._evidence.setdefault(key, {})
                 for it in items:
                     ev_dict[it.evidence_id] = it
+            self._evidence_activations[key] = session.evidence_ledger.export_working_by_turn()
             if session.pending_browser_execution:
                 expires_at = datetime.now(timezone.utc) + timedelta(seconds=3600)
                 self._pending[key] = (session.pending_browser_execution, expires_at)
@@ -412,6 +433,28 @@ class InMemoryAgentStore(AgentStore):
             key = (principal_id.strip(), session_id.strip())
             ev_dict = self._evidence.get(key, {})
             return list(ev_dict.values())
+
+    async def save_evidence_activations(
+        self,
+        principal_id: str,
+        session_id: str,
+        working_by_turn: Mapping[str, Sequence[str]],
+    ) -> None:
+        async with self._lock:
+            key = (principal_id.strip(), session_id.strip())
+            self._evidence_activations[key] = {
+                str(turn_id): tuple(str(evidence_id) for evidence_id in evidence_ids)
+                for turn_id, evidence_ids in working_by_turn.items()
+            }
+
+    async def list_evidence_activations(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        async with self._lock:
+            key = (principal_id.strip(), session_id.strip())
+            return dict(self._evidence_activations.get(key, {}))
 
     async def save_snapshot(self, record: ContextSnapshotRecord) -> None:
         async with self._lock:
@@ -574,8 +617,9 @@ class PostgresAgentStore(AgentStore):
         # Restore evidence and events
         events = await self.list_events(principal, normalized_sess)
         ev_items = await self.list_evidence_items(principal, normalized_sess, active_only=True)
+        activations = await self.list_evidence_activations(principal, normalized_sess)
         if ev_items:
-            ledger.restore_items(ev_items)
+            ledger.restore_items(ev_items, working_by_turn=activations)
 
         pending = await self.get_pending_execution(principal, normalized_sess)
 
@@ -621,8 +665,9 @@ class PostgresAgentStore(AgentStore):
         ledger = EvidenceLedger(session_id=normalized_sess)
         events = await self.list_events(principal, normalized_sess)
         ev_items = await self.list_evidence_items(principal, normalized_sess, active_only=True)
+        activations = await self.list_evidence_activations(principal, normalized_sess)
         if ev_items:
-            ledger.restore_items(ev_items)
+            ledger.restore_items(ev_items, working_by_turn=activations)
         pending = await self.get_pending_execution(principal, normalized_sess)
 
         return AgentSession(
@@ -674,6 +719,11 @@ class PostgresAgentStore(AgentStore):
         items = session.evidence_ledger.export_items()
         if items:
             await self.save_evidence_items(principal, normalized_sess, items)
+        await self.save_evidence_activations(
+            principal,
+            normalized_sess,
+            session.evidence_ledger.export_working_by_turn(),
+        )
 
         if session.pending_browser_execution:
             await self.save_pending_execution(principal, session.pending_browser_execution)
@@ -1007,6 +1057,77 @@ class PostgresAgentStore(AgentStore):
                 )
             )
         return items
+
+    async def save_evidence_activations(
+        self,
+        principal_id: str,
+        session_id: str,
+        working_by_turn: Mapping[str, Sequence[str]],
+    ) -> None:
+        if not self._is_postgres_available:
+            return await self._fallback.save_evidence_activations(
+                principal_id,
+                session_id,
+                working_by_turn,
+            )
+
+        principal = principal_id.strip()
+        normalized_sess = session_id.strip()
+        async with self._manager.get_postgres_session() as db_session:
+            sql = text(
+                """
+                INSERT INTO geoai_agent_evidence_activations (
+                    principal_id, session_id, turn_id, evidence_id, ordinal
+                )
+                VALUES (
+                    :principal_id, :session_id, :turn_id, :evidence_id, :ordinal
+                )
+                ON CONFLICT (principal_id, session_id, turn_id, evidence_id) DO UPDATE SET
+                    ordinal = EXCLUDED.ordinal
+                """
+            )
+            for turn_id, evidence_ids in working_by_turn.items():
+                for ordinal, evidence_id in enumerate(evidence_ids, start=1):
+                    await db_session.execute(
+                        sql,
+                        {
+                            "principal_id": principal,
+                            "session_id": normalized_sess,
+                            "turn_id": str(turn_id),
+                            "evidence_id": str(evidence_id),
+                            "ordinal": ordinal,
+                        },
+                    )
+
+    async def list_evidence_activations(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> dict[str, tuple[str, ...]]:
+        if not self._is_postgres_available:
+            return await self._fallback.list_evidence_activations(principal_id, session_id)
+
+        async with self._manager.get_postgres_session() as db_session:
+            result = await db_session.execute(
+                text(
+                    """
+                    SELECT turn_id, evidence_id, ordinal
+                    FROM geoai_agent_evidence_activations
+                    WHERE principal_id = :principal_id AND session_id = :session_id
+                    ORDER BY turn_id ASC, ordinal ASC
+                    """
+                ),
+                {
+                    "principal_id": principal_id.strip(),
+                    "session_id": session_id.strip(),
+                },
+            )
+            rows = result.mappings().fetchall()
+
+        grouped: dict[str, list[str]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["turn_id"]), []).append(str(row["evidence_id"]))
+        return {turn_id: tuple(evidence_ids) for turn_id, evidence_ids in grouped.items()}
 
     async def save_snapshot(self, record: ContextSnapshotRecord) -> None:
         if not self._is_postgres_available:

@@ -116,3 +116,40 @@ def test_observation_can_be_admitted_and_frozen_without_kb_retrieval() -> None:
     assert snapshot.items[0].source == "browser_gis"
     assert snapshot.items[0].match_type == "observation"
     assert '"layer_ref":"ul_1"' in snapshot.items[0].text
+
+
+def test_working_evidence_projection_roundtrips_in_order() -> None:
+    ledger = EvidenceLedger(session_id="session-1")
+    first, second = ledger.add_candidates(
+        turn_id="turn-7",
+        candidates=[
+            make_candidate(chunk_id="chunk-a", text="证据 A"),
+            make_candidate(chunk_id="chunk-b", text="证据 B"),
+        ],
+    )
+
+    projection = ledger.export_working_by_turn()
+
+    restored = EvidenceLedger(session_id="session-1")
+    restored.restore_items(
+        ledger.export_items(),
+        working_by_turn=projection,
+    )
+
+    assert projection == {
+        "turn-7": (first.evidence_id, second.evidence_id),
+    }
+    assert [item.evidence_id for item in restored.working_evidence(turn_id="turn-7")] == [
+        first.evidence_id,
+        second.evidence_id,
+    ]
+
+
+def test_restore_rejects_activation_that_references_unknown_evidence() -> None:
+    ledger = EvidenceLedger(session_id="session-1")
+
+    with pytest.raises(ValueError, match="unknown evidence_id"):
+        ledger.restore_items(
+            (),
+            working_by_turn={"turn-1": ("missing-evidence",)},
+        )

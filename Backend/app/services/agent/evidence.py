@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 from uuid import NAMESPACE_URL, uuid5
 
 from app.services.agent.contracts import EvidenceItem, FrozenEvidenceSnapshot
@@ -243,6 +243,13 @@ class EvidenceLedger:
         """Export all current evidence items for persistence."""
         return tuple(self._items.values())
 
+    def export_working_by_turn(self) -> dict[str, tuple[str, ...]]:
+        """Export the ordered per-turn evidence activation projection."""
+        return {
+            turn_id: tuple(evidence_ids)
+            for turn_id, evidence_ids in self._working_by_turn.items()
+        }
+
     def restore_items(
         self,
         items: Iterable[EvidenceItem],
@@ -254,6 +261,12 @@ class EvidenceLedger:
             self._items[item.evidence_id] = item
         if working_by_turn:
             for turn_id, ev_ids in working_by_turn.items():
+                unknown = [evidence_id for evidence_id in ev_ids if evidence_id not in self._items]
+                if unknown:
+                    raise ValueError(
+                        "working evidence references unknown evidence_id: "
+                        + ", ".join(unknown)
+                    )
                 self._working_by_turn[turn_id] = list(ev_ids)
         if next_citation_ordinal is not None:
             self._next_citation_ordinal = next_citation_ordinal
