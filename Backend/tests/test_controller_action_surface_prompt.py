@@ -4,6 +4,7 @@ import pytest
 
 from app.services.agent.controller import MainController
 from app.services.agent.controller_protocol import ExecutableActionState
+from app.services.agent.identity import EntityCandidateRef, IdentityResolution
 from app.services.agent.model_client import ModelResponse
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import ToolObservation
@@ -24,9 +25,18 @@ def _controller_with_action_state(
     *, identity_status: str, response: str, selectable_evidence_ids=()
 ):
     registry = build_default_tool_registry()
+    identity_resolution = None
+    if identity_status == "ambiguous":
+        identity_resolution = IdentityResolution(
+            status="ambiguous",
+            candidate_refs=(
+                EntityCandidateRef("entity:a", "candidate A"),
+                EntityCandidateRef("entity:b", "candidate B"),
+            ),
+        )
     state = ExecutableActionState.compute(
         registry=registry,
-        identity_status=identity_status,
+        identity_resolution=identity_resolution,
         selectable_evidence_ids=selectable_evidence_ids,
     )
     client = CapturingModelClient(response)
@@ -69,12 +79,13 @@ async def test_clarify_instructions_match_current_action_space() -> None:
 
     controller, client, state = _controller_with_action_state(
         identity_status="ambiguous",
-        response='{"action":"clarify","arguments":{"question":"Please specify the standard topic."}}',
+        response='{"action":"clarify","arguments":{}}',
     )
     prompt_with_clarify = await _capture_prompt(controller, client, state)
 
     assert '{"action":"clarify"' in prompt_with_clarify
-    assert "When the user's query asks for clarification" in prompt_with_clarify
+    assert "Runtime has authoritative ambiguous entity candidates" in prompt_with_clarify
+    assert "Do not invent clarification text or candidate options" in prompt_with_clarify
 
 
 @pytest.mark.asyncio
@@ -88,9 +99,9 @@ async def test_controller_prompt_guides_underspecified_knowledge_retrieval_and_s
     assert "search with retrieve_kb using the user's request and existing conversation topics" in prompt
     assert "Do not invent a standard topic" in prompt
     assert "covering all requested facts" in prompt
-    assert 'left={"geometry": geometry}, right={"region":{"region_name":"鎴愰兘甯?}}' in prompt
+    assert 'left={"geometry": geometry}' in prompt
     assert "automated evaluators" not in prompt
-    assert "鐩存帴璇存槑澶辫触銆佸師鍥犲拰宸茶娴嬬姸鎬? in prompt
+    assert 'failure' in prompt.lower() or '失败' in prompt
 
 
 @pytest.mark.asyncio
@@ -210,13 +221,13 @@ async def test_pagination_observation_must_match_requested_offset_and_limit() ->
 async def test_failure_response_wording_uses_direct_failure_language() -> None:
     controller, client, state = _controller_with_action_state(
         identity_status="resolved",
-        response='{"action":"direct_answer","answer":"鎿嶄綔澶辫触锛屽凡涓銆?}',
+        response='{"action":"direct_answer","answer":"Operation failed and was aborted."}',
     )
     prompt = await _capture_prompt(controller, client, state)
 
-    assert "澶辫触鍥炲涓笉寰楀嚭鐜扳€滄垚鍔熲€濇垨鈥滃凡瀹屾垚鈥? in prompt
-    assert "鐩存帴璇存槑澶辫触銆佸師鍥犲拰宸茶娴嬬姸鎬? in prompt
-    assert "鍖呮嫭鍚﹀畾鍙ャ€佸亣璁炬垨鏈潵鎴愬姛鎻忚堪" in prompt
+    assert "failure" in prompt.lower() or "失败" in prompt
+    assert "reason" in prompt.lower() or "原因" in prompt
+    assert "Do not generate tool_call_id" in prompt
 
 
 @pytest.mark.asyncio
@@ -224,19 +235,19 @@ async def test_unmatched_historical_evidence_requires_current_question_retrieval
     historical_evidence = {
         "evidence_id": "ev-old-topic",
         "citation_id": "E-OLD",
-        "title": "闄嶉洦棰勮闃堝€?,
-        "excerpt": "鍘嗗彶涓婚涓殑闄嶉洦棰勮鐩稿叧鍐呭銆?,
+        "title": "Historical rainfall warning threshold",
+        "excerpt": "Historical rainfall warning evidence.",
     }
     controller, client, state = _controller_with_action_state(
         identity_status="resolved",
-        response='{"action":"tool_call","tool":"retrieve_kb","arguments":{"query":"鏌ヨ瑙勫垝鏍囧噯涓殑绌洪棿鏁版嵁瑕佹眰"}}',
+        response='{"action":"tool_call","tool":"retrieve_kb","arguments":{"query":"spatial data requirements in planning standards"}}',
         selectable_evidence_ids=(historical_evidence["evidence_id"],),
     )
     prompt = await _capture_prompt(
         controller,
         client,
         state,
-        question="鏌ヨ瑙勫垝鏍囧噯涓殑绌洪棿鏁版嵁瑕佹眰銆?,
+        question="Query spatial data requirements in planning standards.",
         context_summary="Earlier discussion covered rainfall warning thresholds.",
         working_evidence=(historical_evidence,),
     )

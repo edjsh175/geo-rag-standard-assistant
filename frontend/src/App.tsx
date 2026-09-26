@@ -221,35 +221,6 @@ const PROVINCE_MAP: Record<string, string> = {
   '820000': '澳门特别行政区',
 };
 
-const buildRegionAliases = (name: string): string[] => {
-  const compactName = name.replace(/\s+/g, '');
-  const aliasSet = new Set([
-    compactName,
-    compactName.replace(/省$/, ''),
-    compactName.replace(/市$/, ''),
-    compactName.replace(/特别行政区$/, ''),
-    compactName.replace(/壮族自治区$/, ''),
-    compactName.replace(/回族自治区$/, ''),
-    compactName.replace(/维吾尔自治区$/, ''),
-    compactName.replace(/自治区$/, ''),
-  ]);
-  return Array.from(aliasSet).filter(Boolean);
-};
-
-const extractRegionFromQuery = (content: string): { adcode: string; name: string } | null => {
-  const normalized = content.replace(/\s+/g, '');
-  for (const [adcode, name] of Object.entries(PROVINCE_MAP)) {
-    if (buildRegionAliases(name).some((alias) => normalized.includes(alias))) {
-      return { adcode, name };
-    }
-  }
-  return null;
-};
-
-
-
-
-
 const resolveFollowUpContext = (
   _content: string,
   _messages: ChatMessageType[],
@@ -631,12 +602,10 @@ export default function App() {
   const handleChatSubmit = async (content: string) => {
     if (!content.trim()) return;
 
-    const regionFromQuery = extractRegionFromQuery(content);
-    const regionContext = regionFromQuery ?? activeRegion;
+    // Browser/UI-observed map state is authoritative. Natural-language text must
+    // not mutate map facts before the Controller interprets the request.
+    const regionContext = activeRegion;
     const followUpContext = resolveFollowUpContext(content, messages, selectedDocument);
-    if (regionFromQuery) {
-      setActiveRegion(regionFromQuery);
-    }
 
     // 构建历史记录：后端只接受 user/assistant，系统提示词只能由后端构建。
     const history = messages

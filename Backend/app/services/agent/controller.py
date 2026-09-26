@@ -156,8 +156,8 @@ class MainController:
         clarify_instruction = ""
         if CLARIFY_ACTION in action_state.available_control_actions:
             clarify_instruction = (
-                "- When the user's query asks for clarification, or when the subject/spatial scope is ambiguous: "
-                "{\"action\":\"clarify\",\"arguments\":{\"question\":\"请进一步明确您要查询的目标或空间范围。\"}}\n"
+                "- Runtime has authoritative ambiguous entity candidates. If user confirmation is required, return "
+                "{\"action\":\"clarify\",\"arguments\":{}}. Do not invent clarification text or candidate options.\n"
             )
 
         system_prompt = (

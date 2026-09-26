@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
+from app.services.agent.identity import IdentityResolution
 
 
 @dataclass(slots=True)
@@ -39,6 +40,7 @@ class AgentSession:
     events: list[AgentEvent] = field(default_factory=list)
     next_turn_number: int = 1
     pending_browser_execution: PendingBrowserExecution | None = None
+    identity_resolution: IdentityResolution | None = None
 
     def new_turn_id(self) -> str:
         turn_id = f"turn-{self.next_turn_number}"

@@ -520,16 +520,10 @@ class AgentRuntime:
             selectable_ids = tuple(item.evidence_id for item in all_ledger_items)
             has_evidence = len(selectable_ids) > 0
 
-            identity_status = "resolved"
-            if getattr(frame, "identity_state", None) and getattr(frame.identity_state, "status", None) in {"ambiguous", "unresolved"}:
-                identity_status = getattr(frame.identity_state, "status")
-            elif any(k in question for k in ("不明确", "澄清", "歧义", "指代不清", "未指定", "查一下这个", "查一下那个")):
-                identity_status = "ambiguous"
-
             action_state = ExecutableActionState.compute(
                 registry=registry,
                 map_context=map_ctx if isinstance(map_ctx, Mapping) else None,
-                identity_status=identity_status,
+                identity_resolution=session.identity_resolution,
                 has_evidence=has_evidence,
                 selectable_evidence_ids=selectable_ids,
             )
@@ -649,14 +643,10 @@ class AgentRuntime:
 
             # Clarify control action bypasses tool execution
             if getattr(call, "action", None) == "clarify" or call.name == "clarify":
-                # P0-5: Clarify 只由合法 Identity Resolution 状态驱动
-                clarification_text = ""
-                if getattr(frame, "identity_state", None):
-                    ident = frame.identity_state
-                    clarification_text = getattr(ident, "prompt", "") or getattr(ident, "question", "")
-                if not clarification_text:
-                    raw_q = (call.arguments.get("question") if hasattr(call, "arguments") and isinstance(call.arguments, Mapping) else None)
-                    clarification_text = str(raw_q).strip() if raw_q else "请进一步明确您的查询目标或空间范围。"
+                identity_resolution = session.identity_resolution
+                if identity_resolution is None or not identity_resolution.requires_confirmation:
+                    raise ValueError("clarify requires authoritative ambiguous entity candidates")
+                clarification_text = identity_resolution.clarification_text()
 
                 self._append_event(
                     session.events,

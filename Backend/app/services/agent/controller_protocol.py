@@ -9,6 +9,7 @@ import re
 from types import MappingProxyType
 from typing import Any
 
+from app.services.agent.identity import IdentityResolution
 from app.services.agent.tools import ToolRegistry, ToolSpec
 
 COMPOSE_ANSWER_ACTION = "compose_answer"
@@ -42,17 +43,11 @@ def build_control_action_contracts(
     return {
         CLARIFY_ACTION: ControlActionContract(
             name=CLARIFY_ACTION,
-            purpose="在问题主体不明确、存在歧义或需要用户在候选中明确目标时请求澄清，并暂停当前轮次。",
-            use_when="问题主体不明确、缺少必要目标实体、或需要用户澄清确认目标时使用。",
-            avoid_when="问题意图明确且可继续执行检索或工具操作时禁止使用。",
-            result_semantics="向用户呈现澄清请求，等待用户输入明确信息。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "向用户提出的具体澄清问题。"}
-                },
-                "additionalProperties": False,
-            },
+            purpose="请求用户确认 Runtime 已解析出的歧义实体候选，并暂停当前轮次。",
+            use_when="仅当当前 Runtime IdentityResolution 存在至少两个合法实体候选时使用。",
+            avoid_when="禁止用于一般意图、空间范围或参数澄清；禁止由模型自行生成候选或问题。",
+            result_semantics="Runtime 根据实体候选确定性生成确认内容；Controller 不提供文本或选项。",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
         ),
         LIMITATION_ACTION: ControlActionContract(
             name=LIMITATION_ACTION,
@@ -127,6 +122,7 @@ class ExecutableActionState:
     selectable_evidence_ids: frozenset[str] = frozenset()
     has_evidence: bool = True
     provider_health: Mapping[str, bool] = field(default_factory=_empty_mapping)
+    identity_resolution: IdentityResolution | None = None
 
     @classmethod
     def compute(
@@ -134,7 +130,7 @@ class ExecutableActionState:
         *,
         registry: ToolRegistry,
         map_context: Mapping[str, Any] | None = None,
-        identity_status: str = "resolved",
+        identity_resolution: IdentityResolution | None = None,
         has_evidence: bool = True,
         selectable_evidence_ids: Sequence[str] | frozenset[str] | None = None,
         forbid_finalize: bool = False,
@@ -155,7 +151,7 @@ class ExecutableActionState:
         if not forbid_finalize:
             control_actions.add(DIRECT_ANSWER_ACTION)
             control_actions.add(LIMITATION_ACTION)
-            if identity_status in {"ambiguous", "unresolved"}:
+            if identity_resolution is not None and identity_resolution.requires_confirmation:
                 control_actions.add(CLARIFY_ACTION)
             if effective_has_evidence:
                 control_actions.add(COMPOSE_ANSWER_ACTION)
@@ -170,10 +166,11 @@ class ExecutableActionState:
             available_capabilities=frozenset(capabilities),
             available_control_actions=frozenset(control_actions),
             allowed_answer_kinds=allowed_kinds,
-            identity_status=identity_status,
+            identity_status=identity_resolution.status if identity_resolution is not None else "resolved",
             selectable_evidence_ids=selectable_ids,
             has_evidence=effective_has_evidence,
             provider_health=provider_health or {},
+            identity_resolution=identity_resolution,
         )
 
 
@@ -378,14 +375,13 @@ def validate_controller_decision_payload(
         if CLARIFY_ACTION not in state.available_control_actions:
             raise ValueError("malformed_decision_action: clarify is not currently available")
         raw_arguments = normalized.get("arguments")
-        question_text = ""
-        if isinstance(raw_arguments, Mapping):
-            question_text = str(raw_arguments.get("question") or "").strip()
-        if not question_text and isinstance(normalized.get("question"), str):
-            question_text = normalized["question"].strip()
+        if raw_arguments not in (None, {}):
+            raise ValueError("malformed_clarify: arguments must be an empty object")
+        if "question" in normalized:
+            raise ValueError("malformed_clarify: Controller must not generate clarification text")
         return ControllerDecision(
             action=CLARIFY_ACTION,
-            arguments={"question": question_text} if question_text else {},
+            arguments={},
             reason=reason,
             tool_call_id=tool_call_id,
         )

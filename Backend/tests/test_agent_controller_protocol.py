@@ -19,6 +19,7 @@ from app.services.agent.controller_protocol import (
     validate_controller_decision_payload,
 )
 from app.services.agent.events import AgentEvent
+from app.services.agent.identity import EntityCandidateRef, IdentityResolution
 from app.services.agent.model_client import ModelResponse
 from app.services.agent.runtime import AgentRunRequest, AgentRuntime
 from app.services.agent.stage_policy import LLMStagePolicy
@@ -55,7 +56,6 @@ def test_executable_action_state_dynamic_surface():
     state_2d = ExecutableActionState.compute(
         registry=registry,
         map_context=map_context_2d,
-        identity_status="resolved",
     )
     assert "locate_map" in state_2d.available_capabilities
     assert "import_vector_dataset" in state_2d.available_capabilities
@@ -73,13 +73,57 @@ def test_executable_action_state_dynamic_surface():
     state_3d = ExecutableActionState.compute(
         registry=registry,
         map_context=map_context_3d,
-        identity_status="ambiguous",
+        identity_resolution=IdentityResolution(
+            status="ambiguous",
+            candidate_refs=(
+                EntityCandidateRef("entity:chengdu", "成都市"),
+                EntityCandidateRef("entity:chengdu-county", "成都县"),
+            ),
+        ),
     )
     assert "locate_map" in state_3d.available_capabilities
     assert "set_layer_visibility" in state_3d.available_capabilities
     assert "import_vector_dataset" not in state_3d.available_capabilities
     assert "set_vector_style" not in state_3d.available_capabilities
     assert CLARIFY_ACTION in state_3d.available_control_actions  # ambiguous identity exposed
+
+
+def test_clarify_requires_runtime_entity_candidates_not_status_or_free_text():
+    registry = build_default_tool_registry()
+    unresolved_without_candidates = ExecutableActionState.compute(
+        registry=registry,
+        identity_resolution=IdentityResolution(status="unresolved"),
+    )
+    assert CLARIFY_ACTION not in unresolved_without_candidates.available_control_actions
+
+    ambiguous_with_one_candidate = ExecutableActionState.compute(
+        registry=registry,
+        identity_resolution=IdentityResolution(
+            status="ambiguous",
+            candidate_refs=(EntityCandidateRef("entity:one", "唯一候选"),),
+        ),
+    )
+    assert CLARIFY_ACTION not in ambiguous_with_one_candidate.available_control_actions
+
+    valid_identity = IdentityResolution(
+        status="ambiguous",
+        candidate_refs=(
+            EntityCandidateRef("entity:a", "候选A"),
+            EntityCandidateRef("entity:b", "候选B"),
+        ),
+    )
+    state = ExecutableActionState.compute(
+        registry=registry,
+        identity_resolution=valid_identity,
+    )
+    assert CLARIFY_ACTION in state.available_control_actions
+    with pytest.raises(ValueError, match="must be an empty object"):
+        validate_controller_decision_payload(
+            {"action": "clarify", "arguments": {"question": "模型自造问题"}},
+            state=state,
+            registry=registry,
+            tool_call_id="clarify-invalid",
+        )
 
     # 3. Map not ready: no browser tools
     map_context_not_ready = {"ready": False}

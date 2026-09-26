@@ -43,10 +43,6 @@ class ComposeAnswerInput(BaseModel):
         return self
 
 
-class ClarifyInput(BaseModel):
-    question: str = Field(..., min_length=1)
-
-
 class LimitationInput(BaseModel):
     message: str = Field(..., min_length=1)
 
