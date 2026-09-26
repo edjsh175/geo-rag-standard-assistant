@@ -122,33 +122,18 @@ class ToolRuntime:
         self.spatial_service = spatial_service
 
     async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        from app.services.agent.tools import CONTROL_ACTION_NAMES
+        if call.name in CONTROL_ACTION_NAMES:
+            raise ToolExecutionError(f"'{call.name}' is a control action, not an executable tool")
+
         if self.resource_fuse is not None:
             self.resource_fuse.consume_step(tool_name=call.name)
-        from app.services.agent.tools import (
-            CONTROL_ACTION_NAMES,
-            ComposeAnswerInput,
-            ClarifyInput,
-            LimitationInput,
-        )
-        if call.name in CONTROL_ACTION_NAMES:
-            model_map = {
-                "compose_answer": ComposeAnswerInput,
-                "clarify": ClarifyInput,
-                "limitation": LimitationInput,
-            }
-            input_model = model_map.get(call.name)
-            if input_model is not None:
-                try:
-                    arguments = input_model.model_validate(dict(call.arguments)).model_dump()
-                except Exception as exc:
-                    raise ToolExecutionError(str(exc)) from exc
-            else:
-                arguments = dict(call.arguments)
-        else:
-            try:
-                arguments = self.registry.validate(call.name, call.arguments)
-            except (KeyError, ValueError) as exc:
-                raise ToolExecutionError(str(exc)) from exc
+
+        try:
+            arguments = self.registry.validate(call.name, call.arguments)
+        except (KeyError, ValueError) as exc:
+            raise ToolExecutionError(str(exc)) from exc
+
         call = ToolCall(
             tool_call_id=call.tool_call_id,
             name=call.name,
@@ -156,14 +141,10 @@ class ToolRuntime:
         )
         if call.name == "retrieve_kb":
             observation = await self._retrieve_kb(turn_id=turn_id, call=call)
+        elif call.name == "search_evidence_memory":
+            observation = self._search_evidence_memory(turn_id=turn_id, call=call)
         elif call.name == "reuse_evidence":
             observation = self._reuse_evidence(turn_id=turn_id, call=call)
-        elif call.name == "compose_answer":
-            observation = self._compose_answer(turn_id=turn_id, call=call)
-        elif call.name == "clarify":
-            observation = self._clarify(call=call)
-        elif call.name == "limitation":
-            observation = self._limitation(call=call)
         elif call.name in {
             "import_vector_dataset",
             "set_layer_visibility",
@@ -301,45 +282,31 @@ class ToolRuntime:
             },
         )
 
-    def _compose_answer(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
-        raw_ids = call.arguments.get("selected_evidence_ids") or call.arguments.get("evidence_ids")
-        if not isinstance(raw_ids, (list, tuple)):
-            raise ToolExecutionError("selected_evidence_ids must be a list of strings")
-        evidence_ids = [str(value).strip() for value in raw_ids if str(value).strip()]
-        # If any selected evidence exists in ledger memory from prior turns, activate it into current turn
-        existing_in_ledger = [eid for eid in evidence_ids if self.evidence_ledger.get(eid) is not None]
-        if existing_in_ledger:
-            self.evidence_ledger.activate_existing(turn_id=turn_id, evidence_ids=existing_in_ledger)
-        snapshot = self.evidence_ledger.freeze(
-            turn_id=turn_id,
-            evidence_ids=evidence_ids,
+    def _search_evidence_memory(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        query_text = str(call.arguments.get("query", "")).strip()
+        limit = int(call.arguments.get("limit", 8))
+        matches = self.evidence_ledger.search_memory(
+            query=query_text,
+            exclude_turn_id=None,
+            limit=limit,
         )
         return ToolObservation(
             tool_call_id=call.tool_call_id,
             tool_name=call.name,
             status="ok",
-            payload={"snapshot": snapshot},
-            is_terminal=True,
-        )
-
-    def _clarify(self, *, call: ToolCall) -> ToolObservation:
-        question = str(call.arguments["question"]).strip()
-        return ToolObservation(
-            tool_call_id=call.tool_call_id,
-            tool_name=call.name,
-            status="ok",
-            payload={"question": question},
-            is_terminal=True,
-        )
-
-    def _limitation(self, *, call: ToolCall) -> ToolObservation:
-        message = str(call.arguments["message"]).strip()
-        return ToolObservation(
-            tool_call_id=call.tool_call_id,
-            tool_name=call.name,
-            status="ok",
-            payload={"message": message},
-            is_terminal=True,
+            payload={
+                "matches": [
+                    {
+                        "evidence_id": item.evidence_id,
+                        "citation_id": item.citation_id,
+                        "title": item.title,
+                        "score": item.score,
+                    }
+                    for item in matches
+                ],
+                "evidence_ids": [item.evidence_id for item in matches],
+                "matched_count": len(matches),
+            },
         )
 
 

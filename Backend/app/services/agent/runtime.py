@@ -464,31 +464,38 @@ class AgentRuntime:
                 metadata=effective_request_context,
             )
 
-            map_ctx = effective_request_context.get("map_context") if isinstance(effective_request_context, Mapping) else None
-            registry = getattr(self.controller, "tool_registry", None)
-            from app.services.agent.tools import executable_tool_names
-            available_tool_names = (
-                executable_tool_names(registry, map_ctx)
-                if registry is not None
-                else frozenset()
+            from app.services.agent.tools import build_default_tool_registry
+            registry = getattr(self.controller, "tool_registry", None) or build_default_tool_registry()
+            from app.services.agent.controller_protocol import ExecutableActionState
+
+            all_ledger_items = session.evidence_ledger.all_items()
+            selectable_ids = tuple(item.evidence_id for item in all_ledger_items)
+            has_evidence = len(selectable_ids) > 0
+
+            identity_status = "resolved"
+            if getattr(frame, "identity_state", None) and getattr(frame.identity_state, "status", None) in {"ambiguous", "unresolved"}:
+                identity_status = getattr(frame.identity_state, "status")
+
+            action_state = ExecutableActionState.compute(
+                registry=registry,
+                map_context=map_ctx if isinstance(map_ctx, Mapping) else None,
+                identity_status=identity_status,
+                has_evidence=has_evidence,
+                selectable_evidence_ids=selectable_ids,
             )
 
-            tool_specs = registry.specs_for(available_tool_names) if registry else ()
+            tool_specs = registry.specs_for(action_state.available_capabilities) if registry else ()
             tool_contracts_text = "\n".join(
                 f"- {s.name}: {s.description}" for s in tool_specs
             ) if tool_specs else ""
             tool_names = ", ".join(s.name for s in tool_specs) if tool_specs else ""
 
-            ctrl_actions = ["compose_answer", "direct_answer"]
-            if getattr(frame, "identity_state", None) and getattr(frame.identity_state, "status", None) in {"ambiguous", "unresolved"}:
-                ctrl_actions.append("clarify")
-
             proj_ctrl, snapshot_ctrl = self.context_engine.project_for_controller(
                 frame,
                 tool_contracts_text=tool_contracts_text,
                 tool_names=tool_names,
-                available_capabilities=tuple(available_tool_names),
-                available_control_actions=tuple(ctrl_actions),
+                available_capabilities=tuple(action_state.available_capabilities),
+                available_control_actions=tuple(action_state.available_control_actions),
             )
             if hasattr(self.session_store, "save_snapshot"):
                 try:
@@ -498,23 +505,28 @@ class AgentRuntime:
 
             try:
                 controller_kwargs = dict(
+                    projection=proj_ctrl,
+                    action_state=action_state,
+                    observations=tuple(observations),
+                    stage_policy=stage_policy,
+                    # Backward compatibility for legacy test stubs:
                     question=proj_ctrl.user_question,
                     context_summary=self._merge_request_context(
                         proj_ctrl.conversation_text,
                         effective_request_context,
                     ),
                     working_evidence=proj_ctrl.working_evidence,
-                    observations=tuple(observations),
-                    stage_policy=stage_policy,
+                    available_tool_names=action_state.available_capabilities,
+                    available_control_actions=action_state.available_control_actions,
                 )
                 if main_model_name is not None:
                     controller_kwargs["model_name"] = main_model_name
                 import inspect
                 sig = inspect.signature(self.controller.decide)
-                if "available_tool_names" in sig.parameters or any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-                ):
-                    controller_kwargs["available_tool_names"] = available_tool_names
+                accepted_params = sig.parameters
+                has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in accepted_params.values())
+                if not has_varkw:
+                    controller_kwargs = {k: v for k, v in controller_kwargs.items() if k in accepted_params}
                 call = await self.controller.decide(**controller_kwargs)
             except TimeoutError:
                 return resource_fuse_result()
@@ -579,10 +591,14 @@ class AgentRuntime:
 
             # Clarify control action bypasses tool execution
             if getattr(call, "action", None) == "clarify" or call.name == "clarify":
-                raw_q = (call.arguments.get("question") if hasattr(call, "arguments") and isinstance(call.arguments, Mapping) else None)
-                if not raw_q:
-                    raw_q = "请进一步明确您的查询目标或空间范围。"
-                clarification_text = str(raw_q).strip()
+                # P0-5: Clarify 只由合法 Identity Resolution 状态驱动
+                clarification_text = ""
+                if getattr(frame, "identity_state", None):
+                    ident = frame.identity_state
+                    clarification_text = getattr(ident, "prompt", "") or getattr(ident, "question", "")
+                if not clarification_text:
+                    raw_q = (call.arguments.get("question") if hasattr(call, "arguments") and isinstance(call.arguments, Mapping) else None)
+                    clarification_text = str(raw_q).strip() if raw_q else "请进一步明确您的查询目标或空间范围。"
 
                 self._append_event(
                     session.events,
@@ -627,6 +643,49 @@ class AgentRuntime:
                     review=None,
                     events=tuple(turn_events),
                 )
+
+            # Compose Answer control action bypasses tool execution and enters Generator / Reviewer
+            if getattr(call, "action", None) == "compose_answer" or call.name == "compose_answer":
+                raw_args = getattr(call, "arguments", {}) or {}
+                if isinstance(raw_args, Mapping):
+                    raw_selected_ids = raw_args.get("selected_evidence_ids") or raw_args.get("evidence_ids") or []
+                else:
+                    raw_selected_ids = []
+
+                selected_ids = [str(i).strip() for i in raw_selected_ids if str(i).strip()]
+                # Freeze selected evidence from ledger
+                snapshot = session.evidence_ledger.freeze(
+                    turn_id=turn_id,
+                    evidence_ids=selected_ids,
+                )
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="controller_decision",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={"action": "compose_answer", "tool_name": "compose_answer", "arguments": dict(raw_args)},
+                    ),
+                    event_listener,
+                )
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="evidence_frozen",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={
+                            "snapshot_id": snapshot.snapshot_id,
+                            "evidence_ids": list(snapshot.evidence_ids),
+                        },
+                    ),
+                    event_listener,
+                )
+                break
 
             self._append_event(
                 session.events,
@@ -686,23 +745,6 @@ class AgentRuntime:
                     event_listener,
                 )
                 continue
-            if call.name == "compose_answer":
-                snapshot = observation.payload["snapshot"]
-                self._append_event(
-                    session.events,
-                    turn_events,
-                    AgentEvent(
-                        event_type="evidence_frozen",
-                        session_id=session.session_id,
-                        turn_id=turn_id,
-                        trace_id=trace_id,
-                        payload={
-                            "snapshot_id": snapshot.snapshot_id,
-                            "evidence_ids": list(snapshot.evidence_ids),
-                        },
-                    ),
-                    event_listener,
-                )
 
             observations.append(observation)
             self._append_event(
@@ -858,12 +900,65 @@ class AgentRuntime:
                     continuation_token=continuation_token,
                 )
 
-            snapshot = observation.payload["snapshot"]
-            if not snapshot.items:
+        if "snapshot" not in locals() or snapshot is None:
+            if "observation" in locals() and observation is not None and "snapshot" in getattr(observation, "payload", {}):
+                snapshot = observation.payload["snapshot"]
+            else:
                 raise ValueError("knowledge publication requires Frozen Evidence")
+        if not snapshot.items:
+            raise ValueError("knowledge publication requires Frozen Evidence")
 
-            conv_summary = proj_ctrl.conversation_text if "proj_ctrl" in locals() else ""
-            proj_ans, snapshot_ans = self.context_engine.project_for_answer(
+        conv_summary = proj_ctrl.conversation_text if "proj_ctrl" in locals() else ""
+        proj_ans, snapshot_ans = self.context_engine.project_for_answer(
+            frame if "frame" in locals() else self.context_engine.build_frame(
+                session_id=session.session_id,
+                principal_id=request.principal_id,
+                question=question,
+                events=session.events,
+                working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
+            ),
+            conversation_summary=conv_summary,
+        )
+        if hasattr(self.session_store, "save_snapshot"):
+            try:
+                await self.session_store.save_snapshot(snapshot_ans.to_record(request.principal_id))
+            except Exception:
+                pass
+
+        try:
+            answer_kwargs = dict(
+                question=question,
+                snapshot=snapshot,
+                stage_policy=stage_policy,
+            )
+            if main_model_name is not None:
+                answer_kwargs["model_name"] = main_model_name
+            answer = await self.answer_generator.generate(**answer_kwargs)
+        except TimeoutError:
+            return resource_fuse_result()
+        except AnswerGenerationError as exc:
+            return model_output_failure_result(
+                failure_stage="answer_generation",
+                error=str(exc),
+            )
+        self._append_event(
+            session.events,
+            turn_events,
+            AgentEvent(
+                event_type="answer_generated",
+                session_id=session.session_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                payload={"kind": answer.kind, "citations": list(answer.citations)},
+            ),
+            event_listener,
+        )
+
+        review = None
+        if reviewer_enabled:
+            if self.reviewer is None:
+                raise RuntimeError("reviewer_enabled but no reviewer is configured")
+            proj_rev, snapshot_rev = self.context_engine.project_for_reviewer(
                 frame if "frame" in locals() else self.context_engine.build_frame(
                     session_id=session.session_id,
                     principal_id=request.principal_id,
@@ -871,76 +966,111 @@ class AgentRuntime:
                     events=session.events,
                     working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
                 ),
-                conversation_summary=conv_summary,
+                draft_answer=answer.answer,
             )
             if hasattr(self.session_store, "save_snapshot"):
                 try:
-                    await self.session_store.save_snapshot(snapshot_ans.to_record(request.principal_id))
+                    await self.session_store.save_snapshot(snapshot_rev.to_record(request.principal_id))
                 except Exception:
                     pass
-
             try:
-                answer_kwargs = dict(
+                reviewer_kwargs = dict(
                     question=question,
+                    answer=answer,
                     snapshot=snapshot,
                     stage_policy=stage_policy,
                 )
                 if main_model_name is not None:
-                    answer_kwargs["model_name"] = main_model_name
-                answer = await self.answer_generator.generate(**answer_kwargs)
+                    reviewer_kwargs["model_name"] = main_model_name
+                review = await self.reviewer.review(**reviewer_kwargs)
             except TimeoutError:
                 return resource_fuse_result()
-            except AnswerGenerationError as exc:
-                return model_output_failure_result(
-                    failure_stage="answer_generation",
-                    error=str(exc),
+            except Exception as exc:
+                limitation = "证据审查执行失败，答案未发布。"
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="publication_completed",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={
+                            "state": "review_failed",
+                            "error_type": type(exc).__name__,
+                        },
+                    ),
+                    event_listener,
                 )
-            self._append_event(
-                session.events,
-                turn_events,
-                AgentEvent(
-                    event_type="answer_generated",
+                self._append_assistant_message(
+                    session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
                     trace_id=trace_id,
-                    payload={"kind": answer.kind, "citations": list(answer.citations)},
-                ),
-                event_listener,
-            )
-
-            review = None
-            if reviewer_enabled:
-                if self.reviewer is None:
-                    raise RuntimeError("reviewer_enabled but no reviewer is configured")
-                proj_rev, snapshot_rev = self.context_engine.project_for_reviewer(
-                    frame if "frame" in locals() else self.context_engine.build_frame(
-                        session_id=session.session_id,
-                        principal_id=request.principal_id,
-                        question=question,
-                        events=session.events,
-                        working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
-                    ),
-                    draft_answer=answer.answer,
+                    text=limitation,
                 )
-                if hasattr(self.session_store, "save_snapshot"):
+                if hasattr(self.session_store, "save_session"):
+                    await self.session_store.save_session(session)
+                return AgentRunResult(
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    publication_state="review_failed",
+                    answer=None,
+                    clarification=None,
+                    limitation=limitation,
+                    frozen_evidence=snapshot,
+                    review=None,
+                    events=tuple(turn_events),
+                )
+            verdict = str(getattr(review, "verdict", "")).strip().upper()
+            if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
+                from app.services.agent.reviewer import (
+                    build_answer_repair_scope,
+                    validate_answer_repair_draft,
+                )
+                repair_scope = build_answer_repair_scope(answer, review, snapshot)
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="answer_repair_scope_created",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload=repair_scope,
+                    ),
+                    event_listener,
+                )
+                repaired_ok = False
+                if repair_scope.get("editable_units") and hasattr(self.answer_generator, "generate_repair"):
                     try:
-                        await self.session_store.save_snapshot(snapshot_rev.to_record(request.principal_id))
+                        answer_v2 = await self.answer_generator.generate_repair(
+                            question=question,
+                            snapshot=snapshot,
+                            base_answer=answer,
+                            repair_scope=repair_scope,
+                            stage_policy=stage_policy,
+                            model_name=main_model_name,
+                        )
+                        validate_answer_repair_draft(answer, answer_v2, repair_scope)
+                        review_2 = await self.reviewer.review(
+                            question=question,
+                            answer=answer_v2,
+                            snapshot=snapshot,
+                            stage_policy=stage_policy,
+                            model_name=main_model_name,
+                        )
+                        verdict_2 = str(getattr(review_2, "verdict", "")).strip().upper()
+                        if verdict_2 in {"SUPPORTED", "PASS", "PASSED"}:
+                            answer = answer_v2
+                            review = review_2
+                            repaired_ok = True
                     except Exception:
-                        pass
-                try:
-                    reviewer_kwargs = dict(
-                        question=question,
-                        answer=answer,
-                        snapshot=snapshot,
-                        stage_policy=stage_policy,
-                    )
-                    if main_model_name is not None:
-                        reviewer_kwargs["model_name"] = main_model_name
-                    review = await self.reviewer.review(**reviewer_kwargs)
-                except TimeoutError:
-                    return resource_fuse_result()
-                except Exception as exc:
-                    limitation = "证据审查执行失败，答案未发布。"
+                        repaired_ok = False
+
+                if not repaired_ok:
+                    limitation = "答案未通过证据审查，未发布。"
                     self._append_event(
                         session.events,
                         turn_events,
@@ -949,10 +1079,7 @@ class AgentRuntime:
                             session_id=session.session_id,
                             turn_id=turn_id,
                             trace_id=trace_id,
-                            payload={
-                                "state": "review_failed",
-                                "error_type": type(exc).__name__,
-                            },
+                            payload={"state": "review_rejected", "verdict": verdict},
                         ),
                         event_listener,
                     )
@@ -969,135 +1096,54 @@ class AgentRuntime:
                         session_id=session.session_id,
                         turn_id=turn_id,
                         trace_id=trace_id,
-                        publication_state="review_failed",
+                        publication_state="review_rejected",
                         answer=None,
                         clarification=None,
                         limitation=limitation,
                         frozen_evidence=snapshot,
-                        review=None,
+                        review=review,
                         events=tuple(turn_events),
                     )
-                verdict = str(getattr(review, "verdict", "")).strip().upper()
-                if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
-                    from app.services.agent.reviewer import (
-                        build_answer_repair_scope,
-                        validate_answer_repair_draft,
-                    )
-                    repair_scope = build_answer_repair_scope(answer, review, snapshot)
-                    self._append_event(
-                        session.events,
-                        turn_events,
-                        AgentEvent(
-                            event_type="answer_repair_scope_created",
-                            session_id=session.session_id,
-                            turn_id=turn_id,
-                            trace_id=trace_id,
-                            payload=repair_scope,
-                        ),
-                        event_listener,
-                    )
-                    repaired_ok = False
-                    if repair_scope.get("editable_units") and hasattr(self.answer_generator, "generate_repair"):
-                        try:
-                            answer_v2 = await self.answer_generator.generate_repair(
-                                question=question,
-                                snapshot=snapshot,
-                                base_answer=answer,
-                                repair_scope=repair_scope,
-                                stage_policy=stage_policy,
-                                model_name=main_model_name,
-                            )
-                            validate_answer_repair_draft(answer, answer_v2, repair_scope)
-                            review_2 = await self.reviewer.review(
-                                question=question,
-                                answer=answer_v2,
-                                snapshot=snapshot,
-                                stage_policy=stage_policy,
-                                model_name=main_model_name,
-                            )
-                            verdict_2 = str(getattr(review_2, "verdict", "")).strip().upper()
-                            if verdict_2 in {"SUPPORTED", "PASS", "PASSED"}:
-                                answer = answer_v2
-                                review = review_2
-                                repaired_ok = True
-                        except Exception:
-                            repaired_ok = False
 
-                    if not repaired_ok:
-                        limitation = "答案未通过证据审查，未发布。"
-                        self._append_event(
-                            session.events,
-                            turn_events,
-                            AgentEvent(
-                                event_type="publication_completed",
-                                session_id=session.session_id,
-                                turn_id=turn_id,
-                                trace_id=trace_id,
-                                payload={"state": "review_rejected", "verdict": verdict},
-                            ),
-                            event_listener,
-                        )
-                        self._append_assistant_message(
-                            session.events,
-                            session_id=session.session_id,
-                            turn_id=turn_id,
-                            trace_id=trace_id,
-                            text=limitation,
-                        )
-                        if hasattr(self.session_store, "save_session"):
-                            await self.session_store.save_session(session)
-                        return AgentRunResult(
-                            session_id=session.session_id,
-                            turn_id=turn_id,
-                            trace_id=trace_id,
-                            publication_state="review_rejected",
-                            answer=None,
-                            clarification=None,
-                            limitation=limitation,
-                            frozen_evidence=snapshot,
-                            review=review,
-                            events=tuple(turn_events),
-                        )
-
-            self._append_event(
-                session.events,
-                turn_events,
-                AgentEvent(
-                    event_type="publication_completed",
-                    session_id=session.session_id,
-                    turn_id=turn_id,
-                    trace_id=trace_id,
-                    payload={"state": "published"},
-                ),
-                event_listener,
-            )
-            self._append_assistant_message(
-                session.events,
+        self._append_event(
+            session.events,
+            turn_events,
+            AgentEvent(
+                event_type="publication_completed",
                 session_id=session.session_id,
                 turn_id=turn_id,
                 trace_id=trace_id,
-                text=answer.answer,
+                payload={"state": "published"},
+            ),
+            event_listener,
+        )
+        self._append_assistant_message(
+            session.events,
+            session_id=session.session_id,
+            turn_id=turn_id,
+            trace_id=trace_id,
+            text=answer.answer,
+        )
+        if hasattr(self.session_store, "save_session"):
+            await self.session_store.save_session(session)
+        if hasattr(self.session_store, "save_evidence_items"):
+            await self.session_store.save_evidence_items(
+                request.principal_id,
+                session.session_id,
+                session.evidence_ledger.export_items(),
             )
-            if hasattr(self.session_store, "save_session"):
-                await self.session_store.save_session(session)
-            if hasattr(self.session_store, "save_evidence_items"):
-                await self.session_store.save_evidence_items(
-                    request.principal_id,
-                    session.session_id,
-                    session.evidence_ledger.export_items(),
-                )
-            return AgentRunResult(
-                session_id=session.session_id,
-                turn_id=turn_id,
-                trace_id=trace_id,
-                publication_state="published",
-                answer=answer,
-                clarification=None,
-                limitation=None,
-                frozen_evidence=snapshot,
-                review=review,
-                events=tuple(turn_events),
-            )
+        return AgentRunResult(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            trace_id=trace_id,
+            publication_state="published",
+            answer=answer,
+            clarification=None,
+            limitation=None,
+            frozen_evidence=snapshot,
+            review=review,
+            events=tuple(turn_events),
+        )
 
     async def stream(self, request: AgentRunRequest) -> AsyncIterator[AgentStreamFrame]:
         """Project observable events from the exact same ``run`` execution path."""

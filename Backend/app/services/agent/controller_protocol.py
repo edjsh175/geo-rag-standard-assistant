@@ -17,6 +17,10 @@ CLARIFY_ACTION = "clarify"
 TOOL_CALL_ACTION = "tool_call"
 
 
+class ControllerOutputError(ValueError):
+    """Raised when the Controller fails its structured decision contract."""
+
+
 def _empty_mapping() -> Mapping[str, Any]:
     return MappingProxyType({})
 
@@ -98,6 +102,9 @@ class ExecutableActionState:
     available_control_actions: frozenset[str]
     allowed_answer_kinds: tuple[str, ...] = ("knowledge_answer", "limitation_or_clarification")
     identity_status: str = "resolved"
+    selectable_evidence_ids: frozenset[str] = frozenset()
+    has_evidence: bool = True
+    provider_health: Mapping[str, bool] = field(default_factory=_empty_mapping)
 
     @classmethod
     def compute(
@@ -107,26 +114,44 @@ class ExecutableActionState:
         map_context: Mapping[str, Any] | None = None,
         identity_status: str = "resolved",
         has_evidence: bool = True,
+        selectable_evidence_ids: Sequence[str] | frozenset[str] | None = None,
         forbid_finalize: bool = False,
+        provider_health: Mapping[str, bool] | None = None,
     ) -> "ExecutableActionState":
         from app.services.agent.tools import executable_tool_names
 
-        capabilities = executable_tool_names(registry, map_context)
+        capabilities = executable_tool_names(registry, map_context, provider_health)
         control_actions: set[str] = set()
+
+        if selectable_evidence_ids is not None:
+            selectable_ids = frozenset(selectable_evidence_ids)
+            effective_has_evidence = len(selectable_ids) > 0
+        else:
+            selectable_ids = frozenset()
+            effective_has_evidence = bool(has_evidence)
 
         if not forbid_finalize:
             control_actions.add(DIRECT_ANSWER_ACTION)
-            control_actions.add(COMPOSE_ANSWER_ACTION)
+            if effective_has_evidence:
+                control_actions.add(COMPOSE_ANSWER_ACTION)
 
         if identity_status in {"ambiguous", "unresolved"} and not forbid_finalize:
             control_actions.add(CLARIFY_ACTION)
 
-        allowed_kinds = ("knowledge_answer", "limitation_or_clarification")
+        if effective_has_evidence:
+            allowed_kinds = ("knowledge_answer", "limitation_or_clarification")
+        else:
+            # P0-7: 0 selectable evidence: knowledge compose not exposed
+            allowed_kinds = ("limitation_or_clarification",)
+
         return cls(
             available_capabilities=frozenset(capabilities),
             available_control_actions=frozenset(control_actions),
             allowed_answer_kinds=allowed_kinds,
             identity_status=identity_status,
+            selectable_evidence_ids=selectable_ids,
+            has_evidence=effective_has_evidence,
+            provider_health=provider_health or {},
         )
 
 
@@ -259,6 +284,10 @@ def validate_controller_decision_payload(
             for eid in selected_ids:
                 if not isinstance(eid, str) or not eid.strip():
                     raise ValueError("malformed_compose_answer: selected_evidence_ids items must be non-empty strings")
+                if state.selectable_evidence_ids and eid not in state.selectable_evidence_ids:
+                    raise ControllerOutputError(
+                        f"malformed_compose_answer: selected evidence '{eid}' is not selectable"
+                    )
         # Ensure backward compatibility in arguments
         args_dict.setdefault("evidence_ids", list(selected_ids or []))
         return ControllerDecision(

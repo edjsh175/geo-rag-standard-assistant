@@ -137,11 +137,26 @@ class SpatialOverlayInput(BaseModel):
     operation: str = Field(..., pattern="^(intersection|union|difference)$")
 
 
+class SearchEvidenceMemoryInput(BaseModel):
+    query: str = Field(..., min_length=1, description="检索词或目标问题")
+    limit: int = Field(8, ge=1, le=50, description="最多返回条数")
+
+
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
     name: str
     description: str
     input_model: type[BaseModel]
+    use_when: str = ""
+    avoid_when: str = ""
+    result_semantics: str = ""
+    failure_semantics: str = ""
+    side_effect: bool = False
+    confirmation_required: bool = False
+    timeout: float = 30.0
+    cancel_supported: bool = False
+    provider: str = "server"  # "server", "browser", "postgis", "kb"
+    permission: str | None = None
 
     @property
     def input_schema(self) -> Mapping[str, Any]:
@@ -193,18 +208,49 @@ CONTROL_ACTION_NAMES = frozenset(
 
 
 def executable_tool_names(
-    registry: ToolRegistry,
-    map_context: Mapping[str, Any] | None,
+    registry: ToolRegistry | None = None,
+    map_context: Mapping[str, Any] | None = None,
+    provider_health: Mapping[str, bool] | None = None,
 ) -> frozenset[str]:
     """Return the physical capability tool surface executable for the current request.
 
     Control actions (compose_answer, direct_answer, clarify, limitation) are control
     protocol actions, not tools, and are strictly excluded from the capability surface.
-    Non-browser tools are runtime-owned capabilities and always remain available. Browser
-    tools are admitted only when the active browser runtime explicitly reports
-    them through map_context.supported_tools.
+    Non-browser tools are filtered by provider health. Browser tools are admitted only
+    when the active browser runtime explicitly reports them through map_context.supported_tools.
     """
-    non_browser = (registry.names() - BROWSER_TOOL_NAMES) - CONTROL_ACTION_NAMES
+    if registry is None:
+        return frozenset()
+
+    candidates = (registry.names() - BROWSER_TOOL_NAMES) - CONTROL_ACTION_NAMES
+
+    # Provider health filter (P0-8 / P0-10)
+    if provider_health:
+        health_map = dict(provider_health)
+
+        def _is_unhealthy(val: Any) -> bool:
+            if val is False:
+                return True
+            if isinstance(val, str) and val.strip().lower() in {"degraded", "unhealthy", "down", "offline", "false"}:
+                return True
+            return False
+
+        filtered: set[str] = set()
+        for name in candidates:
+            spec = registry.get(name)
+            # Database / KB health check
+            if spec.provider == "kb":
+                if _is_unhealthy(health_map.get("postgres")) or _is_unhealthy(health_map.get("db")) or _is_unhealthy(health_map.get("kb")):
+                    continue
+            # PostGIS / Spatial service health check
+            elif spec.provider == "postgis":
+                if _is_unhealthy(health_map.get("postgis")) or _is_unhealthy(health_map.get("spatial")) or _is_unhealthy(health_map.get("postgres")):
+                    continue
+            filtered.add(name)
+        non_browser = filtered
+    else:
+        non_browser = set(candidates)
+
     if not isinstance(map_context, Mapping):
         return frozenset(non_browser)
     if map_context.get("ready") is not True:
@@ -228,10 +274,23 @@ def build_default_tool_registry() -> ToolRegistry:
                 description=(
                     "Search the product knowledge base for evidence needed to resolve "
                     "the current information gap. The Controller chooses when and how "
-                    "often to use this tool. Request-level retrieval constraints are "
-                    "applied by the runtime and cannot be silently overridden here."
+                    "often to use this tool."
                 ),
                 input_model=RetrieveKbInput,
+                use_when="需要查询知识库以解决当前信息缺失时由 Controller 自主规划调用。",
+                avoid_when="当前会话已存在足够证据，或纯闲聊无需知识库时禁止调用。",
+                result_semantics="将知识库召回的候选文档通过证据账本准入为可引用的 EvidenceItem。",
+                failure_semantics="检索通道全部不可用时抛出异常或返回空结果。",
+                provider="kb",
+            ),
+            ToolSpec(
+                name="search_evidence_memory",
+                description="Search historical evidence already admitted in this session by query.",
+                input_model=SearchEvidenceMemoryInput,
+                use_when="当前会话有多轮历史证据，且需要主动按语义搜索未在当前轮次直接投影的证据时调用。",
+                avoid_when="当前工作证据已足够或尚未产生任何历史证据时禁止调用。",
+                result_semantics="返回历史证据匹配项列表及 evidence_id，供后续决策或 compose_answer 挑选。",
+                provider="server",
             ),
             ToolSpec(
                 name="reuse_evidence",
@@ -240,51 +299,79 @@ def build_default_tool_registry() -> ToolRegistry:
                     "activate selected matches for the current turn."
                 ),
                 input_model=ReuseEvidenceInput,
+                use_when="搜索历史证据并将其激活进入当前轮次工作证据集。",
+                provider="server",
             ),
             ToolSpec(
                 name="import_vector_dataset",
                 description="Request browser execution to import a referenced SHP or GeoJSON dataset into the active WebGIS map.",
                 input_model=ImportVectorDatasetInput,
+                use_when="用户明确要求在地图上加载/导入矢量数据图层时调用。",
+                result_semantics="浏览器端异步解析并渲染新图层，返回包含 layer_ref 的收据。",
+                side_effect=True,
+                provider="browser",
             ),
             ToolSpec(
                 name="set_layer_visibility",
                 description="Request browser execution to change visibility of a stable layer_ref.",
                 input_model=SetLayerVisibilityInput,
+                use_when="需要显隐地图上的特定图层时调用。",
+                side_effect=True,
+                provider="browser",
             ),
             ToolSpec(
                 name="set_vector_style",
                 description="Request browser execution to update display style of a stable user vector layer_ref.",
                 input_model=SetVectorStyleInput,
+                use_when="需要修改矢量图层的描边、填充、半透明度或点半径等样式时调用。",
+                side_effect=True,
+                provider="browser",
             ),
             ToolSpec(
                 name="fit_vector_layer",
                 description="Request browser execution to fit the active map viewport to a stable user vector layer_ref.",
                 input_model=FitVectorLayerInput,
+                use_when="导入或选择图层后，需要将地图视角平滑缩放到该图层范围时调用。",
+                side_effect=True,
+                provider="browser",
             ),
             ToolSpec(
                 name="locate_map",
                 description="Request browser execution to move the active map viewport to a coordinate.",
                 input_model=LocateMapInput,
+                use_when="需要将地图定位到特定的经纬度坐标中心或缩放级别时调用。",
+                side_effect=True,
+                provider="browser",
             ),
             ToolSpec(
                 name="inspect_layer_features",
                 description="Inspect a bounded page of feature_ref identities and properties from a stable browser layer_ref.",
                 input_model=InspectLayerFeaturesInput,
+                use_when="需要查看图层内部要素的属性表或分页信息时调用。",
+                provider="browser",
             ),
             ToolSpec(
                 name="get_feature_geometry",
                 description="Read exact GeoJSON geometry and properties for one stable browser feature_ref.",
                 input_model=GetFeatureGeometryInput,
+                use_when="需要提取地图中具体要素的几何图形（GeoJSON）进行进一步空间分析时调用。",
+                provider="browser",
             ),
             ToolSpec(
                 name="query_spatial_relation",
                 description="Ask PostGIS for an authoritative spatial predicate between two GeoJSON or spatial_regions operands.",
                 input_model=QuerySpatialRelationInput,
+                use_when="需要判断两个地理实体或图斑之间的空间拓扑关系（相交、包含、重叠等）时调用。",
+                result_semantics="返回权威空间谓词计算结果（布尔值或详细关系）。",
+                provider="postgis",
             ),
             ToolSpec(
                 name="spatial_overlay",
                 description="Ask PostGIS to compute intersection, union, or difference for two GeoJSON or spatial_regions operands.",
                 input_model=SpatialOverlayInput,
+                use_when="需要计算两个区域或要素的几何叠加（求交集、并集、差集）时调用。",
+                result_semantics="返回叠加分析后的几何体与面积等统计属性。",
+                provider="postgis",
             ),
         )
     )

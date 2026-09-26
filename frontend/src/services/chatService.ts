@@ -187,7 +187,7 @@ export const chatService = {
     followUpContext?: FollowUpContext
   ): Promise<ChatResponse> {
     try {
-      const searchRequest: components['schemas']['SearchRequest'] = {
+      const searchRequest = withActiveMapContext({
         query: message,
         top_k: 5,
         use_generation: true,
@@ -195,8 +195,7 @@ export const chatService = {
         session_id: conversationId,
         history,
         follow_up_context: followUpContext,
-        map_context: getBrowserMapContext() ?? undefined,
-      };
+      });
 
       const searchResponse = await this.runAgentRequest(searchRequest, signal);
       return toChatResponse(searchResponse, conversationId);
@@ -276,7 +275,7 @@ export const chatService = {
   ): Promise<ChatResponse> {
     try {
       let finalResponse: SearchResponse | null = null;
-      await apiPostSse('/api/search/query/stream', {
+      await apiPostSse('/api/search/query/stream', withActiveMapContext({
           query: message,
           search_mode: 'hybrid',
           top_k: 10,
@@ -286,7 +285,7 @@ export const chatService = {
           session_id: conversationId,
           history,
           follow_up_context: followUpContext,
-        }, (eventType, data) => {
+        }), (eventType, data) => {
         if (eventType === 'result') {
           finalResponse = JSON.parse(data) as SearchResponse;
         } else {

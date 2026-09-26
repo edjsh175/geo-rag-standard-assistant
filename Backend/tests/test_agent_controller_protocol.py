@@ -269,3 +269,140 @@ async def test_runtime_executes_direct_answer_action():
     assert "controller_decision" in event_types
     assert "publication_completed" in event_types
     assert "tool_started" not in event_types  # direct_answer does not start a tool
+
+
+def test_executable_action_state_zero_evidence_blocks_knowledge_answer():
+    registry = build_default_tool_registry()
+    state = ExecutableActionState.compute(
+        registry=registry,
+        selectable_evidence_ids=(),
+    )
+    assert state.has_evidence is False
+    assert len(state.selectable_evidence_ids) == 0
+    assert state.allowed_answer_kinds == ("limitation_or_clarification",)
+    assert "compose_answer" not in state.available_control_actions
+
+
+def test_validator_rejects_hallucinated_evidence_id():
+    from app.services.agent.controller_protocol import ControllerOutputError
+
+    registry = build_default_tool_registry()
+    state = ExecutableActionState.compute(
+        registry=registry,
+        selectable_evidence_ids=("ev-1", "ev-2"),
+    )
+    with pytest.raises(ControllerOutputError, match="selected evidence 'ev-ghost' is not selectable"):
+        validate_controller_decision_payload(
+            {
+                "action": "compose_answer",
+                "arguments": {
+                    "answer_kind": "knowledge_answer",
+                    "selected_evidence_ids": ["ev-1", "ev-ghost"],
+                },
+            },
+            registry=registry,
+            tool_call_id="call-test",
+            state=state,
+        )
+
+
+def test_dynamic_tool_surface_provider_health():
+    registry = build_default_tool_registry()
+
+    # When PostgreSQL/KB is degraded, retrieve_kb is excluded
+    state_kb_down = ExecutableActionState.compute(
+        registry=registry,
+        provider_health={"kb": "degraded"},
+    )
+    assert "retrieve_kb" not in state_kb_down.available_capabilities
+
+    # When PostGIS is unhealthy, spatial tools are excluded
+    state_postgis_down = ExecutableActionState.compute(
+        registry=registry,
+        provider_health={"postgis": "unhealthy"},
+    )
+    assert "query_spatial_relation" not in state_postgis_down.available_capabilities
+    assert "spatial_overlay" not in state_postgis_down.available_capabilities
+
+
+@pytest.mark.asyncio
+async def test_controller_direct_evidence_selection_without_retrieval():
+    from datetime import datetime
+    from app.models.search_models import DocumentResult
+    from app.services.agent.evidence import EvidenceLedger
+    from app.services.agent.runtime import GeneratedAnswer
+    from app.services.agent.session import InMemoryAgentSessionStore
+    from app.services.rag.contracts import RetrievalCandidate
+
+    store = InMemoryAgentSessionStore()
+    session = store.get_or_create(
+        session_id="session-historical",
+        principal_id="user:test",
+    )
+    # Populate historical evidence into ledger
+    cand = RetrievalCandidate.from_document_result(
+        DocumentResult(
+            id="chunk-hist-1",
+            title="土地整治规划",
+            content="土地整治规划指标：耕地保有量不少于100万亩。",
+            similarity=0.95,
+            metadata={"chunk_id": "chunk-hist-1", "document_name": "土地整治规划"},
+            spatial_info=None,
+            file_type="pdf",
+            file_size=0,
+            upload_time=datetime.now(),
+            source_url=None,
+        )
+    )
+    ev_item = session.evidence_ledger.add_candidates(
+        turn_id="turn-old",
+        candidates=[cand],
+    )[0]
+
+    class HistoricalDirectComposeController:
+        async def decide(self, **kwargs):
+            # Model directly chooses compose_answer using historical evidence
+            return ControllerDecision(
+                action="compose_answer",
+                arguments={"selected_evidence_ids": [ev_item.evidence_id]},
+            )
+
+    class FakeAnswerGenerator:
+        async def generate(self, **kwargs):
+            return GeneratedAnswer(
+                kind="knowledge_answer",
+                answer="根据土地整治规划，耕地保有量不少于100万亩。",
+                citations=("E1",),
+                units=(),
+            )
+
+    class MockRetrievalPort:
+        def __init__(self):
+            self.calls = 0
+
+        async def retrieve(self, *args, **kwargs):
+            self.calls += 1
+            return []
+
+    mock_retrieval = MockRetrievalPort()
+    runtime = AgentRuntime(
+        controller=HistoricalDirectComposeController(),
+        retrieval_port=mock_retrieval,
+        session_store=store,
+        answer_generator=FakeAnswerGenerator(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="耕地保有量是多少？",
+            session_id="session-historical",
+            principal_id="user:test",
+        )
+    )
+
+    assert result.publication_state == "published"
+    assert "100万亩" in result.answer.answer
+    assert result.frozen_evidence is not None
+    assert result.frozen_evidence.items[0].evidence_id == ev_item.evidence_id
+    # Assert retrieve_kb was NEVER called!
+    assert mock_retrieval.calls == 0

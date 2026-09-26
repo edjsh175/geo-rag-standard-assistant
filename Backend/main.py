@@ -38,6 +38,14 @@ async def lifespan(app: FastAPI):
 
     if not app.state.postgres_initialized:
         logger.error("PostgreSQL initialization failed. Vector search will be unavailable.")
+    else:
+        from app.core.migration_guard import verify_required_database_tables
+        try:
+            await verify_required_database_tables(db_manager.postgres_engine)
+        except Exception as exc:
+            logger.error("Schema verification failed: %s", exc)
+            # Fail-fast so schema issues are caught at startup rather than on user queries
+            raise
 
     logger.info("LLM configuration loaded.")
 

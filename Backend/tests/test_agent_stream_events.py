@@ -101,9 +101,7 @@ async def test_runtime_stream_projects_same_run_events_in_order() -> None:
         "tool_started",
         "tool_completed",
         "controller_decision",
-        "tool_started",
         "evidence_frozen",
-        "tool_completed",
         "answer_generated",
         "publication_completed",
     ]

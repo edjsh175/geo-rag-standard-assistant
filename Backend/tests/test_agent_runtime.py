@@ -184,9 +184,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
         "tool_started",
         "tool_completed",
         "controller_decision",
-        "tool_started",
         "evidence_frozen",
-        "tool_completed",
         "answer_generated",
         "publication_completed",
     ]

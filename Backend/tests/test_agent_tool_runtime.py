@@ -77,6 +77,7 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
     assert registry.names() == {
         "retrieve_kb",
         "reuse_evidence",
+        "search_evidence_memory",
         "import_vector_dataset",
         "set_layer_visibility",
         "set_vector_style",
@@ -257,7 +258,7 @@ async def test_reuse_evidence_requires_explicit_tool_execution_to_activate_histo
 
 
 @pytest.mark.asyncio
-async def test_compose_answer_freezes_only_selected_current_evidence() -> None:
+async def test_compose_answer_is_rejected_by_tool_runtime_and_freezes_via_ledger() -> None:
     ledger = EvidenceLedger(session_id="session-1")
     current = ledger.add_candidates(
         turn_id="turn-1",
@@ -268,59 +269,54 @@ async def test_compose_answer_freezes_only_selected_current_evidence() -> None:
         evidence_ledger=ledger,
     )
 
-    observation = await runtime.execute(
-        turn_id="turn-1",
-        call=ToolCall(
-            tool_call_id="call-3",
-            name="compose_answer",
-            arguments={"evidence_ids": [current.evidence_id]},
-        ),
-    )
+    with pytest.raises(ToolExecutionError, match="'compose_answer' is a control action"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="call-3",
+                name="compose_answer",
+                arguments={"selected_evidence_ids": [current.evidence_id]},
+            ),
+        )
 
-    snapshot = observation.payload["snapshot"]
-    assert observation.status == "ok"
+    snapshot = ledger.freeze(turn_id="turn-1", evidence_ids=[current.evidence_id])
     assert snapshot.evidence_ids == (current.evidence_id,)
 
 
 @pytest.mark.asyncio
-async def test_clarify_returns_structured_terminal_observation() -> None:
+async def test_clarify_is_rejected_by_tool_runtime() -> None:
     runtime = ToolRuntime(
         retrieval_port=FakeRetrievalPort(),
         evidence_ledger=EvidenceLedger(session_id="session-1"),
     )
 
-    observation = await runtime.execute(
-        turn_id="turn-1",
-        call=ToolCall(
-            tool_call_id="call-4",
-            name="clarify",
-            arguments={"question": "你指的是哪个行政区？"},
-        ),
-    )
-
-    assert observation.status == "ok"
-    assert observation.is_terminal is True
-    assert observation.payload == {"question": "你指的是哪个行政区？"}
+    with pytest.raises(ToolExecutionError, match="'clarify' is a control action"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="call-4",
+                name="clarify",
+                arguments={"question": "你指的是哪个行政区？"},
+            ),
+        )
 
 
 @pytest.mark.asyncio
-async def test_limitation_is_a_structured_terminal_outcome() -> None:
+async def test_limitation_is_rejected_by_tool_runtime() -> None:
     runtime = ToolRuntime(
         retrieval_port=FakeRetrievalPort(),
         evidence_ledger=EvidenceLedger(session_id="session-1"),
     )
 
-    observation = await runtime.execute(
-        turn_id="turn-1",
-        call=ToolCall(
-            tool_call_id="call-limit",
-            name="limitation",
-            arguments={"message": "当前知识库没有足够证据支持结论。"},
-        ),
-    )
-
-    assert observation.is_terminal is True
-    assert observation.payload == {"message": "当前知识库没有足够证据支持结论。"}
+    with pytest.raises(ToolExecutionError, match="'limitation' is a control action"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="call-limit",
+                name="limitation",
+                arguments={"message": "当前知识库没有足够证据支持结论。"},
+            ),
+        )
 
 
 @pytest.mark.asyncio

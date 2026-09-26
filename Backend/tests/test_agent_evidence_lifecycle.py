@@ -80,14 +80,13 @@ def test_memory_search_does_not_automatically_reactivate_historical_evidence() -
     matches = ledger.search_memory(query="滑坡监测", exclude_turn_id="turn-2")
 
     assert [item.evidence_id for item in matches] == [historical.evidence_id]
-    with pytest.raises(ValueError, match="working evidence"):
-        ledger.freeze(turn_id="turn-2", evidence_ids=[historical.evidence_id])
+    assert len(ledger.working_evidence(turn_id="turn-2")) == 0
 
-    ledger.activate_existing(turn_id="turn-2", evidence_ids=[historical.evidence_id])
     snapshot = ledger.freeze(turn_id="turn-2", evidence_ids=[historical.evidence_id])
 
     assert snapshot.items[0].evidence_id == historical.evidence_id
     assert snapshot.items[0].citation_id == "E1"
+    assert historical.evidence_id in [item.evidence_id for item in ledger.working_evidence(turn_id="turn-2")]
 
 
 def test_structurally_empty_candidate_is_not_admitted() -> None:

@@ -45,16 +45,39 @@ class MainController:
     async def decide(
         self,
         *,
-        question: str,
-        context_summary: str,
-        working_evidence: Sequence[Mapping[str, Any]],
-        observations: Sequence[ToolObservation],
+        projection: Any | None = None,
+        action_state: ExecutableActionState | None = None,
+        observations: Sequence[ToolObservation] = (),
         stage_policy: LLMStagePolicy,
         model_name: str | None = None,
+        question: str | None = None,
+        context_summary: str | None = None,
+        working_evidence: Sequence[Mapping[str, Any]] | None = None,
         available_tool_names: set[str] | frozenset[str] | None = None,
         available_control_actions: set[str] | frozenset[str] | None = None,
-        action_state: ExecutableActionState | None = None,
     ) -> ControllerDecision:
+        # Unpack from projection if provided
+        if projection is not None:
+            effective_question = projection.user_question
+            effective_context_summary = projection.conversation_text
+            effective_working_evidence = projection.working_evidence
+            effective_evidence_catalog = (
+                projection.evidence_catalog if hasattr(projection, "evidence_catalog") and projection.evidence_catalog
+                else effective_working_evidence
+            )
+            effective_runtime_facts = (
+                dict(projection.runtime_facts) if hasattr(projection, "runtime_facts") and projection.runtime_facts
+                else {}
+            )
+            effective_map_context = getattr(projection, "map_context", None)
+        else:
+            effective_question = question or ""
+            effective_context_summary = context_summary or ""
+            effective_working_evidence = working_evidence or ()
+            effective_evidence_catalog = effective_working_evidence
+            effective_runtime_facts = {}
+            effective_map_context = None
+
         if action_state is None:
             capabilities = (
                 frozenset(available_tool_names)
@@ -66,19 +89,29 @@ class MainController:
                 if available_control_actions is not None
                 else frozenset({COMPOSE_ANSWER_ACTION, DIRECT_ANSWER_ACTION})
             )
+            selectable_ids = frozenset(
+                ev.get("evidence_id")
+                for ev in effective_evidence_catalog
+                if isinstance(ev, Mapping) and ev.get("evidence_id")
+            )
             action_state = ExecutableActionState(
                 available_capabilities=capabilities,
                 available_control_actions=control_actions,
+                selectable_evidence_ids=selectable_ids,
+                has_evidence=bool(selectable_ids),
             )
 
         active_specs = self.tool_registry.specs_for(action_state.available_capabilities)
-        tools_text = "\n".join(
-            (
-                f"- {spec.name}: {spec.description}\n"
-                f"  input_schema={json.dumps(spec.input_schema, ensure_ascii=False, sort_keys=True)}"
-            )
-            for spec in active_specs
-        ) if active_specs else "No external tools available."
+        tools_text_parts = []
+        for spec in active_specs:
+            spec_desc = [f"- {spec.name}: {spec.description}"]
+            if getattr(spec, "use_when", None):
+                spec_desc.append(f"  When to use: {spec.use_when}")
+            if getattr(spec, "avoid_when", None):
+                spec_desc.append(f"  Avoid when: {spec.avoid_when}")
+            spec_desc.append(f"  input_schema={json.dumps(spec.input_schema, ensure_ascii=False, sort_keys=True)}")
+            tools_text_parts.append("\n".join(spec_desc))
+        tools_text = "\n".join(tools_text_parts) if tools_text_parts else "No external tools available."
 
         control_contracts = build_control_action_contracts(action_state.allowed_answer_kinds)
         control_actions_text_parts = []
@@ -105,10 +138,16 @@ class MainController:
         ) if observations else "None."
 
         evidence_text = json.dumps(
-            list(working_evidence),
+            list(effective_evidence_catalog),
             ensure_ascii=False,
             default=str,
             sort_keys=True,
+        )
+
+        runtime_facts_text = (
+            json.dumps(effective_runtime_facts, ensure_ascii=False, default=str, sort_keys=True)
+            if effective_runtime_facts
+            else "None."
         )
 
         system_prompt = (
@@ -121,18 +160,27 @@ class MainController:
             "- To call a capability: {\"action\":\"tool_call\",\"tool\":\"...\",\"arguments\":{...}}\n"
             "  (Legacy {\"name\":\"...\",\"arguments\":{...}} is also accepted).\n"
             "- To finalize a knowledge answer: {\"action\":\"compose_answer\",\"arguments\":{\"answer_kind\":\"knowledge_answer\",\"selected_evidence_ids\":[...]}}\n"
+            "- You may directly select evidence from the Evidence Catalog (including historical session evidence) for compose_answer without re-retrieving if it is sufficient.\n"
+            "- If evidence is insufficient, call retrieve_kb to search the knowledge base or search_evidence_memory to search historical evidence.\n"
             "- To answer non-knowledge conversational or meta requests: {\"action\":\"direct_answer\",\"answer\":\"...\"}\n"
             "- To request user clarification: {\"action\":\"clarify\",\"arguments\":{}}\n"
             "- Do not generate tool_call_id; the application assigns it.\n"
             "- For knowledge questions, never use direct_answer; you must select evidence via compose_answer."
         )
 
-        user_content = (
-            f"Question:\n{question}\n\n"
-            f"Context:\n{context_summary}\n\n"
-            f"Working Evidence Catalog:\n{evidence_text}\n\n"
-            f"Observations:\n{observation_text}"
-        )
+        user_content_parts = [
+            f"Question:\n{effective_question}\n",
+            f"Context:\n{effective_context_summary}\n",
+            f"Evidence Catalog (Working & Historical):\n{evidence_text}\n",
+            f"Runtime Facts:\n{runtime_facts_text}\n",
+            f"Observations:\n{observation_text}",
+        ]
+        if effective_map_context:
+            user_content_parts.append(
+                f"\nMap Context:\n{json.dumps(dict(effective_map_context), ensure_ascii=False, default=str)}"
+            )
+
+        user_content = "\n".join(user_content_parts)
 
         messages = (
             {"role": "system", "content": system_prompt},

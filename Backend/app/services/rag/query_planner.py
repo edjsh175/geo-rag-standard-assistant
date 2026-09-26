@@ -37,8 +37,13 @@ class RetrievalPlan:
     channel_weights: Mapping[str, float] = field(default_factory=dict)
 
 
-class QueryPlanner:
-    """Classifies retrieval intent and derives candidate pool sizes and branch weights."""
+class RetrievalChannelPlanner:
+    """Internal channel planner for retrieve_kb execution.
+
+    Optimizes candidate pool sizes and branch channel weights (exact / keyword / vector)
+    strictly within the retrieval layer. This component is NOT an Agent semantic planner
+    and has no authority over Agent control actions, tool choices, or user intent routing.
+    """
 
     def plan(self, query: RetrievalQuery) -> RetrievalPlan:
         text = (query.query_text or "").strip()
@@ -115,3 +120,13 @@ class QueryPlanner:
                 "vector": 1.0,
             },
         )
+
+
+# Backward compatibility alias
+QueryPlanner = RetrievalChannelPlanner
+
+__all__ = [
+    "RetrievalPlan",
+    "RetrievalChannelPlanner",
+    "QueryPlanner",
+]

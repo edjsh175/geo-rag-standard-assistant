@@ -123,13 +123,18 @@ class EvidenceLedger:
     ) -> FrozenEvidenceSnapshot:
         self._require_turn_id(turn_id)
         selected_ids = self._dedupe(evidence_ids)
-        working_ids = set(self._working_by_turn.get(turn_id, []))
-        unavailable = [evidence_id for evidence_id in selected_ids if evidence_id not in working_ids]
+        available_ids = set(self._items.keys())
+        unavailable = [evidence_id for evidence_id in selected_ids if evidence_id not in available_ids]
         if unavailable:
             raise ValueError(
-                "frozen evidence must come from current working evidence: "
+                "frozen evidence must come from admitted session evidence: "
                 + ", ".join(unavailable)
             )
+
+        working_ids = set(self._working_by_turn.get(turn_id, []))
+        for eid in selected_ids:
+            if eid not in working_ids:
+                self._activate(turn_id=turn_id, evidence_id=eid)
 
         items = tuple(self._items[evidence_id] for evidence_id in selected_ids)
         snapshot_identity = json.dumps(
