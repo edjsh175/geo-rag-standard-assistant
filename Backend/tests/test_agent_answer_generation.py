@@ -181,3 +181,36 @@ async def test_answer_units_have_stable_ids_and_clean_retry_uses_same_model() ->
     assert len(client.calls) == 2
     assert [call.model_name for call in client.calls] == ["stable-main", "stable-main"]
     assert client.calls[1].request_reasoning is False
+
+
+@pytest.mark.asyncio
+async def test_answer_generator_rejects_map_action_side_effect_field() -> None:
+    snapshot = make_snapshot()
+    client = FakeModelClient(
+        [
+            ModelResponse(
+                content=(
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"grounded","citations":["E1"]}'
+                    '],"map_action":{"type":"locate_map","target":"map"}}'
+                )
+            ),
+            ModelResponse(
+                content=(
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"grounded","citations":["E1"]}'
+                    '],"map_action":{"type":"locate_map","target":"map"}}'
+                )
+            ),
+        ]
+    )
+    generator = AnswerGenerator(model_client=client)
+
+    with pytest.raises(AnswerGenerationError, match="structured output"):
+        await generator.generate(
+            question="question",
+            snapshot=snapshot,
+            stage_policy=LLMStagePolicy(False, False),
+        )
+
+    assert len(client.calls) == 2

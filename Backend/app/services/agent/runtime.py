@@ -82,9 +82,7 @@ class AgentRunResult:
     ):
         if self.publication_state == "tool_execution_required":
             map_action = (
-                self.answer.map_action
-                if isinstance(self.answer, GeneratedAnswer)
-                else (self.answer if isinstance(self.answer, MapAction) else None)
+                self.answer if isinstance(self.answer, MapAction) else None
             )
             return BrowserToolExecutionRequired(
                 tool_call_id=self.pending_tool_call_id or "",
@@ -103,7 +101,6 @@ class AgentRunResult:
                 return KnowledgeAnswerResult(
                     text=self.answer.answer,
                     citations=tuple(getattr(self.answer, "citations", ())),
-                    map_action=self.answer.map_action,
                 )
             return DirectAnswerResult(text=str(self.answer))
         return NoSafeAnswer(reason=self.publication_state)
@@ -111,7 +108,7 @@ class AgentRunResult:
     @property
     def published_result(self) -> PublishedResult:
         if self.publication_state == "tool_execution_required":
-            map_action = self.answer.map_action if isinstance(self.answer, GeneratedAnswer) else None
+            map_action = self.answer if isinstance(self.answer, MapAction) else None
             return PublishedResult.continuation(
                 publication_state="tool_execution_required",
                 map_action=map_action,
@@ -121,11 +118,10 @@ class AgentRunResult:
         effective_state = "published" if self.publication_state in {"published", "grounded"} else self.publication_state
         if effective_state == "published" and self.answer is not None:
             text = self.answer.answer if isinstance(self.answer, GeneratedAnswer) else str(self.answer)
-            map_action = self.answer.map_action if isinstance(self.answer, GeneratedAnswer) else None
             return PublishedResult.publish(
                 text=text,
                 publication_state="published",
-                map_action=map_action,
+                map_action=None,
             )
         if effective_state in {"clarification", "clarification_required"} and self.clarification:
             return PublishedResult.publish(
@@ -967,16 +963,10 @@ class AgentRuntime:
             if observation.status == "browser_execution_required":
                 action_payload = observation.payload["map_action"]
                 continuation_token = str(uuid4())
-                map_action = GeneratedAnswer(
-                    kind="browser_tool_request",
-                    answer="",
-                    citations=(),
-                    map_action=MapAction(
-                        type=str(action_payload["type"]),
-                        target=str(action_payload["target"]),
-                        payload=action_payload.get("payload"),
-                    ),
-                    units=(),
+                map_action = MapAction(
+                    type=str(action_payload["type"]),
+                    target=str(action_payload["target"]),
+                    payload=action_payload.get("payload"),
                 )
                 self._append_event(
                     session.events,

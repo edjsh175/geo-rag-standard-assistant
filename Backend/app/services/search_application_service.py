@@ -185,7 +185,7 @@ class SearchApplicationService:
                 PublishedResult.publish(
                     text=answer.answer,
                     publication_state="published",
-                    map_action=answer.map_action,
+                    map_action=None,
                 )
                 if publication_state == "published"
                 else PublishedResult.safe_fallback(

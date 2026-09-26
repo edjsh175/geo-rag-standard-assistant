@@ -117,7 +117,6 @@ class KnowledgeAnswerResult:
     citations: tuple[str, ...]
     user_visible: bool = True
     logical_turn_completed: bool = True
-    map_action: MapAction | None = None
 
 
 @dataclass(frozen=True, slots=True)

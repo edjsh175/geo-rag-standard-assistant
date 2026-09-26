@@ -7,7 +7,7 @@ import json
 from time import monotonic
 from uuid import uuid4
 
-from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
+from app.services.agent.contracts import FrozenEvidenceSnapshot
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.structured_candidate import (
@@ -33,7 +33,6 @@ class GeneratedAnswer:
     kind: str
     answer: str
     citations: tuple[str, ...] = ()
-    map_action: MapAction | None = None
     units: tuple[AnswerUnit, ...] = ()
 
 
@@ -227,23 +226,6 @@ class AnswerGenerator:
                         "additionalProperties": False,
                     },
                 },
-                "map_action": {
-                    "anyOf": [
-                        {"type": "null"},
-                        {
-                            "type": "object",
-                            "properties": {
-                                "type": {"type": "string"},
-                                "target": {"type": "string"},
-                                "adcode": {"type": ["string", "null"]},
-                                "name": {"type": ["string", "null"]},
-                                "payload": {"type": ["object", "null"]},
-                            },
-                            "required": ["type", "target"],
-                            "additionalProperties": False,
-                        },
-                    ]
-                },
             },
             "required": ["kind", "units"],
             "additionalProperties": False,
@@ -256,6 +238,8 @@ class AnswerGenerator:
         snapshot: FrozenEvidenceSnapshot,
     ) -> GeneratedAnswer:
         payload = extract_json_object(content)
+        if set(payload) - {"kind", "units"}:
+            raise ValueError("answer generator returned fields outside grounded answer contract")
 
         kind = payload.get("kind")
         if kind != "knowledge_answer":
@@ -298,29 +282,9 @@ class AnswerGenerator:
         citations = tuple(
             dict.fromkeys(citation for unit in units for citation in unit.citations)
         )
-        map_action = None
-        raw_map_action = payload.get("map_action")
-        if raw_map_action is not None:
-            if not isinstance(raw_map_action, dict):
-                raise ValueError("invalid map action")
-            action_type = raw_map_action.get("type")
-            target = raw_map_action.get("target")
-            if not isinstance(action_type, str) or not isinstance(target, str):
-                raise ValueError("invalid map action")
-            raw_payload = raw_map_action.get("payload")
-            if raw_payload is not None and not isinstance(raw_payload, dict):
-                raise ValueError("invalid map action")
-            map_action = MapAction(
-                type=action_type,
-                target=target,
-                adcode=(str(raw_map_action["adcode"]) if raw_map_action.get("adcode") is not None else None),
-                name=(str(raw_map_action["name"]) if raw_map_action.get("name") is not None else None),
-                payload=raw_payload,
-            )
         return GeneratedAnswer(
             kind="knowledge_answer",
             answer=answer,
             citations=citations,
-            map_action=map_action,
             units=tuple(units),
         )
