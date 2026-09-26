@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import pytest
 
@@ -10,7 +11,59 @@ from app.models.agent_context import ContextSnapshotRecord
 from app.services.agent.contracts import EvidenceItem
 from app.services.agent.events import AgentEvent
 from app.services.agent.session import PendingBrowserExecution
-from app.services.agent.store import InMemoryAgentStore
+from app.services.agent.store import InMemoryAgentStore, PostgresAgentStore
+
+
+class _FakeMappings:
+    def __init__(self, row):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _FakeResult:
+    def __init__(self, row=None):
+        self._row = row
+
+    def mappings(self):
+        return _FakeMappings(self._row)
+
+
+class _LockingContractSession:
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+        self.next_turn_number = 1
+        self.events: list[dict] = []
+
+    async def execute(self, sql, params):
+        statement = str(sql)
+        self.statements.append(statement)
+        if "SELECT next_turn_number" in statement and "FOR UPDATE" in statement:
+            return _FakeResult({"next_turn_number": self.next_turn_number})
+        if "UPDATE geoai_agent_sessions" in statement and "next_turn_number = :next_turn_number" in statement:
+            self.next_turn_number = int(params["next_turn_number"])
+            return _FakeResult()
+        if "SELECT id" in statement and "FOR UPDATE" in statement:
+            return _FakeResult({"id": "locked"})
+        if "FROM geoai_agent_events" in statement and "WHERE event_id = :event_id" in statement:
+            return _FakeResult()
+        if "COALESCE(MAX(sequence), 0) + 1" in statement:
+            return _FakeResult({"next_seq": len(self.events) + 1})
+        if "INSERT INTO geoai_agent_events" in statement:
+            self.events.append(dict(params))
+            return _FakeResult()
+        return _FakeResult()
+
+
+class _LockingContractManager:
+    def __init__(self) -> None:
+        self.postgres_sessionmaker = object()
+        self.session = _LockingContractSession()
+
+    @asynccontextmanager
+    async def get_postgres_session(self):
+        yield self.session
 
 
 @pytest.mark.asyncio
@@ -30,6 +83,22 @@ async def test_in_memory_agent_store_session_lifecycle():
 
     not_found = await store.get_session("user-1", "non-existent")
     assert not_found is None
+
+
+@pytest.mark.asyncio
+async def test_in_memory_agent_store_allocates_unique_turn_ids_concurrently():
+    store = InMemoryAgentStore(max_sessions=10)
+    await store.get_or_create_session("user-1", "sess-turns")
+
+    turn_ids = await asyncio.gather(
+        *(store.allocate_turn_id("user-1", "sess-turns") for _ in range(50))
+    )
+
+    turn_numbers = sorted(int(turn_id.removeprefix("turn-")) for turn_id in turn_ids)
+    assert turn_numbers == list(range(1, 51))
+    session = await store.get_session("user-1", "sess-turns")
+    assert session is not None
+    assert session.next_turn_number == 51
 
 
 @pytest.mark.asyncio
@@ -68,6 +137,25 @@ async def test_in_memory_agent_store_event_sourcing():
     partial = await store.list_events("user-1", "sess-1", from_sequence=2)
     assert len(partial) == 1
     assert partial[0].sequence == 2
+
+
+@pytest.mark.asyncio
+async def test_in_memory_agent_store_event_append_is_idempotent_by_event_id():
+    store = InMemoryAgentStore()
+    event = AgentEvent(
+        event_type="user_message",
+        session_id="sess-idempotent",
+        turn_id="turn-1",
+        trace_id="trace-1",
+        payload={"text": "hello"},
+    )
+
+    first = await store.append_event("user-1", event)
+    second = await store.append_event("user-1", event)
+
+    assert first.event_id == second.event_id
+    assert first.sequence == second.sequence == 1
+    assert len(await store.list_events("user-1", "sess-idempotent")) == 1
 
 
 @pytest.mark.asyncio
@@ -155,3 +243,95 @@ async def test_in_memory_agent_store_pending_browser_execution():
     await store.clear_pending_execution("user-1", "sess-1")
     cleared = await store.get_pending_execution("user-1", "sess-1")
     assert cleared is None
+
+
+@pytest.mark.asyncio
+async def test_in_memory_pending_execution_can_only_be_claimed_once():
+    store = InMemoryAgentStore()
+    pending = PendingBrowserExecution(
+        token="tok-once",
+        question="继续地图操作",
+        turn_id="turn-1",
+        trace_id="trace-1",
+        tool_call_id="call-1",
+        tool_name="locate_map",
+        observations=(),
+        request_context={},
+        reviewer_enabled=False,
+        thinking=False,
+        max_steps=4,
+        steps_used=1,
+        max_elapsed_seconds=30,
+        retrieval_constraints=None,
+        main_model_name=None,
+        session_id="sess-claim",
+    )
+    session = await store.get_or_create_session("user-1", "sess-claim")
+    session.pending_browser_execution = pending
+    await store.save_session(session)
+
+    claimed = await asyncio.gather(
+        store.claim_pending_execution("user-1", "sess-claim", "tok-once"),
+        store.claim_pending_execution("user-1", "sess-claim", "tok-once"),
+    )
+
+    assert sum(item is not None for item in claimed) == 1
+    assert await store.get_pending_execution("user-1", "sess-claim") is None
+
+
+@pytest.mark.asyncio
+async def test_postgres_turn_allocation_locks_session_row_before_increment():
+    manager = _LockingContractManager()
+    store = PostgresAgentStore(manager=manager)
+
+    first = await store.allocate_turn_id("user-1", "sess-lock")
+    second = await store.allocate_turn_id("user-1", "sess-lock")
+
+    assert (first, second) == ("turn-1", "turn-2")
+    lock_positions = [
+        index
+        for index, statement in enumerate(manager.session.statements)
+        if "SELECT next_turn_number" in statement and "FOR UPDATE" in statement
+    ]
+    update_positions = [
+        index
+        for index, statement in enumerate(manager.session.statements)
+        if "UPDATE geoai_agent_sessions" in statement and "next_turn_number = :next_turn_number" in statement
+    ]
+    assert len(lock_positions) == len(update_positions) == 2
+    assert all(lock < update for lock, update in zip(lock_positions, update_positions))
+
+
+@pytest.mark.asyncio
+async def test_postgres_event_sequence_locks_session_row_before_max_sequence():
+    manager = _LockingContractManager()
+    store = PostgresAgentStore(manager=manager)
+
+    persisted = await store.append_event(
+        "user-1",
+        AgentEvent(
+            event_type="controller_decision",
+            session_id="sess-lock",
+            turn_id="turn-1",
+            trace_id="trace-1",
+            payload={"action": "retrieve_kb"},
+        ),
+    )
+
+    assert persisted.sequence == 1
+    lock_index = next(
+        index
+        for index, statement in enumerate(manager.session.statements)
+        if "SELECT id" in statement and "FOR UPDATE" in statement
+    )
+    max_index = next(
+        index
+        for index, statement in enumerate(manager.session.statements)
+        if "COALESCE(MAX(sequence), 0) + 1" in statement
+    )
+    insert_index = next(
+        index
+        for index, statement in enumerate(manager.session.statements)
+        if "INSERT INTO geoai_agent_events" in statement
+    )
+    assert lock_index < max_index < insert_index

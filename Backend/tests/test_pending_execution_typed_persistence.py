@@ -33,9 +33,19 @@ class FakePostgresSession:
     def __init__(self):
         self.saved = None
         self.clear_requests = []
+        self.claimed_tokens = set()
 
     async def execute(self, sql, params):
         if "UPDATE geoai_pending_browser_executions" in str(sql):
+            if "RETURNING token" in str(sql):
+                if (
+                    self.saved is not None
+                    and params.get("token") == self.saved["token"]
+                    and params.get("token") not in self.claimed_tokens
+                ):
+                    self.claimed_tokens.add(params["token"])
+                    return FakeResult({"token": params["token"]})
+                return FakeResult()
             self.clear_requests.append(dict(params))
             return FakeResult()
         if "INSERT INTO geoai_pending_browser_executions" in str(sql):
@@ -198,3 +208,62 @@ async def test_pending_execution_rejects_legacy_string_observations_without_eval
     manager.session.saved["observations"] = json.dumps(["ToolObservation(...)"], ensure_ascii=False)
 
     assert await store.get_pending_execution("principal-1", "session-legacy") is None
+
+
+@pytest.mark.asyncio
+async def test_pending_execution_request_context_fails_closed_for_unknown_objects():
+    manager = FakePostgresManager()
+    store = PostgresAgentStore(manager=manager)
+    pending = PendingBrowserExecution(
+        token="strict-json-1",
+        question="继续",
+        turn_id="turn-1",
+        trace_id="trace-1",
+        tool_call_id="browser-call-1",
+        tool_name="locate_map",
+        observations=(),
+        request_context={"unexpected": object()},
+        reviewer_enabled=False,
+        thinking=False,
+        max_steps=5,
+        steps_used=1,
+        max_elapsed_seconds=60,
+        retrieval_constraints=None,
+        main_model_name=None,
+        session_id="session-strict",
+    )
+
+    with pytest.raises(TypeError, match="unsupported pending execution JSON value"):
+        await store.save_pending_execution("principal-1", pending)
+
+
+@pytest.mark.asyncio
+async def test_postgres_pending_claim_is_single_consumer():
+    manager = FakePostgresManager()
+    store = PostgresAgentStore(manager=manager)
+    pending = PendingBrowserExecution(
+        token="claim-1",
+        question="继续",
+        turn_id="turn-1",
+        trace_id="trace-1",
+        tool_call_id="browser-call-1",
+        tool_name="locate_map",
+        observations=(),
+        request_context={},
+        reviewer_enabled=False,
+        thinking=False,
+        max_steps=5,
+        steps_used=1,
+        max_elapsed_seconds=60,
+        retrieval_constraints=None,
+        main_model_name=None,
+        session_id="session-claim",
+    )
+    await store.save_pending_execution("principal-1", pending)
+
+    first = await store.claim_pending_execution("principal-1", "session-claim", "claim-1")
+    second = await store.claim_pending_execution("principal-1", "session-claim", "claim-1")
+
+    assert first is not None
+    assert first.token == "claim-1"
+    assert second is None

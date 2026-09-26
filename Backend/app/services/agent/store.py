@@ -154,6 +154,14 @@ class AgentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def allocate_turn_id(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
     async def append_event(
         self,
         principal_id: str,
@@ -215,6 +223,15 @@ class AgentStore(ABC):
         self,
         principal_id: str,
         session_id: str,
+    ) -> PendingBrowserExecution | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def claim_pending_execution(
+        self,
+        principal_id: str,
+        session_id: str,
+        token: str,
     ) -> PendingBrowserExecution | None:
         raise NotImplementedError
 
@@ -310,6 +327,29 @@ class InMemoryAgentStore(AgentStore):
             else:
                 self._pending.pop(key, None)
 
+    async def allocate_turn_id(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> str:
+        async with self._lock:
+            key = (principal_id.strip(), session_id.strip())
+            session = self._sessions.get(key)
+            if session is None:
+                ledger = EvidenceLedger(session_id=key[1])
+                session = AgentSession(
+                    principal_id=key[0],
+                    session_id=key[1],
+                    evidence_ledger=ledger,
+                )
+                self._sessions[key] = session
+                self._events.setdefault(key, [])
+                self._evidence.setdefault(key, {})
+                self._snapshots.setdefault(key, [])
+            turn_number = session.next_turn_number
+            session.next_turn_number += 1
+            return f"turn-{turn_number}"
+
 
     async def append_event(
         self,
@@ -319,6 +359,9 @@ class InMemoryAgentStore(AgentStore):
         async with self._lock:
             key = (principal_id.strip(), event.session_id.strip())
             event_list = self._events.setdefault(key, [])
+            for existing in event_list:
+                if existing.event_id == event.event_id:
+                    return existing
             sequence = len(event_list) + 1
             if event.sequence != sequence:
                 persisted_event = AgentEvent(
@@ -396,15 +439,23 @@ class InMemoryAgentStore(AgentStore):
         ttl_seconds: float = 3600.0,
     ) -> None:
         async with self._lock:
-            key = (principal_id.strip(), pending.turn_id.split("-")[0] if hasattr(pending, "session_id") else principal_id)
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
-            # Find key by token or principal
-            for sess_key, sess in self._sessions.items():
-                if sess_key[0] == principal_id and sess.pending_browser_execution and sess.pending_browser_execution.token == pending.token:
-                    self._pending[sess_key] = (pending, expires_at)
-                    return
-            # fallback
-            self._pending[(principal_id.strip(), pending.token)] = (pending, expires_at)
+            normalized_session_id = pending.session_id.strip()
+            if not normalized_session_id:
+                for sess_key, sess in self._sessions.items():
+                    if (
+                        sess_key[0] == principal_id.strip()
+                        and sess.pending_browser_execution
+                        and sess.pending_browser_execution.token == pending.token
+                    ):
+                        normalized_session_id = sess_key[1]
+                        break
+            if not normalized_session_id:
+                raise ValueError("pending execution requires session_id")
+            self._pending[(principal_id.strip(), normalized_session_id)] = (
+                pending,
+                expires_at,
+            )
 
     async def get_pending_execution(
         self,
@@ -422,6 +473,30 @@ class InMemoryAgentStore(AgentStore):
                 return None
             return pending
 
+    async def claim_pending_execution(
+        self,
+        principal_id: str,
+        session_id: str,
+        token: str,
+    ) -> PendingBrowserExecution | None:
+        async with self._lock:
+            key = (principal_id.strip(), session_id.strip())
+            val = self._pending.get(key)
+            if not val:
+                return None
+            pending, expires_at = val
+            if datetime.now(timezone.utc) > expires_at:
+                self._pending.pop(key, None)
+                return None
+            if pending.token != token:
+                return None
+            self._pending.pop(key, None)
+            session = self._sessions.get(key)
+            if session is not None and session.pending_browser_execution is not None:
+                if session.pending_browser_execution.token == token:
+                    session.pending_browser_execution = None
+            return pending
+
     async def clear_pending_execution(
         self,
         principal_id: str,
@@ -433,7 +508,7 @@ class InMemoryAgentStore(AgentStore):
 
 
 class PostgresAgentStore(AgentStore):
-    """PostgreSQL-backed production agent store with full event sourcing and snapshot audit."""
+    """PostgreSQL-backed persistence for Agent sessions, events, evidence, and snapshots."""
 
     def __init__(self, manager=None, fallback: AgentStore | None = None) -> None:
         self._manager = manager or db_manager
@@ -575,7 +650,10 @@ class PostgresAgentStore(AgentStore):
                 )
                 VALUES (:id, :principal_id, :session_id, :next_turn_number, NOW())
                 ON CONFLICT (principal_id, session_id) DO UPDATE SET
-                    next_turn_number = EXCLUDED.next_turn_number,
+                    next_turn_number = GREATEST(
+                        geoai_agent_sessions.next_turn_number,
+                        EXCLUDED.next_turn_number
+                    ),
                     updated_at = NOW()
                 """
             )
@@ -602,6 +680,65 @@ class PostgresAgentStore(AgentStore):
         else:
             await self.clear_pending_execution(principal, normalized_sess)
 
+    async def allocate_turn_id(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> str:
+        if not self._is_postgres_available:
+            return await self._fallback.allocate_turn_id(principal_id, session_id)
+
+        principal = principal_id.strip()
+        normalized_sess = session_id.strip()
+        record_id = f"{principal}:{normalized_sess}"
+        async with self._manager.get_postgres_session() as db_session:
+            await db_session.execute(
+                text(
+                    """
+                    INSERT INTO geoai_agent_sessions (
+                        id, principal_id, session_id, next_turn_number, updated_at
+                    )
+                    VALUES (:id, :principal_id, :session_id, 1, NOW())
+                    ON CONFLICT (principal_id, session_id) DO NOTHING
+                    """
+                ),
+                {
+                    "id": record_id,
+                    "principal_id": principal,
+                    "session_id": normalized_sess,
+                },
+            )
+            result = await db_session.execute(
+                text(
+                    """
+                    SELECT next_turn_number
+                    FROM geoai_agent_sessions
+                    WHERE principal_id = :principal_id AND session_id = :session_id
+                    FOR UPDATE
+                    """
+                ),
+                {"principal_id": principal, "session_id": normalized_sess},
+            )
+            row = result.mappings().first()
+            if row is None:
+                raise RuntimeError("failed to allocate agent turn")
+            turn_number = int(row["next_turn_number"])
+            await db_session.execute(
+                text(
+                    """
+                    UPDATE geoai_agent_sessions
+                    SET next_turn_number = :next_turn_number, updated_at = NOW()
+                    WHERE principal_id = :principal_id AND session_id = :session_id
+                    """
+                ),
+                {
+                    "principal_id": principal,
+                    "session_id": normalized_sess,
+                    "next_turn_number": turn_number + 1,
+                },
+            )
+        return f"turn-{turn_number}"
+
 
     async def append_event(
         self,
@@ -613,9 +750,67 @@ class PostgresAgentStore(AgentStore):
 
         principal = principal_id.strip()
         session_id = event.session_id.strip()
+        record_id = f"{principal}:{session_id}"
 
         async with self._manager.get_postgres_session() as db_session:
-            # Query max sequence
+            # Serialize all sequence allocation for one session on the session row.
+            await db_session.execute(
+                text(
+                    """
+                    INSERT INTO geoai_agent_sessions (
+                        id, principal_id, session_id, next_turn_number, updated_at
+                    )
+                    VALUES (:id, :principal_id, :session_id, 1, NOW())
+                    ON CONFLICT (principal_id, session_id) DO NOTHING
+                    """
+                ),
+                {
+                    "id": record_id,
+                    "principal_id": principal,
+                    "session_id": session_id,
+                },
+            )
+            await db_session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM geoai_agent_sessions
+                    WHERE principal_id = :principal_id AND session_id = :session_id
+                    FOR UPDATE
+                    """
+                ),
+                {"principal_id": principal, "session_id": session_id},
+            )
+            existing_result = await db_session.execute(
+                text(
+                    """
+                    SELECT event_id, principal_id, session_id, turn_id, trace_id, sequence,
+                           event_type, payload, created_at
+                    FROM geoai_agent_events
+                    WHERE event_id = :event_id
+                    LIMIT 1
+                    """
+                ),
+                {"event_id": event.event_id},
+            )
+            existing = existing_result.mappings().first()
+            if existing is not None:
+                if (
+                    existing["principal_id"] != principal
+                    or existing["session_id"] != session_id
+                ):
+                    raise ValueError("event_id belongs to a different session owner")
+                return AgentEvent(
+                    event_type=existing["event_type"],
+                    session_id=existing["session_id"],
+                    turn_id=existing["turn_id"],
+                    trace_id=existing.get("trace_id") or "",
+                    payload=_json_loads(existing["payload"]) or {},
+                    event_id=existing["event_id"],
+                    sequence=int(existing["sequence"]),
+                    created_at=existing["created_at"],
+                )
+
             seq_sql = text(
                 """
                 SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq
@@ -940,7 +1135,7 @@ class PostgresAgentStore(AgentStore):
                     "observations": _pending_json_dumps(
                         [_serialize_pending_observation(item) for item in pending.observations]
                     ),
-                    "request_context": _json_dumps(dict(pending.request_context)),
+                    "request_context": _pending_json_dumps(dict(pending.request_context)),
                     "reviewer_enabled": pending.reviewer_enabled,
                     "thinking": pending.thinking,
                     "max_steps": pending.max_steps,
@@ -1020,6 +1215,46 @@ class PostgresAgentStore(AgentStore):
             retrieval_constraints=retrieval_constraints,
             main_model_name=row["main_model_name"],
         )
+
+    async def claim_pending_execution(
+        self,
+        principal_id: str,
+        session_id: str,
+        token: str,
+    ) -> PendingBrowserExecution | None:
+        if not self._is_postgres_available:
+            return await self._fallback.claim_pending_execution(
+                principal_id,
+                session_id,
+                token,
+            )
+
+        pending = await self.get_pending_execution(principal_id, session_id)
+        if pending is None or pending.token != token:
+            return None
+
+        async with self._manager.get_postgres_session() as db_session:
+            result = await db_session.execute(
+                text(
+                    """
+                    UPDATE geoai_pending_browser_executions
+                    SET status = 'resumed'
+                    WHERE principal_id = :principal_id
+                      AND session_id = :session_id
+                      AND token = :token
+                      AND status = 'awaiting_browser'
+                      AND expires_at > NOW()
+                    RETURNING token
+                    """
+                ),
+                {
+                    "principal_id": principal_id.strip(),
+                    "session_id": session_id.strip(),
+                    "token": token,
+                },
+            )
+            claimed = result.mappings().first()
+        return pending if claimed is not None else None
 
     async def clear_pending_execution(
         self,

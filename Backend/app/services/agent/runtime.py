@@ -224,6 +224,16 @@ class AgentRuntime:
             if receipt_status not in {"succeeded", "failed"}:
                 raise ValueError("browser tool receipt has invalid status")
 
+            if hasattr(self.session_store, "claim_pending_execution"):
+                claimed_pending = await self.session_store.claim_pending_execution(
+                    request.principal_id,
+                    request.session_id,
+                    request.continuation_token,
+                )
+                if claimed_pending is None:
+                    raise ValueError("invalid or expired browser continuation token")
+                pending = claimed_pending
+
             question = pending.question
             turn_id = pending.turn_id
             trace_id = pending.trace_id
@@ -312,9 +322,20 @@ class AgentRuntime:
                     event_listener,
                 )
                 session.pending_browser_execution = None
+                if hasattr(self.session_store, "clear_pending_execution"):
+                    await self.session_store.clear_pending_execution(
+                        request.principal_id,
+                        request.session_id,
+                    )
             if not session.events and request.legacy_history:
                 self._seed_legacy_history(session.events, request.legacy_history, session.session_id)
-            turn_id = session.new_turn_id()
+            if hasattr(self.session_store, "allocate_turn_id"):
+                turn_id = await self.session_store.allocate_turn_id(
+                    request.principal_id,
+                    request.session_id,
+                )
+            else:
+                turn_id = session.new_turn_id()
             trace_id = str(uuid4())
             effective_request_context = request.request_context
             reviewer_enabled = request.reviewer_enabled
