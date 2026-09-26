@@ -75,6 +75,173 @@ class ContextBudgetManager:
     def estimate_tokens(self, text: str) -> int:
         return self.estimator.estimate(text)
 
+    def _json_token_cost(self, value: Any) -> int:
+        return self.estimator.estimate(
+            json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
+        )
+
+    @staticmethod
+    def _prioritize_by_question(
+        items: Sequence[Mapping[str, Any]],
+        *,
+        question: str,
+        ref_keys: Sequence[str],
+    ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+        referenced: list[Mapping[str, Any]] = []
+        remaining: list[Mapping[str, Any]] = []
+        for item in items:
+            refs = [str(item.get(key) or "") for key in ref_keys]
+            if any(ref and ref in question for ref in refs):
+                referenced.append(item)
+            else:
+                remaining.append(item)
+        return referenced, remaining
+
+    @staticmethod
+    def _flatten_layer_tree(nodes: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        flattened: list[dict[str, Any]] = []
+
+        def walk(items: Sequence[Mapping[str, Any]], inherited_parent: str | None = None) -> None:
+            for raw in items:
+                if not isinstance(raw, Mapping):
+                    continue
+                layer_ref = str(raw.get("layer_ref") or "")
+                parent_ref = raw.get("parent_ref") or inherited_parent
+                node = {
+                    key: raw.get(key)
+                    for key in ("layer_ref", "name", "kind", "visible", "opacity", "z_index")
+                    if raw.get(key) is not None
+                }
+                if parent_ref:
+                    node["parent_ref"] = parent_ref
+                flattened.append(node)
+                children = raw.get("children")
+                if isinstance(children, (list, tuple)):
+                    walk(children, layer_ref or inherited_parent)
+
+        walk(nodes)
+        return flattened
+
+    def _compact_map_context_v2(
+        self,
+        *,
+        map_context: Mapping[str, Any],
+        question: str,
+        allowance_tokens: int,
+    ) -> dict[str, Any]:
+        protected = {
+            key: map_context.get(key)
+            for key in (
+                "schema_version",
+                "dimension",
+                "ready",
+                "revision",
+                "supported_tools",
+                "viewport",
+                "active_region",
+            )
+            if key in map_context
+        }
+        raw_tree = map_context.get("layer_tree")
+        raw_users = map_context.get("user_layers")
+        raw_files = map_context.get("available_files")
+        flat_tree = self._flatten_layer_tree(raw_tree if isinstance(raw_tree, (list, tuple)) else ())
+        user_layers = [item for item in (raw_users if isinstance(raw_users, (list, tuple)) else ()) if isinstance(item, Mapping)]
+        files = [item for item in (raw_files if isinstance(raw_files, (list, tuple)) else ()) if isinstance(item, Mapping)]
+
+        ref_tree, other_tree = self._prioritize_by_question(
+            flat_tree, question=question, ref_keys=("layer_ref", "parent_ref")
+        )
+        ref_users, other_users = self._prioritize_by_question(
+            user_layers, question=question, ref_keys=("layer_ref",)
+        )
+        ref_files, other_files = self._prioritize_by_question(
+            files, question=question, ref_keys=("file_ref",)
+        )
+
+        def compact_user(item: Mapping[str, Any], ref_cap: int) -> dict[str, Any]:
+            refs = [str(value) for value in item.get("feature_refs", ()) if str(value)]
+            mentioned = [ref for ref in refs if ref in question]
+            remaining = [ref for ref in refs if ref not in mentioned]
+            selected = list(dict.fromkeys(mentioned + remaining[:ref_cap]))
+            projected = {
+                key: item.get(key)
+                for key in ("layer_ref", "name", "geometry_types", "feature_count", "visible", "style")
+                if item.get(key) is not None
+            }
+            projected["feature_refs"] = selected
+            if len(selected) < len(refs):
+                projected["_feature_refs"] = {
+                    "truncated": True,
+                    "total_count": len(refs),
+                    "projected_count": len(selected),
+                }
+            return projected
+
+        def compact_file(item: Mapping[str, Any], parts_cap: int) -> dict[str, Any]:
+            parts = [str(value) for value in item.get("parts", ()) if str(value)]
+            projected = {
+                key: item.get(key)
+                for key in ("file_ref", "name", "format")
+                if item.get(key) is not None
+            }
+            projected["parts"] = parts[:parts_cap]
+            if parts_cap < len(parts):
+                projected["_parts"] = {
+                    "truncated": True,
+                    "total_count": len(parts),
+                    "projected_count": min(parts_cap, len(parts)),
+                }
+            return projected
+
+        for extra_cap in (64, 32, 16, 8, 4, 2, 1, 0):
+            selected_tree = list(ref_tree) + list(other_tree[:extra_cap])
+            selected_users = list(ref_users) + list(other_users[:extra_cap])
+            selected_files = list(ref_files) + list(other_files[:extra_cap])
+            ref_cap = min(5, extra_cap) if extra_cap else 0
+            parts_cap = min(4, extra_cap) if extra_cap else 0
+            projected = dict(protected)
+            projected["layer_tree"] = [dict(item) for item in selected_tree]
+            projected["user_layers"] = [compact_user(item, ref_cap) for item in selected_users]
+            projected["available_files"] = [compact_file(item, parts_cap) for item in selected_files]
+            projected["_projection"] = {
+                "truncated": (
+                    len(selected_tree) < len(flat_tree)
+                    or len(selected_users) < len(user_layers)
+                    or len(selected_files) < len(files)
+                    or any("_feature_refs" in item for item in projected["user_layers"])
+                    or any("_parts" in item for item in projected["available_files"])
+                ),
+                "layer_tree": {
+                    "total_count": len(flat_tree),
+                    "projected_count": len(selected_tree),
+                    "flattened": True,
+                },
+                "user_layers": {
+                    "total_count": len(user_layers),
+                    "projected_count": len(selected_users),
+                },
+                "available_files": {
+                    "total_count": len(files),
+                    "projected_count": len(selected_files),
+                },
+            }
+            if self._json_token_cost(projected) <= allowance_tokens:
+                return projected
+
+        return {
+            **protected,
+            "layer_tree": [dict(item) for item in ref_tree],
+            "user_layers": [compact_user(item, 0) for item in ref_users],
+            "available_files": [compact_file(item, 0) for item in ref_files],
+            "_projection": {
+                "truncated": True,
+                "layer_tree": {"total_count": len(flat_tree), "projected_count": len(ref_tree), "flattened": True},
+                "user_layers": {"total_count": len(user_layers), "projected_count": len(ref_users)},
+                "available_files": {"total_count": len(files), "projected_count": len(ref_files)},
+            },
+        }
+
     def trim_controller_context(
         self,
         *,
@@ -140,16 +307,23 @@ class ContextBudgetManager:
             if map_cost <= map_allowance:
                 trimmed_map = dict(map_context)
             else:
-                # Compact map context (retain bbox and center, truncate heavy features)
-                trimmed_map = {
-                    k: v for k, v in map_context.items()
-                    if k in {"bbox", "center", "zoom", "layers", "active_layer"}
-                }
-                if "features" in map_context:
-                    features = map_context["features"]
-                    if isinstance(features, list):
-                        trimmed_map["features"] = features[:3]
-                        trimmed_map["_features_truncated"] = True
+                if map_context.get("schema_version") == 2:
+                    trimmed_map = self._compact_map_context_v2(
+                        map_context=map_context,
+                        question=question,
+                        allowance_tokens=map_allowance,
+                    )
+                else:
+                    # Compatibility path for older/non-browser map context shapes.
+                    trimmed_map = {
+                        k: v for k, v in map_context.items()
+                        if k in {"bbox", "center", "zoom", "layers", "active_layer"}
+                    }
+                    if "features" in map_context:
+                        features = map_context["features"]
+                        if isinstance(features, list):
+                            trimmed_map["features"] = features[:3]
+                            trimmed_map["_features_truncated"] = True
 
         total_tokens = fixed_cost + conv_cost + ev_cost + (
             self.estimator.estimate(json.dumps(trimmed_map, ensure_ascii=False, default=lambda o: dict(o) if hasattr(o, "items") else str(o)))

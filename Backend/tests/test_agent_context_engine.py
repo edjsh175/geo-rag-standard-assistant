@@ -110,6 +110,97 @@ def test_budget_manager_controller_trimming():
     assert len(trimmed_map.get("features", [])) <= 3
 
 
+def test_budget_manager_preserves_map_context_v2_execution_state_when_compacting():
+    config = ContextBudgetConfig(
+        controller=StageBudget(max_tokens=900, system_reserve=100, generation_reserve=100)
+    )
+    manager = ContextBudgetManager(config=config)
+    target_layer_ref = "ul-99"
+    target_file_ref = "vf-99"
+    map_ctx = {
+        "schema_version": 2,
+        "dimension": "2d",
+        "ready": True,
+        "revision": 42,
+        "supported_tools": [
+            "locate_map",
+            "set_layer_visibility",
+            "import_vector_dataset",
+            "set_vector_style",
+            "fit_vector_layer",
+            "inspect_layer_features",
+            "get_feature_geometry",
+        ],
+        "viewport": {"center": [104.0, 30.0], "zoom": 9, "crs": "EPSG:4326"},
+        "active_region": {"adcode": "510100", "name": "成都市"},
+        "layer_tree": [
+            {
+                "layer_ref": f"ul-{i}",
+                "name": f"图层-{i}",
+                "kind": "user_vector",
+                "visible": True,
+                "opacity": 1.0,
+                "z_index": i,
+            }
+            for i in range(120)
+        ],
+        "user_layers": [
+            {
+                "layer_ref": f"ul-{i}",
+                "name": f"用户图层-{i}",
+                "geometry_types": ["Polygon"],
+                "feature_count": 200,
+                "feature_refs": [f"feat-{i}-{j}" for j in range(30)],
+                "visible": True,
+                "style": {
+                    "stroke": {"color": "#ff0000", "width": 2, "opacity": 1},
+                    "fill": {"color": "#ffcccc", "opacity": 0.4},
+                    "radius": 5,
+                },
+            }
+            for i in range(120)
+        ],
+        "available_files": [
+            {
+                "file_ref": f"vf-{i}",
+                "name": f"数据-{i}",
+                "format": "geojson",
+                "parts": [f"part-{j}" for j in range(12)],
+            }
+            for i in range(120)
+        ],
+    }
+
+    _, _, projected_map, tokens = manager.trim_controller_context(
+        question=f"请处理 layer_ref={target_layer_ref} 并导入 file_ref={target_file_ref}",
+        conversation_lines=(),
+        working_evidence=(),
+        map_context=map_ctx,
+        tool_contracts_text="",
+    )
+
+    assert projected_map is not None
+    assert projected_map["schema_version"] == 2
+    assert projected_map["dimension"] == "2d"
+    assert projected_map["ready"] is True
+    assert projected_map["revision"] == 42
+    assert projected_map["supported_tools"] == map_ctx["supported_tools"]
+    assert projected_map["viewport"] == map_ctx["viewport"]
+    assert projected_map["active_region"] == map_ctx["active_region"]
+    assert any(item["layer_ref"] == target_layer_ref for item in projected_map["layer_tree"])
+    assert any(item["layer_ref"] == target_layer_ref for item in projected_map["user_layers"])
+    assert any(item["file_ref"] == target_file_ref for item in projected_map["available_files"])
+    projection_meta = projected_map["_projection"]
+    assert projection_meta["truncated"] is True
+    assert projection_meta["layer_tree"]["total_count"] == 120
+    assert projection_meta["user_layers"]["total_count"] == 120
+    assert projection_meta["available_files"]["total_count"] == 120
+    assert projection_meta["layer_tree"]["projected_count"] < 120
+    assert projection_meta["user_layers"]["projected_count"] < 120
+    assert projection_meta["available_files"]["projected_count"] < 120
+    assert tokens <= config.controller.available_context_tokens
+
+
 def test_context_engine_projections_and_snapshots():
     engine = ContextEngine()
     events = [
