@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -14,9 +15,11 @@ from app.services.agent.tool_runtime import (
     ResourceFuseExceeded,
     ToolCall,
     ToolExecutionError,
+    ToolExecutionContext,
     ToolRuntime,
     build_default_tool_registry,
 )
+from app.services.agent.tools import QuerySpatialRelationInput, ToolRegistry, ToolSpec
 from app.services.rag.contracts import (
     RetrievalCandidate,
     RetrievalChannelDiagnostic,
@@ -69,6 +72,33 @@ class FakeSpatialService:
 
     async def overlay(self, *, left, right, operation):
         return {"operation": operation, "geometry": {"type": "Polygon", "coordinates": []}}
+
+
+class SlowSpatialService(FakeSpatialService):
+    async def query_relation(self, *, left, right, relation):
+        await asyncio.sleep(0.05)
+        return await super().query_relation(left=left, right=right, relation=relation)
+
+
+def spatial_registry(
+    *,
+    timeout: float = 30.0,
+    permission: str | None = None,
+    confirmation_required: bool = False,
+) -> ToolRegistry:
+    return ToolRegistry(
+        (
+            ToolSpec(
+                name="query_spatial_relation",
+                description="test spatial relation",
+                input_model=QuerySpatialRelationInput,
+                timeout=timeout,
+                permission=permission,
+                confirmation_required=confirmation_required,
+                provider="postgis",
+            ),
+        )
+    )
 
 
 def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> None:
@@ -127,6 +157,137 @@ async def test_spatial_relation_result_is_admitted_as_evidence() -> None:
     evidence_id = observation.payload["evidence_id"]
     assert ledger.get(evidence_id) is not None
     assert ledger.get(evidence_id).source == "postgis"
+
+
+@pytest.mark.asyncio
+async def test_tool_permission_is_enforced_before_execution() -> None:
+    ledger = EvidenceLedger(session_id="session-policy")
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=ledger,
+        spatial_service=FakeSpatialService(),
+        registry=spatial_registry(permission="spatial.execute"),
+    )
+
+    with pytest.raises(ToolExecutionError, match="TOOL_PERMISSION_DENIED"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="spatial-policy-1",
+                name="query_spatial_relation",
+                arguments={
+                    "left": {"geometry": {"type": "Point", "coordinates": [104, 30]}},
+                    "right": {"region": {"adcode": "510000"}},
+                    "relation": "intersects",
+                },
+            ),
+        )
+
+    assert ledger.all_items() == ()
+
+
+@pytest.mark.asyncio
+async def test_tool_permission_allows_authorized_execution() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-policy-allowed"),
+        spatial_service=FakeSpatialService(),
+        registry=spatial_registry(permission="spatial.execute"),
+        execution_context=ToolExecutionContext(
+            permissions=frozenset({"spatial.execute"})
+        ),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="spatial-policy-allowed",
+            name="query_spatial_relation",
+            arguments={
+                "left": {"geometry": {"type": "Point", "coordinates": [104, 30]}},
+                "right": {"region": {"adcode": "510000"}},
+                "relation": "intersects",
+            },
+        ),
+    )
+
+    assert observation.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_required_tool_is_denied_without_confirmation() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-confirm"),
+        spatial_service=FakeSpatialService(),
+        registry=spatial_registry(confirmation_required=True),
+    )
+
+    with pytest.raises(ToolExecutionError, match="TOOL_CONFIRMATION_REQUIRED"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="needs-confirmation",
+                name="query_spatial_relation",
+                arguments={
+                    "left": {"geometry": {"type": "Point", "coordinates": [104, 30]}},
+                    "right": {"region": {"adcode": "510000"}},
+                    "relation": "intersects",
+                },
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirmation_required_tool_accepts_exact_call_confirmation() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-confirm-allowed"),
+        spatial_service=FakeSpatialService(),
+        registry=spatial_registry(confirmation_required=True),
+        execution_context=ToolExecutionContext(
+            confirmed_tool_call_ids=frozenset({"confirmed-call"})
+        ),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="confirmed-call",
+            name="query_spatial_relation",
+            arguments={
+                "left": {"geometry": {"type": "Point", "coordinates": [104, 30]}},
+                "right": {"region": {"adcode": "510000"}},
+                "relation": "intersects",
+            },
+        ),
+    )
+
+    assert observation.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_tool_timeout_is_enforced_by_runtime_boundary() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-timeout"),
+        spatial_service=SlowSpatialService(),
+        registry=spatial_registry(timeout=0.01),
+    )
+
+    with pytest.raises(ToolExecutionError, match="TOOL_TIMEOUT"):
+        await runtime.execute(
+            turn_id="turn-1",
+            call=ToolCall(
+                tool_call_id="slow-call",
+                name="query_spatial_relation",
+                arguments={
+                    "left": {"geometry": {"type": "Point", "coordinates": [104, 30]}},
+                    "right": {"region": {"adcode": "510000"}},
+                    "relation": "intersects",
+                },
+            ),
+        )
 
 
 @pytest.mark.asyncio

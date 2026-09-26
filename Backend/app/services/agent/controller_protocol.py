@@ -307,7 +307,7 @@ def validate_controller_decision_payload(
             for eid in selected_ids:
                 if not isinstance(eid, str) or not eid.strip():
                     raise ValueError("malformed_compose_answer: selected_evidence_ids items must be non-empty strings")
-                if state.selectable_evidence_ids and eid not in state.selectable_evidence_ids:
+                if eid not in state.selectable_evidence_ids:
                     raise ControllerOutputError(
                         f"malformed_compose_answer: selected evidence '{eid}' is not selectable"
                     )

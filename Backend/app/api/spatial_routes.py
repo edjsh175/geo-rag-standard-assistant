@@ -2,8 +2,8 @@
 空间分析 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Optional
 from pydantic import BaseModel
 
 from app.core.security import require_authenticated_user
@@ -26,6 +26,13 @@ class SpatialResult(BaseModel):
     distance: Optional[float] = None
 
 
+def _not_implemented(capability: str) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=f"{capability} is not implemented by an authoritative spatial provider",
+    )
+
+
 @router.post("/query")
 async def spatial_query(
     query: SpatialQuery
@@ -39,17 +46,7 @@ async def spatial_query(
     Returns:
         空间查询结果
     """
-    # TODO: 实现空间查询逻辑
-    try:
-        # 这里应该调用空间查询服务
-        results = []
-        return {
-            "query": query.dict(),
-            "results": results,
-            "count": len(results)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"空间查询失败: {str(e)}")
+    _not_implemented("spatial query")
 
 
 @router.post("/geocode")
@@ -67,17 +64,7 @@ async def geocode_address(
     Returns:
         地理编码结果
     """
-    # TODO: 实现地理编码逻辑
-    try:
-        # 这里应该调用地理编码服务
-        coordinates = {
-            "address": address,
-            "coordinates": [116.4074, 39.9042],  # 北京坐标示例
-            "city": city or "北京市"
-        }
-        return coordinates
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"地理编码失败: {str(e)}")
+    _not_implemented("geocoding")
 
 
 @router.post("/reverse-geocode")
@@ -95,18 +82,7 @@ async def reverse_geocode(
     Returns:
         逆地理编码结果
     """
-    # TODO: 实现逆地理编码逻辑
-    try:
-        # 这里应该调用逆地理编码服务
-        address = {
-            "coordinates": [lon, lat],
-            "address": "北京市海淀区中关村",
-            "district": "海淀区",
-            "city": "北京市"
-        }
-        return address
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"逆地理编码失败: {str(e)}")
+    _not_implemented("reverse geocoding")
 
 
 @router.get("/buffer")
@@ -126,25 +102,7 @@ async def create_buffer(
     Returns:
         缓冲区几何对象（GeoJSON）
     """
-    # TODO: 实现缓冲区创建逻辑
-    try:
-        buffer_geometry = {
-            "type": "Polygon",
-            "coordinates": [[
-                [lon - 0.01, lat - 0.01],
-                [lon + 0.01, lat - 0.01],
-                [lon + 0.01, lat + 0.01],
-                [lon - 0.01, lat + 0.01],
-                [lon - 0.01, lat - 0.01]
-            ]]
-        }
-        return {
-            "center": [lon, lat],
-            "distance": distance,
-            "buffer": buffer_geometry
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"创建缓冲区失败: {str(e)}")
+    _not_implemented("buffer analysis")
 
 
 @router.post("/intersection")
@@ -162,18 +120,7 @@ async def calculate_intersection(
     Returns:
         交集几何对象（GeoJSON）
     """
-    # TODO: 实现几何交集计算逻辑
-    try:
-        intersection = {
-            "type": "GeometryCollection",
-            "geometries": [geometry1, geometry2]
-        }
-        return {
-            "intersection": intersection,
-            "area": 0.0  # 交集面积
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"计算交集失败: {str(e)}")
+    _not_implemented("geometry intersection")
 
 
 @router.get("/distance")

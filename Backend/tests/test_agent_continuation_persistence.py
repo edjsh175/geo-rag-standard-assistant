@@ -84,6 +84,14 @@ async def test_browser_gis_continuation_persists_and_recovers_across_restarts():
         question="请在地图上显示西湖区控规图层",
         session_id="session-recover-1",
         principal_id="user-gis-1",
+        request_context={
+            "browser_observations": {
+                "map_context": {
+                    "ready": True,
+                    "supported_tools": ["set_layer_visibility"],
+                }
+            }
+        },
     )
     result_1 = await runtime_1.run(req_1)
 

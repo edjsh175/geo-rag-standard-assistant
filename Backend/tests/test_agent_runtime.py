@@ -13,6 +13,7 @@ from app.services.agent.controller import ControllerOutputError
 from app.services.agent.runtime import AgentRunRequest, AgentRuntime
 from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.tool_runtime import ToolCall
+from app.services.agent.tools import build_default_tool_registry
 from app.services.rag.contracts import (
     RetrievalCandidate,
     RetrievalChannelDiagnostic,
@@ -222,6 +223,14 @@ async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None
             question="导入数据并确认结果",
             session_id="browser-session",
             principal_id="admin:test",
+            request_context={
+                "browser_observations": {
+                    "map_context": {
+                        "ready": True,
+                        "supported_tools": ["import_vector_dataset"],
+                    }
+                }
+            },
         )
     )
     assert pending.publication_state == "tool_execution_required"
@@ -249,6 +258,41 @@ async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None
     assert len(result.frozen_evidence.items) == 1
     assert result.frozen_evidence.items[0].source == "browser_gis"
     assert '"layer_ref":"ul_1"' in result.frozen_evidence.items[0].text
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_controller_tool_outside_current_action_surface() -> None:
+    class UnavailableBrowserController:
+        def __init__(self) -> None:
+            self.tool_registry = build_default_tool_registry()
+
+        async def decide(self, **kwargs):
+            return ToolCall(
+                tool_call_id="locate-without-browser-runtime",
+                name="locate_map",
+                arguments={"longitude": 104.0, "latitude": 30.0},
+            )
+
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        controller=UnavailableBrowserController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="定位到成都",
+            session_id="surface-guard-session",
+            principal_id="admin:test",
+            max_steps=1,
+        )
+    )
+
+    assert result.publication_state == "model_output_invalid"
+    assert result.pending_tool_call_id is None
+    assert result.continuation_token is None
+    assert all(event.event_type != "browser_tool_requested" for event in result.events)
 
 
 @pytest.mark.asyncio
@@ -375,10 +419,11 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
         answer_generator=FakeAnswerGenerator(),
         session_store=store,
     )
-    with pytest.raises(ValueError, match="Frozen Evidence"):
-        await other_session_runtime.run(
-            AgentRunRequest(question="刚才那个要求呢？", session_id="session-2", principal_id="admin:test")
-        )
+    rejected = await other_session_runtime.run(
+        AgentRunRequest(question="刚才那个要求呢？", session_id="session-2", principal_id="admin:test")
+    )
+    assert rejected.publication_state == "model_output_invalid"
+    assert rejected.frozen_evidence is None
 
 
 @pytest.mark.asyncio

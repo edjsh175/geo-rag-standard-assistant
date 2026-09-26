@@ -33,6 +33,7 @@ from app.services.agent.tool_runtime import (
     ToolObservation,
     ToolRuntime,
 )
+from app.services.agent.tools import CONTROL_ACTION_NAMES, build_default_tool_registry
 from app.services.rag.contracts import RetrievalPort
 
 
@@ -457,9 +458,11 @@ class AgentRuntime:
             max_elapsed_seconds=max_elapsed_seconds,
             initial_steps=initial_steps,
         )
+        registry = getattr(self.controller, "tool_registry", None) or build_default_tool_registry()
         tool_runtime = ToolRuntime(
             retrieval_port=self.retrieval_port,
             evidence_ledger=session.evidence_ledger,
+            registry=registry,
             resource_fuse=fuse,
             retrieval_constraints=retrieval_constraints,
             spatial_service=self.spatial_service,
@@ -519,8 +522,6 @@ class AgentRuntime:
                 current_turn_id=turn_id,
             )
 
-            from app.services.agent.tools import build_default_tool_registry
-            registry = getattr(self.controller, "tool_registry", None) or build_default_tool_registry()
             from app.services.agent.controller_protocol import ExecutableActionState
 
             all_ledger_items = session.evidence_ledger.all_items()
@@ -576,6 +577,7 @@ class AgentRuntime:
                 if not has_varkw:
                     controller_kwargs = {k: v for k, v in controller_kwargs.items() if k in accepted_params}
                 call = await self.controller.decide(**controller_kwargs)
+                self._validate_decision_against_action_state(call, action_state)
             except TimeoutError:
                 return resource_fuse_result()
             except ControllerOutputError as exc:
@@ -1292,6 +1294,45 @@ class AgentRuntime:
 
         await task
         yield AgentStreamFrame(result=result_holder[0])
+
+    @staticmethod
+    def _validate_decision_against_action_state(call: Any, action_state: Any) -> None:
+        """Fail closed if a Controller result escapes the request-scoped action surface."""
+        action = str(getattr(call, "action", "") or "").strip()
+        name = str(getattr(call, "name", "") or "").strip()
+
+        if action == "tool_call":
+            if name not in action_state.available_capabilities:
+                raise ControllerOutputError(
+                    f"controller selected unavailable tool '{name}'"
+                )
+            return
+
+        control_name = action if action in CONTROL_ACTION_NAMES else name
+        if control_name in CONTROL_ACTION_NAMES:
+            if control_name not in action_state.available_control_actions:
+                raise ControllerOutputError(
+                    f"controller selected unavailable control action '{control_name}'"
+                )
+            if control_name == "compose_answer":
+                raw_arguments = getattr(call, "arguments", {}) or {}
+                selected_ids = (
+                    raw_arguments.get("selected_evidence_ids")
+                    or raw_arguments.get("evidence_ids")
+                    or []
+                ) if isinstance(raw_arguments, Mapping) else []
+                for evidence_id in selected_ids:
+                    normalized_id = str(evidence_id).strip()
+                    if normalized_id not in action_state.selectable_evidence_ids:
+                        raise ControllerOutputError(
+                            f"controller selected unavailable evidence '{normalized_id}'"
+                        )
+            return
+
+        if name not in action_state.available_capabilities:
+            raise ControllerOutputError(
+                f"controller selected unavailable tool '{name}'"
+            )
 
     @staticmethod
     def _append_event(

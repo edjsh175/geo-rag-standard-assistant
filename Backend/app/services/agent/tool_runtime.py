@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Callable, Mapping
 
 from app.services.agent.evidence import EvidenceLedger
+from app.services.agent.tool_policy import (
+    ToolExecutionContext,
+    ToolPolicy,
+    ToolPolicyViolation,
+)
 from app.services.agent.tools import ToolRegistry, build_default_tool_registry
 from app.models.search_models import MetadataFilter, SpatialFilter
 from app.services.rag.contracts import RetrievalPort, RetrievalQuery
@@ -113,6 +119,8 @@ class ToolRuntime:
         resource_fuse: ResourceFuse | None = None,
         retrieval_constraints: RetrievalRequestConstraints | None = None,
         spatial_service: Any | None = None,
+        execution_context: ToolExecutionContext | None = None,
+        policy: ToolPolicy | None = None,
     ) -> None:
         self.retrieval_port = retrieval_port
         self.evidence_ledger = evidence_ledger
@@ -120,11 +128,31 @@ class ToolRuntime:
         self.resource_fuse = resource_fuse
         self.retrieval_constraints = retrieval_constraints or RetrievalRequestConstraints()
         self.spatial_service = spatial_service
+        self.execution_context = execution_context or ToolExecutionContext()
+        self.policy = policy or ToolPolicy()
 
     async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
         from app.services.agent.tools import CONTROL_ACTION_NAMES
         if call.name in CONTROL_ACTION_NAMES:
             raise ToolExecutionError(f"'{call.name}' is a control action, not an executable tool")
+
+        try:
+            spec = self.registry.get(call.name)
+            self.policy.authorize(
+                spec=spec,
+                tool_call_id=call.tool_call_id,
+                context=self.execution_context,
+            )
+            timeout_seconds = self.policy.effective_timeout_seconds(
+                spec=spec,
+                runtime_remaining_seconds=(
+                    self.resource_fuse.remaining_seconds
+                    if self.resource_fuse is not None
+                    else None
+                ),
+            )
+        except (KeyError, ToolPolicyViolation) as exc:
+            raise ToolExecutionError(str(exc)) from exc
 
         if self.resource_fuse is not None:
             self.resource_fuse.consume_step(tool_name=call.name)
@@ -139,6 +167,22 @@ class ToolRuntime:
             name=call.name,
             arguments=arguments,
         )
+
+        try:
+            observation = await asyncio.wait_for(
+                self._execute_validated(turn_id=turn_id, call=call),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            raise ToolExecutionError(
+                f"TOOL_TIMEOUT: '{call.name}' exceeded {timeout_seconds:.3f}s"
+            ) from exc
+
+        if self.resource_fuse is not None:
+            self.resource_fuse.ensure_within_limits()
+        return observation
+
+    async def _execute_validated(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
         if call.name == "retrieve_kb":
             observation = await self._retrieve_kb(turn_id=turn_id, call=call)
         elif call.name == "search_evidence_memory":
@@ -159,9 +203,6 @@ class ToolRuntime:
             observation = await self._spatial_operation(turn_id=turn_id, call=call)
         else:  # pragma: no cover - registry.get() already rejects this branch.
             raise KeyError(f"unknown tool: {call.name}")
-
-        if self.resource_fuse is not None:
-            self.resource_fuse.ensure_within_limits()
         return observation
 
     @staticmethod
@@ -317,6 +358,7 @@ __all__ = [
     "RetrievalRequestConstraints",
     "ToolCall",
     "ToolExecutionError",
+    "ToolExecutionContext",
     "ToolObservation",
     "ToolRuntime",
     "build_default_tool_registry",

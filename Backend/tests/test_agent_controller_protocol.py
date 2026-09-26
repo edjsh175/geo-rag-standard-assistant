@@ -192,7 +192,10 @@ def test_validate_direct_answer_payload():
 
 def test_validate_compose_answer_payload():
     registry = build_default_tool_registry()
-    state = ExecutableActionState.compute(registry=registry)
+    state = ExecutableActionState.compute(
+        registry=registry,
+        selectable_evidence_ids=("ev-1", "ev-2"),
+    )
 
     # Valid compose_answer with explicit evidence ids
     decision = validate_controller_decision_payload(
@@ -346,6 +349,33 @@ def test_validator_rejects_hallucinated_evidence_id():
             },
             registry=registry,
             tool_call_id="call-test",
+            state=state,
+        )
+
+
+def test_validator_rejects_evidence_outside_empty_authority_set_even_for_manual_state():
+    from app.services.agent.controller_protocol import ControllerOutputError
+
+    registry = build_default_tool_registry()
+    state = ExecutableActionState(
+        available_capabilities=frozenset(),
+        available_control_actions=frozenset({"compose_answer"}),
+        allowed_answer_kinds=("knowledge_answer",),
+        selectable_evidence_ids=frozenset(),
+        has_evidence=False,
+    )
+
+    with pytest.raises(ControllerOutputError, match="selected evidence 'ev-ghost' is not selectable"):
+        validate_controller_decision_payload(
+            {
+                "action": "compose_answer",
+                "arguments": {
+                    "answer_kind": "knowledge_answer",
+                    "selected_evidence_ids": ["ev-ghost"],
+                },
+            },
+            registry=registry,
+            tool_call_id="call-empty-authority",
             state=state,
         )
 
