@@ -592,7 +592,7 @@ class PostgresAgentStore(AgentStore):
                     INSERT INTO geoai_agent_sessions (
                         id, principal_id, session_id, status, next_turn_number, metadata
                     )
-                    VALUES (:id, :principal_id, :session_id, DEFAULT, 'active', 1, '{}'::jsonb)
+                    VALUES (:id, :principal_id, :session_id, 'active', 1, '{}'::jsonb)
                     ON CONFLICT (principal_id, session_id) DO UPDATE SET updated_at = NOW()
                     RETURNING id, principal_id, session_id, status, next_turn_number, metadata
                     """

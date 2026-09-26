@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import re
 import pytest
 
 from app.models.agent_context import ContextSnapshotRecord
@@ -20,6 +21,13 @@ class _FakeMappings:
 
     def first(self):
         return self._row
+
+    def fetchall(self):
+        if self._row is None:
+            return []
+        if isinstance(self._row, list):
+            return self._row
+        return [self._row]
 
 
 class _FakeResult:
@@ -60,6 +68,50 @@ class _LockingContractManager:
     def __init__(self) -> None:
         self.postgres_sessionmaker = object()
         self.session = _LockingContractSession()
+
+    @asynccontextmanager
+    async def get_postgres_session(self):
+        yield self.session
+
+
+class _SessionInsertContractSession:
+    def __init__(self) -> None:
+        self.seen_insert = False
+
+    async def execute(self, sql, params):
+        statement = str(sql)
+        if "SELECT id, principal_id, session_id, status, next_turn_number, metadata" in statement:
+            return _FakeResult()
+        if "INSERT INTO geoai_agent_sessions" in statement and "RETURNING id" in statement:
+            self.seen_insert = True
+            match = re.search(
+                r"INSERT INTO geoai_agent_sessions\s*\((.*?)\)\s*VALUES\s*\((.*?)\)",
+                statement,
+                re.IGNORECASE | re.DOTALL,
+            )
+            assert match is not None
+            columns = [item.strip() for item in match.group(1).split(",")]
+            values = [item.strip() for item in match.group(2).split(",")]
+            assert len(values) == len(columns), (
+                f"geoai_agent_sessions INSERT has {len(columns)} columns but {len(values)} values"
+            )
+            return _FakeResult(
+                {
+                    "id": params["id"],
+                    "principal_id": params["principal_id"],
+                    "session_id": params["session_id"],
+                    "status": "active",
+                    "next_turn_number": 1,
+                    "metadata": {},
+                }
+            )
+        return _FakeResult()
+
+
+class _SessionInsertContractManager:
+    def __init__(self) -> None:
+        self.postgres_sessionmaker = object()
+        self.session = _SessionInsertContractSession()
 
     @asynccontextmanager
     async def get_postgres_session(self):
@@ -300,6 +352,18 @@ async def test_postgres_turn_allocation_locks_session_row_before_increment():
     ]
     assert len(lock_positions) == len(update_positions) == 2
     assert all(lock < update for lock, update in zip(lock_positions, update_positions))
+
+
+@pytest.mark.asyncio
+async def test_postgres_get_or_create_session_insert_has_matching_column_value_arity():
+    manager = _SessionInsertContractManager()
+    store = PostgresAgentStore(manager=manager)
+
+    session = await store.get_or_create_session("user-1", "sess-create")
+
+    assert manager.session.seen_insert is True
+    assert session.principal_id == "user-1"
+    assert session.session_id == "sess-create"
 
 
 @pytest.mark.asyncio
