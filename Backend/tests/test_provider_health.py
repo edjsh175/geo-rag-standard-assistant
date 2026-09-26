@@ -289,3 +289,8 @@ def test_search_application_builder_wires_server_authorities_to_correct_layers()
     assert model_client.audit_sink is not None
     assert model_client.audit_sink.__self__ is _agent_session_store
     assert model_client.audit_sink.__func__.__name__ == "save_model_input_audit"
+    assert application_service.agent_runtime.conversation_memory_summarizer is not None
+    assert (
+        application_service.agent_runtime.conversation_memory_summarizer.model_client
+        is model_client
+    )

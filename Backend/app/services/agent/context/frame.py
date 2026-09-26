@@ -51,6 +51,7 @@ class ContextFrame:
     user_question: str = ""
     spatial: Mapping[str, Any] = field(default_factory=_empty_mapping)
     conversation: tuple[Mapping[str, Any], ...] = ()
+    conversation_memory: Mapping[str, Any] = field(default_factory=_empty_mapping)
     evidence_memory: tuple[Mapping[str, Any], ...] = ()
     working_evidence: tuple[Mapping[str, Any], ...] = ()
     evidence_catalog: tuple[Mapping[str, Any], ...] = ()
@@ -71,6 +72,7 @@ class ContextFrame:
         user_question: str = "",
         spatial: Mapping[str, Any] | None = None,
         conversation: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
+        conversation_memory: Mapping[str, Any] | None = None,
         evidence_memory: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
         working_evidence: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
         evidence_catalog: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
@@ -91,6 +93,7 @@ class ContextFrame:
             user_question=str(user_question or "").strip(),
             spatial=_freeze(spatial or {}),
             conversation=tuple(_freeze(v) for v in (conversation or ())),
+            conversation_memory=_freeze(conversation_memory or {}),
             evidence_memory=tuple(_freeze(v) for v in (evidence_memory or ())),
             working_evidence=tuple(_freeze(v) for v in (working_evidence or ())),
             evidence_catalog=tuple(_freeze(v) for v in (evidence_catalog or ())),
@@ -110,6 +113,7 @@ class ContextFrame:
             "user_question": self.user_question,
             "spatial": _thaw(self.spatial),
             "conversation": [_thaw(v) for v in self.conversation],
+            "conversation_memory": _thaw(self.conversation_memory),
             "evidence_memory": [_thaw(v) for v in self.evidence_memory],
             "working_evidence": [_thaw(v) for v in self.working_evidence],
             "evidence_catalog": [_thaw(v) for v in self.evidence_catalog],

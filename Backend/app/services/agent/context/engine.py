@@ -14,6 +14,7 @@ from app.services.agent.context.projection import (
 )
 from app.services.agent.context.snapshot import ContextSnapshot
 from app.services.agent.events import AgentEvent
+from app.models.agent_context import ConversationMemoryStateRecord
 
 
 def _snapshot_turn_id(frame: ContextFrame) -> str:
@@ -150,6 +151,7 @@ class ContextEngine:
         tool_contracts: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
         current_turn_id: str | None = None,
+        conversation_memory: ConversationMemoryStateRecord | None = None,
     ) -> ContextFrame:
         """Construct a structured ContextFrame from session facts and runtime inputs."""
         conv_list: list[dict[str, Any]] = []
@@ -159,6 +161,12 @@ class ContextEngine:
             source_event_ids.append(ev.event_id)
             if ev.event_type in {"user_message", "assistant_message"}:
                 if ev.event_type == "user_message" and current_turn_id and ev.turn_id == current_turn_id:
+                    continue
+                if (
+                    conversation_memory is not None
+                    and ev.sequence > 0
+                    and ev.sequence <= conversation_memory.covered_to_sequence
+                ):
                     continue
                 text = ev.payload.get("text")
                 if isinstance(text, str) and text.strip():
@@ -204,11 +212,32 @@ class ContextEngine:
         user_ui_selections = admitted_metadata.get("user_ui_selections") or {}
         client_hints = admitted_metadata.get("client_hints") or {}
 
+        memory_payload = {}
+        if conversation_memory is not None:
+            memory_payload = {
+                "memory_id": conversation_memory.memory_id,
+                "summary_version": conversation_memory.summary_version,
+                "covered_from_sequence": conversation_memory.covered_from_sequence,
+                "covered_to_sequence": conversation_memory.covered_to_sequence,
+                "rolling_summary": conversation_memory.rolling_summary,
+                "active_goal": conversation_memory.active_goal,
+                "user_constraints": list(conversation_memory.user_constraints),
+                "explicit_ui_selections": dict(
+                    conversation_memory.explicit_ui_selections
+                ),
+                "authoritative_runtime_facts": dict(
+                    conversation_memory.authoritative_runtime_facts
+                ),
+                "source_event_ids": list(conversation_memory.source_event_ids),
+                "source_hash": conversation_memory.source_hash,
+            }
+
         return ContextFrame.create(
             session={"session_id": session_id, "principal_id": principal_id},
             user_question=question,
             spatial=spatial_context or {},
             conversation=conv_list,
+            conversation_memory=memory_payload,
             evidence_memory=list(evidence_memory),
             working_evidence=list(working_evidence),
             evidence_catalog=catalog,
@@ -239,9 +268,29 @@ class ContextEngine:
             if text:
                 conv_lines.append(f"{role}: {text}")
 
+        memory_text = ""
+        if frame.conversation_memory:
+            summary = str(frame.conversation_memory.get("rolling_summary") or "").strip()
+            goal = str(frame.conversation_memory.get("active_goal") or "").strip()
+            constraints = frame.conversation_memory.get("user_constraints") or ()
+            memory_parts = [
+                "[Conversation Memory — non-authoritative dialogue semantics]",
+            ]
+            if summary:
+                memory_parts.append(f"Summary: {summary}")
+            if goal:
+                memory_parts.append(f"Active goal: {goal}")
+            if constraints:
+                memory_parts.append(
+                    "User constraints: "
+                    + json.dumps(list(constraints), ensure_ascii=False, default=str)
+                )
+            memory_text = "\n".join(memory_parts)
+
         summary, trimmed_evidence, trimmed_map, tokens = self.budget_manager.trim_controller_context(
             question=frame.user_question,
             conversation_lines=conv_lines,
+            conversation_memory_text=memory_text,
             working_evidence=frame.working_evidence,
             map_context=frame.spatial if frame.spatial else None,
             tool_contracts_text=tool_contracts_text,

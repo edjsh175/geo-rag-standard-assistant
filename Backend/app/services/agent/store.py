@@ -18,7 +18,11 @@ from typing import Any, Mapping, Sequence
 from sqlalchemy import text
 
 from app.core.database import db_manager
-from app.models.agent_context import ContextSnapshotRecord, ModelInputAuditRecord
+from app.models.agent_context import (
+    ContextSnapshotRecord,
+    ConversationMemoryStateRecord,
+    ModelInputAuditRecord,
+)
 from app.services.agent.contracts import EvidenceItem
 from app.services.agent.events import AgentEvent
 from app.services.agent.evidence import EvidenceLedger
@@ -239,6 +243,21 @@ class AgentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def save_conversation_memory(
+        self,
+        record: ConversationMemoryStateRecord,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_latest_conversation_memory(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> ConversationMemoryStateRecord | None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def save_pending_execution(
         self,
         principal_id: str,
@@ -287,6 +306,9 @@ class InMemoryAgentStore(AgentStore):
         self._evidence_activations: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
         self._snapshots: dict[tuple[str, str], list[ContextSnapshotRecord]] = {}
         self._model_input_audits: dict[tuple[str, str], list[ModelInputAuditRecord]] = {}
+        self._conversation_memory: dict[
+            tuple[str, str], list[ConversationMemoryStateRecord]
+        ] = {}
         self._pending: dict[tuple[str, str], tuple[PendingBrowserExecution, datetime]] = {}
 
     async def get_or_create_session(
@@ -306,6 +328,7 @@ class InMemoryAgentStore(AgentStore):
                     self._evidence_activations.pop(oldest_key, None)
                     self._snapshots.pop(oldest_key, None)
                     self._model_input_audits.pop(oldest_key, None)
+                    self._conversation_memory.pop(oldest_key, None)
                     self._pending.pop(oldest_key, None)
                 ledger = EvidenceLedger(session_id=key[1])
                 session = AgentSession(
@@ -319,6 +342,7 @@ class InMemoryAgentStore(AgentStore):
                 self._evidence_activations[key] = {}
                 self._snapshots[key] = []
                 self._model_input_audits[key] = []
+                self._conversation_memory[key] = []
             return session
 
     async def get_session(
@@ -516,6 +540,41 @@ class InMemoryAgentStore(AgentStore):
             rows = [row for row in rows if row.turn_id == turn_id]
         return rows
 
+    async def save_conversation_memory(
+        self,
+        record: ConversationMemoryStateRecord,
+    ) -> None:
+        key = (record.principal_id.strip(), record.session_id.strip())
+        async with self._lock:
+            rows = self._conversation_memory.setdefault(key, [])
+            existing = next(
+                (row for row in rows if row.summary_version == record.summary_version),
+                None,
+            )
+            if existing is not None:
+                if existing != record:
+                    raise RuntimeError(
+                        "conversation memory version conflict: "
+                        f"version={record.summary_version}"
+                    )
+                return
+            if rows and record.summary_version != rows[-1].summary_version + 1:
+                raise RuntimeError("conversation memory summary_version must advance by one")
+            rows.append(record)
+            session = self._sessions.get(key)
+            if session is not None:
+                session.conversation_memory = record
+
+    async def get_latest_conversation_memory(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> ConversationMemoryStateRecord | None:
+        key = (principal_id.strip(), session_id.strip())
+        async with self._lock:
+            rows = self._conversation_memory.get(key, ())
+            return rows[-1] if rows else None
+
     async def save_pending_execution(
         self,
         principal_id: str,
@@ -661,6 +720,10 @@ class PostgresAgentStore(AgentStore):
             ledger.restore_items(ev_items, working_by_turn=activations)
 
         pending = await self.get_pending_execution(principal, normalized_sess)
+        conversation_memory = await self.get_latest_conversation_memory(
+            principal,
+            normalized_sess,
+        )
 
         return AgentSession(
             principal_id=principal,
@@ -669,6 +732,7 @@ class PostgresAgentStore(AgentStore):
             events=events,
             next_turn_number=next_turn,
             pending_browser_execution=pending,
+            conversation_memory=conversation_memory,
         )
 
     async def get_session(
@@ -708,6 +772,10 @@ class PostgresAgentStore(AgentStore):
         if ev_items:
             ledger.restore_items(ev_items, working_by_turn=activations)
         pending = await self.get_pending_execution(principal, normalized_sess)
+        conversation_memory = await self.get_latest_conversation_memory(
+            principal,
+            normalized_sess,
+        )
 
         return AgentSession(
             principal_id=principal,
@@ -716,6 +784,7 @@ class PostgresAgentStore(AgentStore):
             events=events,
             next_turn_number=next_turn,
             pending_browser_execution=pending,
+            conversation_memory=conversation_memory,
         )
 
     async def save_session(self, session: AgentSession) -> None:
@@ -768,6 +837,8 @@ class PostgresAgentStore(AgentStore):
             await self.save_pending_execution(principal, session.pending_browser_execution)
         else:
             await self.clear_pending_execution(principal, normalized_sess)
+        if session.conversation_memory is not None:
+            await self.save_conversation_memory(session.conversation_memory)
 
     async def allocate_turn_id(
         self,
@@ -1397,6 +1468,145 @@ class PostgresAgentStore(AgentStore):
             frozen_evidence_snapshot_id=row["frozen_evidence_snapshot_id"],
             action_surface_hash=row["action_surface_hash"],
             tool_contract_hash=row["tool_contract_hash"],
+            created_at=row["created_at"],
+        )
+
+    async def save_conversation_memory(
+        self,
+        record: ConversationMemoryStateRecord,
+    ) -> None:
+        if not self._is_postgres_available:
+            return await self._fallback.save_conversation_memory(record)
+
+        async with self._manager.get_postgres_session() as db_session:
+            result = await db_session.execute(
+                text(
+                    """
+                    INSERT INTO geoai_conversation_memory_states (
+                        memory_id, principal_id, session_id, summary_version,
+                        covered_from_sequence, covered_to_sequence,
+                        rolling_summary, active_goal, user_constraints,
+                        explicit_ui_selections, authoritative_runtime_facts,
+                        source_event_ids, source_hash, created_at
+                    )
+                    VALUES (
+                        :memory_id, :principal_id, :session_id, :summary_version,
+                        :covered_from_sequence, :covered_to_sequence,
+                        :rolling_summary, :active_goal, CAST(:user_constraints AS jsonb),
+                        CAST(:explicit_ui_selections AS jsonb),
+                        CAST(:authoritative_runtime_facts AS jsonb),
+                        CAST(:source_event_ids AS jsonb), :source_hash, :created_at
+                    )
+                    ON CONFLICT (principal_id, session_id, summary_version) DO NOTHING
+                    RETURNING memory_id
+                    """
+                ),
+                {
+                    "memory_id": record.memory_id,
+                    "principal_id": record.principal_id,
+                    "session_id": record.session_id,
+                    "summary_version": record.summary_version,
+                    "covered_from_sequence": record.covered_from_sequence,
+                    "covered_to_sequence": record.covered_to_sequence,
+                    "rolling_summary": record.rolling_summary,
+                    "active_goal": record.active_goal,
+                    "user_constraints": _json_dumps(list(record.user_constraints)),
+                    "explicit_ui_selections": _json_dumps(dict(record.explicit_ui_selections)),
+                    "authoritative_runtime_facts": _json_dumps(dict(record.authoritative_runtime_facts)),
+                    "source_event_ids": _json_dumps(list(record.source_event_ids)),
+                    "source_hash": record.source_hash,
+                    "created_at": record.created_at,
+                },
+            )
+            inserted = result.mappings().first()
+            if inserted is not None:
+                return
+
+            existing_result = await db_session.execute(
+                text(
+                    """
+                    SELECT memory_id, principal_id, session_id, summary_version,
+                           covered_from_sequence, covered_to_sequence,
+                           rolling_summary, active_goal, user_constraints,
+                           explicit_ui_selections, authoritative_runtime_facts,
+                           source_event_ids, source_hash, created_at
+                    FROM geoai_conversation_memory_states
+                    WHERE principal_id = :principal_id
+                      AND session_id = :session_id
+                      AND summary_version = :summary_version
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "principal_id": record.principal_id,
+                    "session_id": record.session_id,
+                    "summary_version": record.summary_version,
+                },
+            )
+            row = existing_result.mappings().first()
+            if row is None:
+                raise RuntimeError("conversation memory insert lost")
+            if self._conversation_memory_from_row(row) != record:
+                raise RuntimeError(
+                    "conversation memory version conflict: "
+                    f"version={record.summary_version}"
+                )
+
+    async def get_latest_conversation_memory(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> ConversationMemoryStateRecord | None:
+        if not self._is_postgres_available:
+            return await self._fallback.get_latest_conversation_memory(
+                principal_id,
+                session_id,
+            )
+        async with self._manager.get_postgres_session() as db_session:
+            result = await db_session.execute(
+                text(
+                    """
+                    SELECT memory_id, principal_id, session_id, summary_version,
+                           covered_from_sequence, covered_to_sequence,
+                           rolling_summary, active_goal, user_constraints,
+                           explicit_ui_selections, authoritative_runtime_facts,
+                           source_event_ids, source_hash, created_at
+                    FROM geoai_conversation_memory_states
+                    WHERE principal_id = :principal_id AND session_id = :session_id
+                    ORDER BY summary_version DESC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "principal_id": principal_id.strip(),
+                    "session_id": session_id.strip(),
+                },
+            )
+            row = result.mappings().first()
+        return self._conversation_memory_from_row(row) if row is not None else None
+
+    @staticmethod
+    def _conversation_memory_from_row(
+        row: Mapping[str, Any],
+    ) -> ConversationMemoryStateRecord:
+        return ConversationMemoryStateRecord(
+            memory_id=row["memory_id"],
+            principal_id=row["principal_id"],
+            session_id=row["session_id"],
+            summary_version=int(row["summary_version"]),
+            covered_from_sequence=int(row["covered_from_sequence"]),
+            covered_to_sequence=int(row["covered_to_sequence"]),
+            rolling_summary=row["rolling_summary"],
+            active_goal=row["active_goal"],
+            user_constraints=tuple(_json_loads(row["user_constraints"]) or ()),
+            explicit_ui_selections=dict(
+                _json_loads(row["explicit_ui_selections"]) or {}
+            ),
+            authoritative_runtime_facts=dict(
+                _json_loads(row["authoritative_runtime_facts"]) or {}
+            ),
+            source_event_ids=tuple(_json_loads(row["source_event_ids"]) or ()),
+            source_hash=row["source_hash"],
             created_at=row["created_at"],
         )
 

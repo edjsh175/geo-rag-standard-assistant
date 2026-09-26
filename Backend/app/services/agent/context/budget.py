@@ -109,6 +109,24 @@ class ContextBudgetManager:
     def estimate_tokens(self, text: str) -> int:
         return self.estimator.estimate(text)
 
+    def _truncate_text_to_budget(self, text: str, max_tokens: int) -> str:
+        """Deterministically project text with an explicit truncation marker."""
+        if not text or max_tokens <= 0:
+            return ""
+        if self.estimator.estimate(text) <= max_tokens:
+            return text
+        marker = "\n[conversation-memory-truncated]"
+        if self.estimator.estimate(marker) > max_tokens:
+            return ""
+        low, high = 0, len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if self.estimator.estimate(text[:mid] + marker) <= max_tokens:
+                low = mid
+            else:
+                high = mid - 1
+        return text[:low] + marker
+
     @staticmethod
     def _evidence_field(item: Any, name: str, default: str = "") -> str:
         if isinstance(item, Mapping):
@@ -366,6 +384,7 @@ class ContextBudgetManager:
         *,
         question: str,
         conversation_lines: Sequence[str],
+        conversation_memory_text: str = "",
         working_evidence: Sequence[Mapping[str, Any]],
         map_context: Mapping[str, Any] | None,
         tool_contracts_text: str,
@@ -379,28 +398,50 @@ class ContextBudgetManager:
         """
         budget = self.config.controller
         if not self.config.enabled:
-            summary = "\n".join(conversation_lines)
+            recent_text = "\n".join(conversation_lines)
+            summary = "\n".join(
+                value for value in (conversation_memory_text, recent_text) if value
+            )
             tokens = self.estimator.estimate(summary + question + tool_contracts_text)
             return summary, list(working_evidence), dict(map_context or {}), tokens
 
         target_limit = budget.available_context_tokens
         # Tool contracts and current question are strictly protected
-        fixed_cost = self.estimator.estimate(question) + self.estimator.estimate(tool_contracts_text)
-        remaining = max(100, target_limit - fixed_cost)
+        protected_cost = (
+            self.estimator.estimate(question)
+            + self.estimator.estimate(tool_contracts_text)
+        )
+        optional_budget = max(0, target_limit - protected_cost)
+        # Rolling memory is compressed historical semantics. It must never crowd
+        # out the fresher/authoritative sections or make the projection exceed
+        # the stage context limit.
+        memory_allowance = int(optional_budget * 0.40)
+        projected_memory = self._truncate_text_to_budget(
+            conversation_memory_text,
+            memory_allowance,
+        )
+        memory_cost = self.estimator.estimate(projected_memory)
+        fixed_cost = protected_cost + memory_cost
+        remaining = max(0, optional_budget - memory_cost)
 
         # 1. Trimming conversation lines (most recent first)
         selected_lines: list[str] = []
         conv_cost = 0
+        conversation_allowance = int(remaining * 0.5)
         for line in reversed(conversation_lines):
             line_cost = self.estimator.estimate(line)
-            if selected_lines and (conv_cost + line_cost > int(remaining * 0.5)):
+            if conv_cost + line_cost > conversation_allowance:
                 break
             selected_lines.append(line)
             conv_cost += line_cost
-        trimmed_summary = "\n".join(reversed(selected_lines))
+        recent_text = "\n".join(reversed(selected_lines))
+        trimmed_summary = "\n".join(
+            value for value in (projected_memory, recent_text) if value
+        )
 
         # 2. Trimming evidence
-        evidence_remaining = max(100, remaining - conv_cost)
+        evidence_remaining = max(0, remaining - conv_cost)
+        evidence_allowance = int(evidence_remaining * 0.7)
         selected_evidence: list[Mapping[str, Any]] = []
         ev_cost = 0
         # Sort evidence by score descending
@@ -412,8 +453,8 @@ class ContextBudgetManager:
         for ev in sorted_evidence:
             ev_str = json.dumps(ev, ensure_ascii=False, default=str)
             item_cost = self.estimator.estimate(ev_str)
-            if selected_evidence and (ev_cost + item_cost > int(evidence_remaining * 0.7)):
-                break
+            if ev_cost + item_cost > evidence_allowance:
+                continue
             selected_evidence.append(ev)
             ev_cost += item_cost
 
@@ -422,10 +463,10 @@ class ContextBudgetManager:
         if map_context:
             map_str = json.dumps(map_context, ensure_ascii=False, default=str)
             map_cost = self.estimator.estimate(map_str)
-            map_allowance = max(50, remaining - conv_cost - ev_cost)
+            map_allowance = max(0, remaining - conv_cost - ev_cost)
             if map_cost <= map_allowance:
                 trimmed_map = dict(map_context)
-            else:
+            elif map_allowance > 0:
                 if map_context.get("schema_version") == 2:
                     trimmed_map = self._compact_map_context_v2(
                         map_context=map_context,
@@ -443,6 +484,17 @@ class ContextBudgetManager:
                         if isinstance(features, list):
                             trimmed_map["features"] = features[:3]
                             trimmed_map["_features_truncated"] = True
+
+                if trimmed_map is not None:
+                    projected_map_cost = self.estimator.estimate(
+                        json.dumps(
+                            trimmed_map,
+                            ensure_ascii=False,
+                            default=lambda o: dict(o) if hasattr(o, "items") else str(o),
+                        )
+                    )
+                    if projected_map_cost > map_allowance:
+                        trimmed_map = None
 
         total_tokens = fixed_cost + conv_cost + ev_cost + (
             self.estimator.estimate(json.dumps(trimmed_map, ensure_ascii=False, default=lambda o: dict(o) if hasattr(o, "items") else str(o)))

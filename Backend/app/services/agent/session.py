@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from app.models.agent_context import ConversationMemoryStateRecord
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
 from app.services.agent.identity import IdentityResolution
@@ -41,6 +42,7 @@ class AgentSession:
     next_turn_number: int = 1
     pending_browser_execution: PendingBrowserExecution | None = None
     identity_resolution: IdentityResolution | None = None
+    conversation_memory: ConversationMemoryStateRecord | None = None
 
     def new_turn_id(self) -> str:
         turn_id = f"turn-{self.next_turn_number}"

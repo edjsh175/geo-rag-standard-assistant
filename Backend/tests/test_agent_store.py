@@ -6,10 +6,15 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 import re
 import pytest
 
-from app.models.agent_context import ContextSnapshotRecord, ModelInputAuditRecord
+from app.models.agent_context import (
+    ContextSnapshotRecord,
+    ConversationMemoryStateRecord,
+    ModelInputAuditRecord,
+)
 from app.services.agent.contracts import EvidenceItem
 from app.services.agent.events import AgentEvent
 from app.services.agent.session import PendingBrowserExecution
@@ -139,6 +144,44 @@ class _ModelAuditContractManager:
     def __init__(self) -> None:
         self.postgres_sessionmaker = object()
         self.session = _ModelAuditContractSession()
+
+    @asynccontextmanager
+    async def get_postgres_session(self):
+        yield self.session
+
+
+class _ConversationMemoryContractSession:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def execute(self, sql, params):
+        statement = str(sql)
+        if "INSERT INTO geoai_conversation_memory_states" in statement:
+            row = dict(params)
+            self.rows.append(row)
+            return _FakeResult({"memory_id": params["memory_id"]})
+        if "FROM geoai_conversation_memory_states" in statement:
+            matching = [
+                row
+                for row in self.rows
+                if row["principal_id"] == params["principal_id"]
+                and row["session_id"] == params["session_id"]
+            ]
+            if "summary_version = :summary_version" in statement:
+                matching = [
+                    row
+                    for row in matching
+                    if row["summary_version"] == params["summary_version"]
+                ]
+            matching.sort(key=lambda row: row["summary_version"], reverse=True)
+            return _FakeResult(dict(matching[0]) if matching else None)
+        return _FakeResult()
+
+
+class _ConversationMemoryContractManager:
+    def __init__(self) -> None:
+        self.postgres_sessionmaker = object()
+        self.session = _ConversationMemoryContractSession()
 
     @asynccontextmanager
     async def get_postgres_session(self):
@@ -458,6 +501,46 @@ async def test_postgres_model_input_audit_roundtrip_contract():
     rows = await store.list_model_input_audits("user-1", "sess-audit", "turn-1")
 
     assert rows == [record]
+
+
+@pytest.mark.asyncio
+async def test_postgres_conversation_memory_roundtrip_contract():
+    manager = _ConversationMemoryContractManager()
+    store = PostgresAgentStore(manager=manager)
+    record = ConversationMemoryStateRecord(
+        memory_id="memory-1",
+        principal_id="user-1",
+        session_id="sess-memory",
+        summary_version=1,
+        covered_from_sequence=1,
+        covered_to_sequence=12,
+        rolling_summary="用户正在做规划核查。",
+        active_goal="完成规划核查",
+        user_constraints=("只使用已选文档",),
+        explicit_ui_selections={"document": {"document_id": "doc-1"}},
+        authoritative_runtime_facts={
+            "last_browser_effect": {"effect": {"state_revision": 4}}
+        },
+        source_event_ids=("ev-1", "ev-2"),
+        source_hash="source-hash-1",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    await store.save_conversation_memory(record)
+    loaded = await store.get_latest_conversation_memory("user-1", "sess-memory")
+
+    assert loaded == record
+
+
+def test_conversation_memory_migration_contract_covers_authority_fields() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    migration = repo_root / "Backend" / "migrations" / "20260926_conversation_memory.sql"
+    sql = migration.read_text(encoding="utf-8")
+
+    assert "geoai_conversation_memory_states" in sql
+    assert "explicit_ui_selections JSONB" in sql
+    assert "authoritative_runtime_facts JSONB" in sql
+    assert "UNIQUE (principal_id, session_id, summary_version)" in sql
 
 
 @pytest.mark.asyncio

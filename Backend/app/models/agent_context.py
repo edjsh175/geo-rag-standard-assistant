@@ -90,6 +90,24 @@ class ModelInputAuditRecord:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationMemoryStateRecord:
+    memory_id: str
+    principal_id: str
+    session_id: str
+    summary_version: int
+    covered_from_sequence: int
+    covered_to_sequence: int
+    rolling_summary: str
+    active_goal: str
+    user_constraints: tuple[str, ...]
+    explicit_ui_selections: Mapping[str, Any]
+    authoritative_runtime_facts: Mapping[str, Any]
+    source_event_ids: tuple[str, ...]
+    source_hash: str
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 @dataclass(slots=True)
 class PendingBrowserExecutionRecord:
     token: str

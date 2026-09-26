@@ -26,6 +26,7 @@ from app.models.search_models import (
 )
 from app.core.llm_config import llm_config
 from app.services.agent.answer_generator import AnswerGenerator
+from app.services.agent.conversation_memory import ConversationMemorySummarizer
 from app.services.agent.controller import MainController
 from app.services.agent.model_client import LLMConfigStageModelClient
 from app.services.agent.provider_health import ProviderHealthService
@@ -80,6 +81,9 @@ def _build_search_application_service(
         controller=controller,
         answer_generator=AnswerGenerator(model_client=model_client),
         reviewer=GroundingReviewer(model_client=model_client),
+        conversation_memory_summarizer=ConversationMemorySummarizer(
+            model_client=model_client
+        ),
         session_store=_agent_session_store,
         spatial_service=SpatialService(),
         provider_health_provider=_provider_health_service,

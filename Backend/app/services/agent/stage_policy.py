@@ -7,7 +7,12 @@ from time import monotonic
 from typing import Literal
 
 
-LLMStageName = Literal["controller", "answer_generation", "reviewer"]
+LLMStageName = Literal[
+    "controller",
+    "conversation_memory",
+    "answer_generation",
+    "reviewer",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +31,11 @@ class LLMStagePolicy:
         if stage == "controller":
             reasoning = self.user_thinking and self.endpoint_supports_reasoning
             timeout_seconds = 45.0
+        elif stage == "conversation_memory":
+            reasoning = False
+            # Auxiliary compaction must not consume most of the request budget;
+            # failure degrades to the recent-window path instead of blocking the turn.
+            timeout_seconds = 12.0
         elif stage in {"answer_generation", "reviewer"}:
             reasoning = False
             timeout_seconds = 60.0

@@ -7,10 +7,16 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 import inspect
 import json
+from time import monotonic
 from typing import Any, AsyncIterator, Callable, Mapping
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.services.agent.answer_generator import AnswerGenerationError, GeneratedAnswer
+from app.services.agent.conversation_memory import (
+    ConversationMemoryPlanner,
+    conversation_memory_matches_sources,
+    extract_authoritative_memory_facts,
+)
 from app.services.agent.controller import ControllerOutputError
 from app.services.agent.context import ContextEngine
 from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
@@ -170,6 +176,7 @@ class AgentRuntime:
         session_store: Any,
         reviewer=None,
         context_engine: ContextEngine | None = None,
+        conversation_memory_summarizer=None,
         spatial_service=None,
         provider_health_provider=None,
     ) -> None:
@@ -179,6 +186,7 @@ class AgentRuntime:
         self.reviewer = reviewer
         self.session_store = session_store
         self.context_engine = context_engine or ContextEngine()
+        self.conversation_memory_summarizer = conversation_memory_summarizer
         self.spatial_service = spatial_service
         self.provider_health_provider = provider_health_provider
         model_client = getattr(controller, "model_client", None)
@@ -426,6 +434,12 @@ class AgentRuntime:
             initial_steps = 0
             observations = []
 
+            user_message_payload: dict[str, Any] = {"text": question}
+            if isinstance(effective_request_context, Mapping):
+                admitted_ui = effective_request_context.get("user_ui_selections")
+                if isinstance(admitted_ui, Mapping) and admitted_ui:
+                    user_message_payload["user_ui_selections"] = dict(admitted_ui)
+
             await self._append_event(
                 request.principal_id,
                 session.events,
@@ -435,7 +449,7 @@ class AgentRuntime:
                     session_id=session.session_id,
                     turn_id=turn_id,
                     trace_id=trace_id,
-                    payload={"text": question},
+                    payload=user_message_payload,
                 ),
                 event_listener,
             )
@@ -627,6 +641,158 @@ class AgentRuntime:
             runtime_deadline_at=fuse.deadline_at,
         )
 
+        durable_events_for_memory: list[AgentEvent] | None = None
+        if session.conversation_memory is not None:
+            durable_events_for_memory = await self._list_runtime_events(
+                request.principal_id,
+                session.session_id,
+            )
+            if not conversation_memory_matches_sources(
+                session.conversation_memory,
+                durable_events_for_memory,
+            ):
+                invalid_memory = session.conversation_memory
+                session.conversation_memory = None
+                await self._append_event(
+                    request.principal_id,
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="conversation_memory_invalidated",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={
+                            "memory_id": invalid_memory.memory_id,
+                            "summary_version": invalid_memory.summary_version,
+                            "reason": "source_mismatch",
+                        },
+                    ),
+                    event_listener,
+                )
+
+        if (
+            request.continuation_token is None
+            and self.conversation_memory_summarizer is not None
+        ):
+            durable_events = (
+                durable_events_for_memory
+                if durable_events_for_memory is not None
+                else await self._list_runtime_events(
+                    request.principal_id,
+                    session.session_id,
+                )
+            )
+            planner = ConversationMemoryPlanner(
+                estimator=self.context_engine.budget_manager.estimator,
+                controller_context_tokens=(
+                    self.context_engine.budget_manager.config.controller.available_context_tokens
+                ),
+            )
+            plan = planner.plan(
+                events=durable_events,
+                current_turn_id=turn_id,
+                previous=session.conversation_memory,
+            )
+            if plan.should_summarize:
+                authoritative_facts = extract_authoritative_memory_facts(
+                    plan.all_source_events
+                )
+                memory_budget_seconds = min(
+                    5.0,
+                    max(0.25, max_elapsed_seconds * 0.10),
+                )
+                memory_stage_policy = LLMStagePolicy(
+                    user_thinking=False,
+                    endpoint_supports_reasoning=self.endpoint_supports_reasoning,
+                    runtime_deadline_at=min(
+                        fuse.deadline_at,
+                        monotonic() + memory_budget_seconds,
+                    ),
+                )
+                try:
+                    memory_record = await self.conversation_memory_summarizer.summarize(
+                        principal_id=request.principal_id,
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        events_to_summarize=plan.events_to_summarize,
+                        all_source_events=plan.all_source_events,
+                        previous=session.conversation_memory,
+                        authoritative_facts=authoritative_facts,
+                        stage_policy=memory_stage_policy,
+                        model_name=main_model_name,
+                    )
+                except Exception as exc:
+                    await self._append_event(
+                        request.principal_id,
+                        session.events,
+                        turn_events,
+                        AgentEvent(
+                            event_type="conversation_memory_failed",
+                            session_id=session.session_id,
+                            turn_id=turn_id,
+                            trace_id=trace_id,
+                            payload={
+                                "phase": "generate",
+                                "error_type": type(exc).__name__,
+                            },
+                        ),
+                        event_listener,
+                    )
+                else:
+                    try:
+                        if hasattr(self.session_store, "save_conversation_memory"):
+                            await self.session_store.save_conversation_memory(memory_record)
+                    except Exception as exc:
+                        latest_memory = None
+                        if hasattr(self.session_store, "get_latest_conversation_memory"):
+                            try:
+                                latest_memory = await self.session_store.get_latest_conversation_memory(
+                                    request.principal_id,
+                                    session.session_id,
+                                )
+                            except Exception:
+                                latest_memory = None
+                        if latest_memory is not None:
+                            session.conversation_memory = latest_memory
+                        await self._append_event(
+                            request.principal_id,
+                            session.events,
+                            turn_events,
+                            AgentEvent(
+                                event_type="conversation_memory_failed",
+                                session_id=session.session_id,
+                                turn_id=turn_id,
+                                trace_id=trace_id,
+                                payload={
+                                    "phase": "persist",
+                                    "error_type": type(exc).__name__,
+                                },
+                            ),
+                            event_listener,
+                        )
+                    else:
+                        session.conversation_memory = memory_record
+                        await self._append_event(
+                            request.principal_id,
+                            session.events,
+                            turn_events,
+                            AgentEvent(
+                                event_type="conversation_memory_updated",
+                                session_id=session.session_id,
+                                turn_id=turn_id,
+                                trace_id=trace_id,
+                                payload={
+                                    "memory_id": memory_record.memory_id,
+                                    "summary_version": memory_record.summary_version,
+                                    "covered_from_sequence": memory_record.covered_from_sequence,
+                                    "covered_to_sequence": memory_record.covered_to_sequence,
+                                    "source_hash": memory_record.source_hash,
+                                },
+                            ),
+                            event_listener,
+                        )
+
         while True:
             try:
                 fuse.ensure_within_limits()
@@ -682,6 +848,7 @@ class AgentRuntime:
                 spatial_context=map_ctx if isinstance(map_ctx, Mapping) else None,
                 metadata=effective_request_context,
                 current_turn_id=turn_id,
+                conversation_memory=session.conversation_memory,
             )
 
             from app.services.agent.controller_protocol import ExecutableActionState
@@ -1310,6 +1477,7 @@ class AgentRuntime:
                 events=session.events,
                 working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
                 current_turn_id=turn_id,
+                conversation_memory=session.conversation_memory,
             ),
             conversation_summary=conv_summary,
         )
@@ -1421,6 +1589,7 @@ class AgentRuntime:
                     events=session.events,
                     working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
                     current_turn_id=turn_id,
+                    conversation_memory=session.conversation_memory,
                 )
             )
             proj_rev, snapshot_rev = self.context_engine.project_for_reviewer(

@@ -118,6 +118,32 @@ def test_budget_manager_controller_trimming():
     assert len(trimmed_map.get("features", [])) <= 3
 
 
+def test_controller_budget_trims_conversation_memory_instead_of_exceeding_limit():
+    class ExactEstimator:
+        def estimate(self, text: str) -> int:
+            return len(text or "")
+
+    config = ContextBudgetConfig(
+        controller=StageBudget(max_tokens=120, system_reserve=10, generation_reserve=10)
+    )
+    manager = ContextBudgetManager(config=config, estimator=ExactEstimator())
+
+    summary, evidence, map_context, tokens = manager.trim_controller_context(
+        question="Q" * 10,
+        conversation_lines=(),
+        conversation_memory_text="M" * 500,
+        working_evidence=(),
+        map_context=None,
+        tool_contracts_text="T" * 10,
+    )
+
+    assert tokens <= config.controller.available_context_tokens
+    assert len(summary) < 500
+    assert "conversation-memory-truncated" in summary
+    assert evidence == []
+    assert map_context is None
+
+
 def test_budget_manager_preserves_map_context_v2_execution_state_when_compacting():
     config = ContextBudgetConfig(
         controller=StageBudget(max_tokens=900, system_reserve=100, generation_reserve=100)
