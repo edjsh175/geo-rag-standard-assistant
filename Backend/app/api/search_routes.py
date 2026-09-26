@@ -20,6 +20,7 @@ from app.core.llm_config import llm_config
 from app.services.agent.answer_generator import AnswerGenerator
 from app.services.agent.controller import MainController
 from app.services.agent.model_client import LLMConfigStageModelClient
+from app.services.agent.provider_health import ProviderHealthService
 from app.services.agent.reviewer import GroundingReviewer
 from app.services.agent.runtime import AgentRuntime
 from app.services.agent.store import PostgresAgentStore
@@ -42,6 +43,7 @@ public_router = APIRouter()
 router = APIRouter()
 
 _agent_session_store = PostgresAgentStore()
+_provider_health_service = ProviderHealthService()
 
 
 class HealthCheckResponse(BaseModel):
@@ -64,12 +66,12 @@ def _build_search_application_service(
     )
     runtime = AgentRuntime(
         retrieval_port=retrieval_port,
-        document_repository=document_repository,
         controller=controller,
         answer_generator=AnswerGenerator(model_client=model_client),
         reviewer=GroundingReviewer(model_client=model_client),
         session_store=_agent_session_store,
         spatial_service=SpatialService(),
+        provider_health_provider=_provider_health_service,
     )
     return SearchApplicationService(
         search_service=search_service,
@@ -77,6 +79,7 @@ def _build_search_application_service(
         contract_service=contract_service,
         agent_runtime=runtime,
         retrieval_port=retrieval_port,
+        document_repository=document_repository,
     )
 
 

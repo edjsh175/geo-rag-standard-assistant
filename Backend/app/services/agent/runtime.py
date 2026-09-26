@@ -22,6 +22,7 @@ from app.services.agent.publication import (
     PublishedResult,
     SafeLimitation,
 )
+from app.services.agent.provider_health import FAIL_CLOSED_PROVIDER_HEALTH
 from app.services.agent.session import InMemoryAgentSessionStore, PendingBrowserExecution
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
@@ -160,6 +161,7 @@ class AgentRuntime:
         context_builder: AgentContextBuilder | None = None,
         context_engine: ContextEngine | None = None,
         spatial_service=None,
+        provider_health_provider=None,
     ) -> None:
         self.retrieval_port = retrieval_port
         self.controller = controller
@@ -169,6 +171,7 @@ class AgentRuntime:
         self.context_builder = context_builder or AgentContextBuilder()
         self.context_engine = context_engine or ContextEngine()
         self.spatial_service = spatial_service
+        self.provider_health_provider = provider_health_provider
         model_client = getattr(controller, "model_client", None)
         self.endpoint_supports_reasoning = bool(
             getattr(model_client, "supports_reasoning", False)
@@ -453,6 +456,14 @@ class AgentRuntime:
                 events=tuple(turn_events),
             )
 
+        provider_health: Mapping[str, bool] = {}
+        if self.provider_health_provider is not None:
+            try:
+                provider_health_snapshot = await self.provider_health_provider.snapshot()
+                provider_health = dict(provider_health_snapshot.provider_health)
+            except Exception:
+                provider_health = dict(FAIL_CLOSED_PROVIDER_HEALTH)
+
         fuse = ResourceFuse(
             max_steps=max_steps,
             max_elapsed_seconds=max_elapsed_seconds,
@@ -534,6 +545,7 @@ class AgentRuntime:
                 identity_resolution=session.identity_resolution,
                 has_evidence=has_evidence,
                 selectable_evidence_ids=selectable_ids,
+                provider_health=provider_health,
             )
 
             tool_specs = registry.specs_for(action_state.available_capabilities) if registry else ()
