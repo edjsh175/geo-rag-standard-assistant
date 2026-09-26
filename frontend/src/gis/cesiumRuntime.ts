@@ -1,5 +1,6 @@
 import type { BrowserMapAction, BrowserMapContext } from './contracts';
 import { GisExecutionError } from './contracts';
+import { useMapStore } from '../store/useMapStore';
 
 export interface CesiumRuntimeState {
   ready: boolean;
@@ -33,6 +34,7 @@ export const createCesiumGisRuntime = ({
         zoom: state.zoom,
         crs: 'EPSG:4326' as const,
       },
+      active_region: useMapStore.getState().activeRegion ? { ...useMapStore.getState().activeRegion! } : null,
       layer_tree: [
         {
           layer_ref: 'system:provinces',

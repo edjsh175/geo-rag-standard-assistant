@@ -53,6 +53,7 @@ export interface BrowserMapContext {
   ready: boolean;
   supported_tools: string[];
   viewport: { center: [number, number]; zoom: number; crs: 'EPSG:4326' } | null;
+  active_region?: { adcode: string; name: string } | null;
   layer_tree: LayerTreeNode[];
   user_layers: UserVectorLayerState[];
   available_files: AvailableVectorFile[];

@@ -4,6 +4,7 @@ import LayerGroup from 'ol/layer/Group';
 import { toLonLat } from 'ol/proj';
 import type { BrowserMapContext, LayerTreeNode, UserVectorLayerState } from './contracts';
 import { listVectorDatasets } from './fileReferenceStore';
+import { useMapStore } from '../store/useMapStore';
 
 export const createMapContextReader = (map: Map, readUserLayers: () => UserVectorLayerState[]) => {
   let revision = 0;
@@ -45,6 +46,7 @@ export const createMapContextReader = (map: Map, readUserLayers: () => UserVecto
       viewport: center && Number.isFinite(zoom)
         ? { center: [center[0], center[1]] as [number, number], zoom: zoom!, crs: 'EPSG:4326' as const }
         : null,
+      active_region: useMapStore.getState().activeRegion ? { ...useMapStore.getState().activeRegion! } : null,
       layer_tree: map.getLayers().getArray().map((layer, index) => mapLayer(layer, undefined, index)),
       user_layers: userLayers,
       available_files: availableFiles,
