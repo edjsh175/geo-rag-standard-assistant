@@ -1,6 +1,4 @@
 """GeoAI Agent Context Management Package."""
-
-from app.services.agent.context.builder import AgentContext, AgentContextBuilder
 from app.services.agent.context.budget import (
     CharWeightedTokenEstimator,
     ContextBudgetConfig,
@@ -17,8 +15,6 @@ from app.services.agent.context.projection import (
 from app.services.agent.context.snapshot import ContextSnapshot
 
 __all__ = [
-    "AgentContext",
-    "AgentContextBuilder",
     "CharWeightedTokenEstimator",
     "ContextBudgetConfig",
     "ContextBudgetManager",

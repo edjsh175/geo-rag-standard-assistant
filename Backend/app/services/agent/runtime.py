@@ -12,7 +12,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from app.services.agent.answer_generator import AnswerGenerationError, GeneratedAnswer
 from app.services.agent.controller import ControllerOutputError
-from app.services.agent.context import AgentContextBuilder, ContextEngine
+from app.services.agent.context import ContextEngine
 from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.events import AgentEvent
 from app.services.agent.publication import (
@@ -169,7 +169,6 @@ class AgentRuntime:
         answer_generator,
         session_store: Any,
         reviewer=None,
-        context_builder: AgentContextBuilder | None = None,
         context_engine: ContextEngine | None = None,
         spatial_service=None,
         provider_health_provider=None,
@@ -179,7 +178,6 @@ class AgentRuntime:
         self.answer_generator = answer_generator
         self.reviewer = reviewer
         self.session_store = session_store
-        self.context_builder = context_builder or AgentContextBuilder()
         self.context_engine = context_engine or ContextEngine()
         self.spatial_service = spatial_service
         self.provider_health_provider = provider_health_provider

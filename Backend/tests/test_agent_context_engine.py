@@ -276,6 +276,35 @@ def test_context_engine_projections_and_snapshots():
     assert snap_rev.stage == "reviewer"
 
 
+def test_context_engine_keeps_evidence_structured_outside_conversation_text():
+    engine = ContextEngine()
+    frame = engine.build_frame(
+        session_id="sess-structured-evidence",
+        principal_id="user-1",
+        question="问题",
+        events=(),
+        working_evidence=(
+            {
+                "evidence_id": "ev-1",
+                "citation_id": "E1",
+                "title": "标准",
+                "excerpt": "证据正文",
+            },
+        ),
+        current_turn_id="turn-1",
+    )
+
+    projection, _ = engine.project_for_controller(
+        frame,
+        tool_contracts_text="",
+        tool_names="",
+    )
+
+    assert "ev-1" not in projection.conversation_text
+    assert projection.working_evidence[0]["evidence_id"] == "ev-1"
+    assert projection.evidence_catalog[0]["citation_id"] == "E1"
+
+
 def test_context_snapshot_deterministic_hash():
     engine = ContextEngine()
     frame = engine.build_frame(
