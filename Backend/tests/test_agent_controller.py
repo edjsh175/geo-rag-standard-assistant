@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.services.agent.controller import MainController
+from app.services.agent.context.engine import ContextEngine
 from app.services.agent.model_client import ModelResponse
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tools import build_default_tool_registry
@@ -16,6 +17,56 @@ class FakeModelClient:
     async def complete(self, request):
         self.calls.append(request)
         return self.response
+
+
+@pytest.mark.asyncio
+async def test_controller_actual_model_request_receives_authority_class_sections() -> None:
+    client = FakeModelClient(
+        ModelResponse(content='{"action":"direct_answer","answer":"收到"}')
+    )
+    controller = MainController(
+        model_client=client,
+        tool_registry=build_default_tool_registry(),
+    )
+    engine = ContextEngine()
+    frame = engine.build_frame(
+        session_id="session-authority",
+        principal_id="admin:test",
+        question="继续",
+        events=(),
+        working_evidence=(),
+        metadata={
+            "user_ui_selections": {
+                "document": {"document_id": "14741", "title": "服务端权威标题"}
+            },
+            "client_hints": {
+                "document_selection": {
+                    "document_id": "untrusted-doc",
+                    "admission_status": "rejected",
+                }
+            },
+        },
+        current_turn_id="turn-1",
+    )
+    projection, _ = engine.project_for_controller(
+        frame,
+        tool_contracts_text="",
+        tool_names="",
+    )
+
+    await controller.decide(
+        projection=projection,
+        observations=(),
+        stage_policy=LLMStagePolicy(False, True),
+    )
+
+    user_prompt = client.calls[0].messages[1]["content"]
+    assert "User UI Selections" in user_prompt
+    assert "14741" in user_prompt
+    assert "服务端权威标题" in user_prompt
+    assert "Client Hints" in user_prompt
+    assert "untrusted-doc" in user_prompt
+    assert "rejected" in user_prompt
 
 
 @pytest.mark.asyncio

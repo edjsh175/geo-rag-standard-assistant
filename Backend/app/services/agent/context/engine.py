@@ -235,6 +235,8 @@ class ContextEngine:
             working_evidence=tuple(trimmed_evidence),
             evidence_catalog=frame.evidence_catalog,
             runtime_facts=frame.runtime_facts,
+            user_ui_selections=frame.user_ui_selections,
+            client_hints=frame.client_hints,
             map_context=trimmed_map,
             tool_contracts_text=tool_contracts_text,
             tool_names=tool_names,

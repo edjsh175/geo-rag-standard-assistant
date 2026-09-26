@@ -73,6 +73,14 @@ def test_context_frame_preserves_authority_classes_without_promoting_client_hint
     assert "client_hints" not in payload["runtime_facts"]
     assert "user_ui_selections" not in payload["runtime_facts"]
 
+    projection, _ = engine.project_for_controller(
+        frame,
+        tool_contracts_text="",
+        tool_names="",
+    )
+    assert projection.user_ui_selections["document"]["document_id"] == "14741"
+    assert projection.client_hints["document_selection"]["document_id"] == "untrusted"
+
 
 def test_budget_manager_controller_trimming():
     # Configure tight controller budget: 200 tokens available
