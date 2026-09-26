@@ -25,6 +25,33 @@ const getActiveRuntime = () => activeRuntimeKind ? runtimes.get(activeRuntimeKin
 
 export const getBrowserMapContext = () => getActiveRuntime()?.snapshot() ?? null;
 
+const executeWithDeadline = async (
+  runtime: BrowserRuntime,
+  runId: string,
+  toolCallId: string,
+  action: BrowserMapAction,
+) => {
+  const timeoutSeconds = Number(action.timeout_seconds);
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+    return runtime.execute(runId, toolCallId, action);
+  }
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      runtime.execute(runId, toolCallId, action),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error(`Browser GIS execution timed out after ${timeoutSeconds}s`)),
+          timeoutSeconds * 1000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+  }
+};
+
 export const executeBrowserTool = async (
   runId: string,
   toolCallId: string,
@@ -54,7 +81,7 @@ export const executeBrowserTool = async (
     };
   }
   try {
-    const output = await runtime.execute(runId, toolCallId, action);
+    const output = await executeWithDeadline(runtime, runId, toolCallId, action);
     const mapContext = runtime.snapshot();
     return {
       tool_call_id: toolCallId,

@@ -201,6 +201,7 @@ class SearchResponse(BaseModel):
         return {
             "type": getattr(value, "type", ""),
             "target": getattr(value, "target", ""),
+            "timeout_seconds": getattr(value, "timeout_seconds", None),
             "adcode": getattr(value, "adcode", None),
             "name": getattr(value, "name", None),
             "payload": payload,

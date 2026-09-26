@@ -178,6 +178,19 @@ class ToolRuntime:
                 f"TOOL_TIMEOUT: '{call.name}' exceeded {timeout_seconds:.3f}s"
             ) from exc
 
+        if observation.status == "browser_execution_required":
+            payload = dict(observation.payload)
+            map_action = dict(payload.get("map_action") or {})
+            map_action["timeout_seconds"] = timeout_seconds
+            payload["map_action"] = map_action
+            observation = ToolObservation(
+                tool_call_id=observation.tool_call_id,
+                tool_name=observation.tool_name,
+                status=observation.status,
+                payload=payload,
+                is_terminal=observation.is_terminal,
+            )
+
         if self.resource_fuse is not None:
             self.resource_fuse.ensure_within_limits()
         return observation

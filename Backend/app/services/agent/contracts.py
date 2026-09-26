@@ -52,6 +52,7 @@ class FrozenEvidenceSnapshot:
 class MapAction:
     type: str
     target: str
+    timeout_seconds: float | None = None
     adcode: str | None = None
     name: str | None = None
     payload: Mapping[str, Any] | None = None

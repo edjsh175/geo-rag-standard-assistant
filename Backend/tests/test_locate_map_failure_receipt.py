@@ -43,6 +43,7 @@ async def test_locate_map_runtime_returns_browser_action_payload_for_out_of_rang
     assert observation.payload["map_action"] == {
         "type": "locate_map",
         "target": "browser_map",
+        "timeout_seconds": 30.0,
         "payload": {"longitude": 999.0, "latitude": 30.0, "zoom": 8.0},
     }
 

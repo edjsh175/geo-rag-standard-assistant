@@ -235,6 +235,8 @@ async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None
     )
     assert pending.publication_state == "tool_execution_required"
     assert pending.continuation_token
+    assert pending.answer is not None
+    assert pending.answer.timeout_seconds == pytest.approx(30.0)
 
     result = await runtime.run(
         AgentRunRequest(

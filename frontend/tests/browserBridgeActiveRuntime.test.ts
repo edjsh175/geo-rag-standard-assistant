@@ -113,3 +113,35 @@ test('browser bridge does not execute tools before the active map runtime is rea
     unregister();
   }
 });
+
+test('browser bridge fails closed when browser execution exceeds backend timeout', async () => {
+  let executions = 0;
+  const unregister = registerBrowserGisRuntime('2d', {
+    snapshot: () => context('2d', ['locate_map']),
+    execute: async () => {
+      executions += 1;
+      await new Promise(() => undefined);
+      return {};
+    },
+  });
+
+  try {
+    setActiveBrowserGisRuntime('2d');
+    const receipt = await executeBrowserTool(
+      'run-timeout',
+      'call-timeout',
+      {
+        type: 'locate_map',
+        target: 'browser_map',
+        timeout_seconds: 0.01,
+        payload: { longitude: 104, latitude: 30, zoom: 6 },
+      },
+    );
+    assert.equal(receipt.status, 'failed');
+    assert.match(receipt.error ?? '', /timeout|timed out|超时/i);
+    assert.equal(receipt.effect.status, 'unknown');
+    assert.equal(executions, 1);
+  } finally {
+    unregister();
+  }
+});

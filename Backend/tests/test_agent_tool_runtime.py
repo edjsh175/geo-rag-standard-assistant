@@ -19,7 +19,7 @@ from app.services.agent.tool_runtime import (
     ToolRuntime,
     build_default_tool_registry,
 )
-from app.services.agent.tools import QuerySpatialRelationInput, ToolRegistry, ToolSpec
+from app.services.agent.tools import LocateMapInput, QuerySpatialRelationInput, ToolRegistry, ToolSpec
 from app.services.rag.contracts import (
     RetrievalCandidate,
     RetrievalChannelDiagnostic,
@@ -101,6 +101,21 @@ def spatial_registry(
     )
 
 
+def browser_registry(*, timeout: float) -> ToolRegistry:
+    return ToolRegistry(
+        (
+            ToolSpec(
+                name="locate_map",
+                description="test browser locate",
+                input_model=LocateMapInput,
+                timeout=timeout,
+                provider="browser",
+                side_effect=True,
+            ),
+        )
+    )
+
+
 def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> None:
     registry = build_default_tool_registry()
 
@@ -129,6 +144,27 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
     assert "图谱" not in serialized
     assert "多实体必须" not in serialized
     assert "检索两次" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_browser_action_carries_effective_tool_timeout_to_browser_runtime() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-browser-timeout"),
+        registry=browser_registry(timeout=1.25),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="locate-timeout",
+            name="locate_map",
+            arguments={"longitude": 104.0, "latitude": 30.0, "zoom": 8},
+        ),
+    )
+
+    assert observation.status == "browser_execution_required"
+    assert observation.payload["map_action"]["timeout_seconds"] == pytest.approx(1.25)
 
 
 @pytest.mark.asyncio

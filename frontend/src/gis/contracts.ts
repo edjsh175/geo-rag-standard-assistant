@@ -62,6 +62,7 @@ export interface BrowserMapContext {
 export interface BrowserMapAction {
   type: string;
   target: string;
+  timeout_seconds?: number | null;
   payload?: Record<string, unknown> | null;
 }
 

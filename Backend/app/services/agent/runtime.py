@@ -1156,6 +1156,11 @@ class AgentRuntime:
                 map_action = MapAction(
                     type=str(action_payload["type"]),
                     target=str(action_payload["target"]),
+                    timeout_seconds=(
+                        float(action_payload["timeout_seconds"])
+                        if action_payload.get("timeout_seconds") is not None
+                        else None
+                    ),
                     payload=action_payload.get("payload"),
                 )
                 await self._append_event(
