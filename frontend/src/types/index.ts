@@ -144,6 +144,7 @@ export interface ChatMessage {
       adcode: string;
       name: string;
     };
+    agent_turn?: import('../components/agent/types').AgentTurnViewModel;
   };
 }
 

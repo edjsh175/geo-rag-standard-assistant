@@ -229,3 +229,23 @@ def test_evaluate_retrieval_batch():
 def json_bytes(obj) -> bytes:
     import json
     return json.dumps(obj).encode("utf-8")
+
+
+def test_retrieval_gold_benchmark_run(tmp_path):
+    from pathlib import Path
+    import sys
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    scripts_dir = repo_root / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from run_retrieval_eval import run_evaluation
+
+    gold_file = repo_root / "evals" / "retrieval_gold.json"
+    assert gold_file.exists()
+    out_file = tmp_path / "test_out.json"
+    report = run_evaluation(gold_file, out_file)
+    assert report["total_queries"] > 0
+    assert "hybrid_rrf" in report["modes"]
+    assert report["modes"]["hybrid_rrf"]["mrr"] > 0.0
+    assert out_file.exists()
+

@@ -49,6 +49,8 @@ import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
 import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
 import { registerVectorDataset } from './gis/fileReferenceStore';
 import { setActiveBrowserGisRuntime } from './gis/browserBridge';
+import { AgentEventProjector } from './components/agent/eventProjector';
+import type { AgentTurnViewModel } from './components/agent/types';
 
 type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
 
@@ -529,6 +531,7 @@ export default function App() {
 
   // 聊天加载状态
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [activeTurn, setActiveTurn] = useState<AgentTurnViewModel | null>(null);
   const conversationIdRef = useRef<string | undefined>(undefined);
   // AbortController引用（用于中断请求）
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -611,6 +614,7 @@ export default function App() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsChatLoading(false);
+      setActiveTurn(null);
 
       const stopMessage: ChatMessageType = {
         id: `stop-${Date.now()}`,
@@ -660,15 +664,21 @@ export default function App() {
     abortControllerRef.current = abortController;
 
     setIsChatLoading(true);
+    const projector = new AgentEventProjector();
+    setActiveTurn(projector.snapshot());
 
     try {
-      // 原始用户问题与交互上下文发送给后端 Controller
+      // 原始用户问题与交互上下文发送给后端 Controller，流式接收 Agent 决策过程
       const response = await chatService.sendMessage(
         content,
         conversationIdRef.current,
         history,
         abortController.signal,
-        followUpContext
+        followUpContext,
+        (agentEvent) => {
+          projector.applyEvent(agentEvent);
+          setActiveTurn(projector.snapshot());
+        }
       );
       conversationIdRef.current = response.conversation_id;
       if (response.quota) {
@@ -708,6 +718,7 @@ export default function App() {
         setActiveRegion({ adcode: String(adcode), name: String(finalName) });
       }
 
+      const finalTurn = projector.snapshot();
       const assistantMessage: ChatMessageType = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -719,7 +730,8 @@ export default function App() {
           search_query: content,
           original_query: content,
           follow_up_context: followUpContext,
-          selected_region: regionContext ?? undefined
+          selected_region: regionContext ?? undefined,
+          agent_turn: finalTurn.items.length > 0 ? finalTurn : undefined
         }
       };
 
@@ -759,6 +771,7 @@ export default function App() {
         abortControllerRef.current = null;
       }
       setIsChatLoading(false);
+      setActiveTurn(null);
     }
   };
 
@@ -1136,6 +1149,7 @@ export default function App() {
               onSendMessage={handleChatSubmit}
               onVectorFilesSelected={handleVectorFilesSelected}
               isLoading={isChatLoading}
+              activeTurn={activeTurn}
               onStopGeneration={handleStopGeneration}
               inputValue={chatInput}
               onInputChange={setChatInput}

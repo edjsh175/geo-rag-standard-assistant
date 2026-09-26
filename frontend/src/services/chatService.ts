@@ -3,6 +3,7 @@ import { apiPost, apiPostSse } from '../lib/api/contractClient';
 import type { components } from '../lib/api/generated/schema';
 import { executeBrowserTool, getBrowserMapContext } from '../gis/browserBridge';
 import type { BrowserMapAction, BrowserToolReceipt } from '../gis/contracts';
+import type { AgentEventMessage } from '../components/agent/types';
 
 export type ChatHistoryMessage = components['schemas']['ChatHistoryMessage'];
 export type DocumentResult = components['schemas']['DocumentResult'];
@@ -184,8 +185,20 @@ export const chatService = {
     conversationId?: string,
     history: ChatHistoryMessage[] = [],
     signal?: AbortSignal,
-    followUpContext?: FollowUpContext
+    followUpContext?: FollowUpContext,
+    onAgentEvent?: (event: AgentEventMessage) => void
   ): Promise<ChatResponse> {
+    if (onAgentEvent) {
+      return this.sendMessageStream(
+        message,
+        conversationId,
+        undefined,
+        history,
+        followUpContext,
+        onAgentEvent,
+        signal
+      );
+    }
     try {
       const searchRequest = withActiveMapContext({
         query: message,
@@ -264,18 +277,22 @@ export const chatService = {
   },
 
   /**
-   * 流式聊天（如果后端支持）
+   * 流式聊天（支持 Agent 事件流与渐进式展示）
    */
   async sendMessageStream(
     message: string,
     conversationId?: string,
     onChunk?: (chunk: string) => void,
     history: ChatHistoryMessage[] = [],
-    followUpContext?: FollowUpContext
+    followUpContext?: FollowUpContext,
+    onAgentEvent?: (event: AgentEventMessage) => void,
+    signal?: AbortSignal
   ): Promise<ChatResponse> {
     try {
       let finalResponse: SearchResponse | null = null;
-      await apiPostSse('/api/search/query/stream', withActiveMapContext({
+      await apiPostSse(
+        '/api/search/query/stream',
+        withActiveMapContext({
           query: message,
           search_mode: 'hybrid',
           top_k: 10,
@@ -285,24 +302,58 @@ export const chatService = {
           session_id: conversationId,
           history,
           follow_up_context: followUpContext,
-        }), (eventType, data) => {
-        if (eventType === 'result') {
-          finalResponse = JSON.parse(data) as SearchResponse;
-        } else {
-          onChunk?.(data);
-        }
-      });
+        }),
+        (eventType, data) => {
+          if (eventType === 'result') {
+            finalResponse = JSON.parse(data) as SearchResponse;
+          } else if (eventType === 'chunk' || eventType === 'token') {
+            onChunk?.(data);
+          } else {
+            try {
+              const parsed = JSON.parse(data);
+              const agentEvent: AgentEventMessage = {
+                event_type: eventType,
+                session_id: parsed.session_id || '',
+                turn_id: parsed.turn_id || '',
+                trace_id: parsed.trace_id,
+                payload: parsed.payload || {},
+                created_at: parsed.created_at,
+              };
+              onAgentEvent?.(agentEvent);
+            } catch {
+              onChunk?.(data);
+            }
+          }
+        },
+        { signal }
+      );
+
       if (!finalResponse) throw new Error('stream completed without result event');
 
-      if (finalResponse.publication_state === 'tool_execution_required') {
-        if (!finalResponse.trace_id || !finalResponse.pending_tool_call_id || !finalResponse.continuation_token || !finalResponse.map_action) {
-          throw new Error('browser tool continuation contract is incomplete');
+      if ((finalResponse as SearchResponse).publication_state === 'tool_execution_required') {
+        const resp = finalResponse as SearchResponse;
+        if (!resp.trace_id || !resp.pending_tool_call_id || !resp.continuation_token || !resp.map_action) {
+          throw new BrowserContinuationError(
+            resp,
+            'gis',
+            'The browser tool continuation contract is incomplete.'
+          );
         }
-        const receipt = await executeBrowserTool(
-          finalResponse.trace_id,
-          finalResponse.pending_tool_call_id,
-          finalResponse.map_action as BrowserMapAction,
-        );
+        let receipt: BrowserToolReceipt;
+        try {
+          receipt = await executeBrowserTool(
+            resp.trace_id,
+            resp.pending_tool_call_id,
+            resp.map_action as BrowserMapAction,
+          );
+        } catch (error) {
+          throw new BrowserContinuationError(
+            resp,
+            'gis',
+            'The browser GIS tool could not be executed.',
+            error
+          );
+        }
         finalResponse = await this.runAgentRequest({
           query: message,
           search_mode: 'hybrid',
@@ -310,33 +361,23 @@ export const chatService = {
           threshold: 0.6,
           use_rerank: true,
           use_generation: true,
-          session_id: finalResponse.session_id || conversationId,
+          session_id: resp.session_id || conversationId,
           history: [],
           follow_up_context: followUpContext,
           map_context: receipt.map_context,
-          continuation_token: finalResponse.continuation_token,
+          continuation_token: resp.continuation_token,
           browser_tool_receipt: receipt,
-        });
+        }, signal);
       }
 
-      const quota = finalResponse.quota;
-      const fallbackMessage = quota?.exhausted
-        ? `${quota.contact_text}\n\n您仍可继续查看检索结果、引用文档和地图联动内容。`
-        : (finalResponse.results?.length ?? 0) > 0
-          ? '已检索到相关标准，请查看下方参考文档。'
-          : '未在库中检索到相关标准规定。';
-      return {
-        message: finalResponse.generated_answer || fallbackMessage,
-        conversation_id: finalResponse.session_id || conversationId || `conv_${Date.now()}`,
-        references: finalResponse.results || [],
-        timestamp: new Date().toISOString(),
-        quota,
-        map_action: finalResponse.map_action ?? undefined,
-      };
+      return toChatResponse(finalResponse, conversationId);
     } catch (error) {
       console.error('流式聊天失败:', error);
+      if (error instanceof BrowserContinuationError) {
+        return toChatResponse(error.response, conversationId, '地图联动未完成');
+      }
       return {
-        message: '流式聊天功能暂不可用。',
+        message: getRequestFailureMessage(error),
         conversation_id: conversationId || `conv_${Date.now()}`,
         references: [],
         timestamp: new Date().toISOString(),

@@ -16,7 +16,7 @@
     "lint": "node ./scripts/check-text-encoding.mjs && npm run contract:check && tsc --noEmit",
     "test:gis": "vitest run tests/gisObservationContract.test.ts",
     "test:geoai-harness": "vitest run tests/geoaiHarness.test.ts",
-    "test:unit": "vitest run tests/gisObservationContract.test.ts tests/geoaiHarness.test.ts tests/browserBridgeActiveRuntime.test.ts tests/cesiumRuntime.test.ts tests/chatServiceMapContext.test.ts && tsx tests/bootScreenMotion.test.ts && tsx tests/documentDetailTheme.test.ts && tsx tests/loginMotion.test.ts && tsx tests/mapViewport.test.ts",
+    "test:unit": "vitest run tests/gisObservationContract.test.ts tests/geoaiHarness.test.ts tests/browserBridgeActiveRuntime.test.ts tests/cesiumRuntime.test.ts tests/chatServiceMapContext.test.ts tests/agentEventProjector.test.ts && tsx tests/bootScreenMotion.test.ts && tsx tests/documentDetailTheme.test.ts && tsx tests/loginMotion.test.ts && tsx tests/mapViewport.test.ts",
     "e2e:geoai": "playwright test e2e/geoai-agent.spec.ts"
   },
   "dependencies": {

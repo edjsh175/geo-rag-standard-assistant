@@ -133,13 +133,15 @@ export async function apiDelete<P extends PathsWithMethod<'delete'>>(
 export async function apiPostSse<P extends PathsWithMethod<'post'>>(
   path: P,
   body?: MaybeBody<Operation<P, 'post'>>,
-  onEvent?: (eventType: string, data: string) => void
+  onEvent?: (eventType: string, data: string) => void,
+  options?: { signal?: AbortSignal }
 ): Promise<void> {
   const response = await fetch(resolveApiUrl(String(path)), {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: options?.signal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`stream request failed: ${response.status}`);

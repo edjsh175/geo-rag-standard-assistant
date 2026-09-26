@@ -8,11 +8,14 @@ import { glassLightStyle } from '../lib/glass';
 import { ChatMessage as ChatMessageType, Citation, Document } from '../types';
 import LoadingIndicator from './LoadingIndicator';
 import { useAutoScroll } from '../hooks/useAutoScroll';
+import { AgentProcess } from './agent/AgentProcess';
+import { AgentTurnViewModel } from './agent/types';
 
 export interface ChatProps {
   messages: ChatMessageType[];
   onSendMessage: (content: string) => Promise<void>;
   isLoading: boolean;
+  activeTurn?: AgentTurnViewModel | null;
   onStopGeneration?: () => void;
   inputValue: string;
   onInputChange: (value: string) => void;
@@ -30,6 +33,7 @@ const Chat: React.FC<ChatProps> = ({
   messages,
   onSendMessage,
   isLoading,
+  activeTurn,
   onStopGeneration,
   inputValue,
   onInputChange,
@@ -154,6 +158,7 @@ const Chat: React.FC<ChatProps> = ({
               <Sparkles className="w-3.5 h-3.5" style={{ color: 'rgba(240,112,64,0.7)' }} />
             </div>
             <div className="flex-1 space-y-3">
+              {activeTurn && <AgentProcess turn={activeTurn} defaultExpanded={true} />}
               <div
                 className="rounded-xl rounded-tl-sm p-4 text-sm bg-surface-container/60 border-l-[1.5px] border-primary-container"
               >
@@ -267,6 +272,11 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
       )}
 
       <div className="min-w-0 flex-1 space-y-3">
+        {/* Agent Process Timeline */}
+        {!isUser && message.metadata?.agent_turn && (
+          <AgentProcess turn={message.metadata.agent_turn} defaultExpanded={false} />
+        )}
+
         {/* Bubble */}
         <div
           className={cn(
