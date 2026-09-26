@@ -284,7 +284,8 @@ class AgentRuntime:
                 is_terminal=False,
             )
             session.pending_browser_execution = None
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -305,7 +306,8 @@ class AgentRuntime:
             if request.browser_tool_receipt is not None:
                 raise ValueError("browser_tool_receipt requires continuation_token")
             if pending is not None:
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -328,7 +330,7 @@ class AgentRuntime:
                         request.session_id,
                     )
             if not session.events and request.legacy_history:
-                self._seed_legacy_history(session.events, request.legacy_history, session.session_id)
+                await self._seed_legacy_history(request.principal_id, session.events, request.legacy_history, session.session_id)
             if hasattr(self.session_store, "allocate_turn_id"):
                 turn_id = await self.session_store.allocate_turn_id(
                     request.principal_id,
@@ -346,7 +348,8 @@ class AgentRuntime:
             initial_steps = 0
             observations = []
 
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -367,9 +370,10 @@ class AgentRuntime:
                 else None
             )
 
-        def resource_fuse_result() -> AgentRunResult:
+        async def resource_fuse_result() -> AgentRunResult:
             limitation = "Agent 运行达到资源保护上限，未发布答案。"
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -381,7 +385,8 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
-            self._append_assistant_message(
+            await self._append_assistant_message(
+                request.principal_id,
                 session.events,
                 session_id=session.session_id,
                 turn_id=turn_id,
@@ -401,13 +406,14 @@ class AgentRuntime:
                 events=tuple(turn_events),
             )
 
-        def model_output_failure_result(
+        async def model_output_failure_result(
             *,
             failure_stage: str,
             error: str,
         ) -> AgentRunResult:
             limitation = "模型输出未满足 Agent 结构化协议，未发布答案。"
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -423,7 +429,8 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
-            self._append_assistant_message(
+            await self._append_assistant_message(
+                request.principal_id,
                 session.events,
                 session_id=session.session_id,
                 turn_id=turn_id,
@@ -443,9 +450,10 @@ class AgentRuntime:
                 events=tuple(turn_events),
             )
 
-        def retrieval_unavailable_result() -> AgentRunResult:
+        async def retrieval_unavailable_result() -> AgentRunResult:
             limitation = "知识检索服务当前不可用，未发布答案。"
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -457,7 +465,8 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
-            self._append_assistant_message(
+            await self._append_assistant_message(
+                request.principal_id,
                 session.events,
                 session_id=session.session_id,
                 turn_id=turn_id,
@@ -509,7 +518,7 @@ class AgentRuntime:
             try:
                 fuse.ensure_within_limits()
             except ResourceFuseExceeded:
-                return resource_fuse_result()
+                return await resource_fuse_result()
             working_items = session.evidence_ledger.working_evidence(turn_id=turn_id)
             working_ev_dicts = [
                 {
@@ -612,9 +621,9 @@ class AgentRuntime:
                 call = await self.controller.decide(**controller_kwargs)
                 self._validate_decision_against_action_state(call, action_state)
             except TimeoutError:
-                return resource_fuse_result()
+                return await resource_fuse_result()
             except ControllerOutputError as exc:
-                return model_output_failure_result(
+                return await model_output_failure_result(
                     failure_stage="controller",
                     error=str(exc),
                 )
@@ -622,7 +631,8 @@ class AgentRuntime:
             # Direct Answer control action bypasses tool execution and generator/reviewer
             if getattr(call, "action", None) == "direct_answer" or call.name == "direct_answer":
                 direct_text = getattr(call, "answer", None) or (call.arguments.get("answer") if hasattr(call, "arguments") and isinstance(call.arguments, Mapping) else "") or ""
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -634,7 +644,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -646,7 +657,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_assistant_message(
+                await self._append_assistant_message(
+                    request.principal_id,
                     session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -687,7 +699,8 @@ class AgentRuntime:
                     raise ValueError("clarify requires authoritative ambiguous entity candidates")
                 clarification_text = identity_resolution.clarification_text()
 
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -699,7 +712,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -711,7 +725,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_assistant_message(
+                await self._append_assistant_message(
+                    request.principal_id,
                     session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -752,7 +767,8 @@ class AgentRuntime:
                     else "知识库中未检索到相关确定性依据，系统无法在无证据支持的情况下回答该问题。"
                 )
 
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -764,7 +780,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -776,7 +793,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_assistant_message(
+                await self._append_assistant_message(
+                    request.principal_id,
                     session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -818,7 +836,8 @@ class AgentRuntime:
                     turn_id=turn_id,
                     evidence_ids=selected_ids,
                 )
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -830,7 +849,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -847,7 +867,8 @@ class AgentRuntime:
                 )
                 break
 
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -859,7 +880,8 @@ class AgentRuntime:
                 ),
                 event_listener,
             )
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -875,9 +897,9 @@ class AgentRuntime:
             try:
                 observation = await tool_runtime.execute(turn_id=turn_id, call=call)
             except ResourceFuseExceeded:
-                return resource_fuse_result()
+                return await resource_fuse_result()
             except RetrievalUnavailableError:
-                return retrieval_unavailable_result()
+                return await retrieval_unavailable_result()
             except ToolExecutionError as exc:
                 observation = ToolObservation(
                     tool_call_id=call.tool_call_id,
@@ -887,7 +909,8 @@ class AgentRuntime:
                     is_terminal=False,
                 )
                 observations.append(observation)
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -907,7 +930,8 @@ class AgentRuntime:
                 continue
 
             observations.append(observation)
-            self._append_event(
+            await self._append_event(
+                request.principal_id,
                 session.events,
                 turn_events,
                 AgentEvent(
@@ -929,7 +953,8 @@ class AgentRuntime:
 
             if call.name == "clarify":
                 clarification = str(observation.payload["question"])
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -941,7 +966,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_assistant_message(
+                await self._append_assistant_message(
+                    request.principal_id,
                     session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -963,7 +989,8 @@ class AgentRuntime:
 
             if call.name == "limitation":
                 limitation = str(observation.payload["message"])
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -975,7 +1002,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_assistant_message(
+                await self._append_assistant_message(
+                    request.principal_id,
                     session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -1003,7 +1031,8 @@ class AgentRuntime:
                     target=str(action_payload["target"]),
                     payload=action_payload.get("payload"),
                 )
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -1090,13 +1119,14 @@ class AgentRuntime:
                 answer_kwargs["model_name"] = main_model_name
             answer = await self.answer_generator.generate(**answer_kwargs)
         except TimeoutError:
-            return resource_fuse_result()
+            return await resource_fuse_result()
         except AnswerGenerationError as exc:
-            return model_output_failure_result(
+            return await model_output_failure_result(
                 failure_stage="answer_generation",
                 error=str(exc),
             )
-        self._append_event(
+        await self._append_event(
+            request.principal_id,
             session.events,
             turn_events,
             AgentEvent(
@@ -1140,10 +1170,11 @@ class AgentRuntime:
                     reviewer_kwargs["model_name"] = main_model_name
                 review = await self.reviewer.review(**reviewer_kwargs)
             except TimeoutError:
-                return resource_fuse_result()
+                return await resource_fuse_result()
             except Exception as exc:
                 limitation = "证据审查执行失败，答案未发布。"
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -1158,7 +1189,8 @@ class AgentRuntime:
                     ),
                     event_listener,
                 )
-                self._append_assistant_message(
+                await self._append_assistant_message(
+                    request.principal_id,
                     session.events,
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -1186,7 +1218,8 @@ class AgentRuntime:
                     validate_answer_repair_draft,
                 )
                 repair_scope = build_answer_repair_scope(answer, review, snapshot)
-                self._append_event(
+                await self._append_event(
+                    request.principal_id,
                     session.events,
                     turn_events,
                     AgentEvent(
@@ -1227,7 +1260,8 @@ class AgentRuntime:
 
                 if not repaired_ok:
                     limitation = "答案未通过证据审查，未发布。"
-                    self._append_event(
+                    await self._append_event(
+                        request.principal_id,
                         session.events,
                         turn_events,
                         AgentEvent(
@@ -1239,7 +1273,8 @@ class AgentRuntime:
                         ),
                         event_listener,
                     )
-                    self._append_assistant_message(
+                    await self._append_assistant_message(
+                        request.principal_id,
                         session.events,
                         session_id=session.session_id,
                         turn_id=turn_id,
@@ -1261,7 +1296,8 @@ class AgentRuntime:
                         events=tuple(turn_events),
                     )
 
-        self._append_event(
+        await self._append_event(
+            request.principal_id,
             session.events,
             turn_events,
             AgentEvent(
@@ -1273,7 +1309,8 @@ class AgentRuntime:
             ),
             event_listener,
         )
-        self._append_assistant_message(
+        await self._append_assistant_message(
+            request.principal_id,
             session.events,
             session_id=session.session_id,
             turn_id=turn_id,
@@ -1367,20 +1404,33 @@ class AgentRuntime:
                 f"controller selected unavailable tool '{name}'"
             )
 
-    @staticmethod
-    def _append_event(
+    async def _append_event(
+        self,
+        principal_id: str,
         session_events: list[AgentEvent],
         turn_events: list[AgentEvent],
         event: AgentEvent,
         event_listener: Callable[[AgentEvent], None] | None = None,
-    ) -> None:
-        session_events.append(event)
-        turn_events.append(event)
+    ) -> AgentEvent:
+        persisted_event = await self._persist_event(principal_id, event)
+        session_events.append(persisted_event)
+        turn_events.append(persisted_event)
         if event_listener is not None:
-            event_listener(event)
+            event_listener(persisted_event)
+        return persisted_event
 
-    @staticmethod
-    def _append_assistant_message(
+    async def _persist_event(
+        self,
+        principal_id: str,
+        event: AgentEvent,
+    ) -> AgentEvent:
+        if hasattr(self.session_store, "append_event"):
+            return await self.session_store.append_event(principal_id, event)
+        return event
+
+    async def _append_assistant_message(
+        self,
+        principal_id: str,
         session_events: list[AgentEvent],
         *,
         session_id: str,
@@ -1390,18 +1440,19 @@ class AgentRuntime:
     ) -> None:
         if not text.strip():
             return
-        session_events.append(
-            AgentEvent(
-                event_type="assistant_message",
-                session_id=session_id,
-                turn_id=turn_id,
-                trace_id=trace_id,
-                payload={"text": text.strip()},
-            )
+        event = AgentEvent(
+            event_type="assistant_message",
+            session_id=session_id,
+            turn_id=turn_id,
+            trace_id=trace_id,
+            payload={"text": text.strip()},
         )
+        persisted_event = await self._persist_event(principal_id, event)
+        session_events.append(persisted_event)
 
-    @staticmethod
-    def _seed_legacy_history(
+    async def _seed_legacy_history(
+        self,
+        principal_id: str,
         session_events: list[AgentEvent],
         history: tuple[Mapping[str, str], ...],
         session_id: str,
@@ -1411,12 +1462,12 @@ class AgentRuntime:
             content = message.get("content")
             if role not in {"user", "assistant"} or not isinstance(content, str) or not content.strip():
                 continue
-            session_events.append(
-                AgentEvent(
-                    event_type="user_message" if role == "user" else "assistant_message",
-                    session_id=session_id,
-                    turn_id=f"legacy-{index}",
-                    trace_id="legacy-seed",
-                    payload={"text": content.strip()},
-                )
+            event = AgentEvent(
+                event_type="user_message" if role == "user" else "assistant_message",
+                session_id=session_id,
+                turn_id=f"legacy-{index}",
+                trace_id="legacy-seed",
+                payload={"text": content.strip()},
             )
+            persisted_event = await self._persist_event(principal_id, event)
+            session_events.append(persisted_event)
