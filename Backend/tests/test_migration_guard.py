@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -52,3 +53,18 @@ def test_model_input_audit_table_is_required_by_migration_guard() -> None:
     assert REQUIRED_TABLE_MIGRATION_MAP["geoai_model_input_audits"] == (
         "Backend/migrations/20260926_model_input_audit.sql"
     )
+
+
+def test_model_input_audit_identity_scope_has_forward_migration() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    migration = (
+        repo_root
+        / "Backend"
+        / "migrations"
+        / "20260926_model_input_audit_identity_scope.sql"
+    )
+
+    sql = migration.read_text(encoding="utf-8")
+    assert "DROP CONSTRAINT IF EXISTS uq_geoai_model_input_audits_call_attempt" in sql
+    assert "uq_geoai_model_input_audits_scoped_call_attempt" in sql
+    assert "principal_id, session_id, turn_id, stage, call_id, attempt" in sql

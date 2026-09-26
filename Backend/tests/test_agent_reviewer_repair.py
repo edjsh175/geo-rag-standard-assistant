@@ -226,9 +226,11 @@ async def test_runtime_reviewer_repair_loop_success():
     class FakeTwoPhaseReviewer:
         def __init__(self):
             self.attempts = 0
+            self.audit_contexts = []
 
         async def review(self, **kwargs):
             self.attempts += 1
+            self.audit_contexts.append(kwargs.get("audit_context"))
             if self.attempts == 1:
                 # Reviewer #1 rejects with OVERSTATED
                 return ReviewResult(
@@ -277,6 +279,9 @@ async def test_runtime_reviewer_repair_loop_success():
 
     assert ans_gen.repair_called is True
     assert rev.attempts == 2
+    assert rev.audit_contexts[0] is not None
+    assert rev.audit_contexts[1] is not None
+    assert rev.audit_contexts[0]["context_snapshot_id"] != rev.audit_contexts[1]["context_snapshot_id"]
     assert result.publication_state == "published"
     assert result.answer.answer == "容积率4.0。限高60米。"
     event_types = [ev.event_type for ev in result.events]

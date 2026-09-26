@@ -9,6 +9,8 @@ from app.services.agent.controller import MainController
 from app.services.agent.controller_protocol import ExecutableActionState
 from app.services.agent.model_client import (
     LLMConfigStageModelClient,
+    ModelRequest,
+    build_model_input_audit_record,
     model_request_messages_hash,
 )
 from app.services.agent.stage_policy import LLMStagePolicy
@@ -167,3 +169,34 @@ async def test_answer_and_reviewer_audits_bind_exact_frozen_snapshot() -> None:
             for item in call["messages"]
         )
         assert row.messages_hash == model_request_messages_hash(provider_messages)
+
+
+def test_model_input_audit_identity_is_scoped_beyond_call_id_and_attempt() -> None:
+    base = dict(
+        stage="controller",
+        messages=({"role": "user", "content": "prompt"},),
+        call_id="reused-call-id",
+        attempt=1,
+    )
+    first = build_model_input_audit_record(
+        ModelRequest(
+            **base,
+            audit_context={
+                "principal_id": "user-audit",
+                "session_id": "sess-audit",
+                "turn_id": "turn-1",
+            },
+        )
+    )
+    second = build_model_input_audit_record(
+        ModelRequest(
+            **base,
+            audit_context={
+                "principal_id": "user-audit",
+                "session_id": "sess-audit",
+                "turn_id": "turn-2",
+            },
+        )
+    )
+
+    assert first.audit_id != second.audit_id

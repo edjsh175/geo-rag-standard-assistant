@@ -212,7 +212,7 @@ async def test_model_input_audit_hashes_the_exact_request_before_provider_call()
 
     assert len(saved) == 1
     record = saved[0]
-    assert record.audit_id == "call-audit-1:2"
+    assert record.audit_id.startswith("mai-")
     assert record.messages_hash == model_request_messages_hash(request.messages)
     assert record.principal_id == "admin:test"
     assert record.session_id == "session-audit"
@@ -253,3 +253,103 @@ async def test_model_input_audit_requires_call_id_when_audit_context_is_present(
                 },
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_json_schema_timeout_does_not_downgrade_to_json_object(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "openai")
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            raise TimeoutError("upstream timed out")
+
+    llm = FakeLLMConfig()
+    client = LLMConfigStageModelClient(llm)
+
+    with pytest.raises(TimeoutError, match="upstream timed out"):
+        await client.complete(
+            ModelRequest(
+                stage="controller",
+                messages=({"role": "user", "content": "prompt"},),
+                model_name="main-model",
+                response_schema={"type": "object"},
+            )
+        )
+
+    assert len(llm.calls) == 1
+    assert llm.calls[0]["response_format"]["type"] == "json_schema"
+
+
+@pytest.mark.asyncio
+async def test_json_schema_capability_rejection_downgrades_once(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "openai")
+    class SchemaCapabilityError(RuntimeError):
+        status_code = 400
+        code = "unsupported_response_format"
+
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise SchemaCapabilityError("json_schema response_format is not supported")
+            return "{}"
+
+    llm = FakeLLMConfig()
+    client = LLMConfigStageModelClient(llm)
+
+    await client.complete(
+        ModelRequest(
+            stage="controller",
+            messages=({"role": "user", "content": "prompt"},),
+            model_name="main-model",
+            response_schema={"type": "object"},
+        )
+    )
+
+    assert [call["response_format"]["type"] for call in llm.calls] == [
+        "json_schema",
+        "json_object",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adapter_sends_the_resolved_model_identity_to_provider() -> None:
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        def resolve_main_model(self, *, thinking: bool) -> str:
+            return "resolved-main"
+
+        async def chat_completion(self, **kwargs):
+            self.calls.append(kwargs)
+            return "{}"
+
+    llm = FakeLLMConfig()
+    client = LLMConfigStageModelClient(llm)
+
+    await client.complete(
+        ModelRequest(
+            stage="answer_generation",
+            messages=({"role": "user", "content": "prompt"},),
+            model_name=None,
+        )
+    )
+
+    assert llm.calls[0]["model"] == "resolved-main"

@@ -331,6 +331,47 @@ def test_context_snapshot_deterministic_hash():
     assert snap1.projection_hash == snap2.projection_hash
 
 
+def test_answer_and_reviewer_snapshots_use_server_owned_current_turn_id():
+    engine = ContextEngine()
+    events = [
+        AgentEvent(
+            event_type="user_message",
+            session_id="sess-turn",
+            turn_id="turn-1",
+            payload={"text": "上一轮"},
+            event_id="ev-turn-1",
+        ),
+        AgentEvent(
+            event_type="assistant_message",
+            session_id="sess-turn",
+            turn_id="turn-1",
+            payload={"text": "上一轮回答"},
+            event_id="ev-turn-2",
+        ),
+        AgentEvent(
+            event_type="user_message",
+            session_id="sess-turn",
+            turn_id="turn-2",
+            payload={"text": "当前问题"},
+            event_id="ev-turn-3",
+        ),
+    ]
+    frame = engine.build_frame(
+        session_id="sess-turn",
+        principal_id="user-turn",
+        question="当前问题",
+        events=events,
+        current_turn_id="turn-2",
+        working_evidence=[],
+    )
+
+    _, answer_snapshot = engine.project_for_answer(frame, conversation_summary="上一轮摘要")
+    _, reviewer_snapshot = engine.project_for_reviewer(frame, draft_answer="候选答案")
+
+    assert answer_snapshot.turn_id == "turn-2"
+    assert reviewer_snapshot.turn_id == "turn-2"
+
+
 def test_context_engine_scopes_runtime_facts_to_explicit_current_and_previous_turns():
     assert "current_turn_id" in inspect.signature(ContextEngine.build_frame).parameters
 

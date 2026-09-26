@@ -1413,7 +1413,7 @@ class AgentRuntime:
                     review=None,
                     events=tuple(turn_events),
                 )
-            proj_rev, snapshot_rev = self.context_engine.project_for_reviewer(
+            review_frame = (
                 frame if "frame" in locals() else self.context_engine.build_frame(
                     session_id=session.session_id,
                     principal_id=request.principal_id,
@@ -1421,7 +1421,10 @@ class AgentRuntime:
                     events=session.events,
                     working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
                     current_turn_id=turn_id,
-                ),
+                )
+            )
+            proj_rev, snapshot_rev = self.context_engine.project_for_reviewer(
+                review_frame,
                 draft_answer=answer.answer,
             )
             if hasattr(self.session_store, "save_snapshot"):
@@ -1539,6 +1542,14 @@ class AgentRuntime:
                             )
                         )
                         validate_answer_repair_draft(answer, answer_v2, repair_scope)
+                        _, snapshot_rev_2 = self.context_engine.project_for_reviewer(
+                            review_frame,
+                            draft_answer=answer_v2.answer,
+                        )
+                        if hasattr(self.session_store, "save_snapshot"):
+                            await self.session_store.save_snapshot(
+                                snapshot_rev_2.to_record(request.principal_id)
+                            )
                         reviewer_2_kwargs = {
                             "question": question,
                             "answer": answer_v2,
@@ -1549,6 +1560,7 @@ class AgentRuntime:
                                 "principal_id": request.principal_id,
                                 "session_id": session.session_id,
                                 "turn_id": turn_id,
+                                "context_snapshot_id": snapshot_rev_2.snapshot_id,
                             },
                         }
                         review_2 = await self.reviewer.review(

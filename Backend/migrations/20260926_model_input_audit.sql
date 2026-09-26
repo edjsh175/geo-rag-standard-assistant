@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS geoai_model_input_audits (
     action_surface_hash VARCHAR(64) NULL,
     tool_contract_hash VARCHAR(64) NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_geoai_model_input_audits_call_attempt UNIQUE (call_id, attempt)
+    CONSTRAINT uq_geoai_model_input_audits_scoped_call_attempt UNIQUE (
+        principal_id, session_id, turn_id, stage, call_id, attempt
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_geoai_model_input_audits_session_turn

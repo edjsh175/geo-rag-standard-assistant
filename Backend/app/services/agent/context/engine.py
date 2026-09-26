@@ -16,6 +16,21 @@ from app.services.agent.context.snapshot import ContextSnapshot
 from app.services.agent.events import AgentEvent
 
 
+def _snapshot_turn_id(frame: ContextFrame) -> str:
+    """Resolve snapshot provenance from server-owned current-turn facts first."""
+
+    current_facts = (
+        frame.runtime_facts.get("current_turn")
+        if isinstance(frame.runtime_facts, Mapping)
+        else None
+    )
+    if isinstance(current_facts, Mapping) and current_facts.get("turn_id"):
+        return str(current_facts["turn_id"])
+    if frame.conversation:
+        return str(frame.conversation[-1].get("turn_id") or "current")
+    return "current"
+
+
 def _empty_turn_runtime_facts(turn_id: str | None) -> dict[str, Any]:
     return {
         "turn_id": turn_id,
@@ -250,12 +265,7 @@ class ContextEngine:
         )
 
         session_id = str(frame.session.get("session_id") or "")
-        turn_id = "current"
-        current_facts = frame.runtime_facts.get("current_turn") if isinstance(frame.runtime_facts, Mapping) else None
-        if isinstance(current_facts, Mapping) and current_facts.get("turn_id"):
-            turn_id = str(current_facts["turn_id"])
-        elif frame.conversation:
-            turn_id = str(frame.conversation[-1].get("turn_id") or "current")
+        turn_id = _snapshot_turn_id(frame)
 
         snapshot = ContextSnapshot.create(
             stage="controller",
@@ -291,9 +301,7 @@ class ContextEngine:
         )
 
         session_id = str(frame.session.get("session_id") or "")
-        turn_id = "current"
-        if frame.conversation:
-            turn_id = str(frame.conversation[-1].get("turn_id") or "current")
+        turn_id = _snapshot_turn_id(frame)
 
         snapshot = ContextSnapshot.create(
             stage="answer",
@@ -327,9 +335,7 @@ class ContextEngine:
         )
 
         session_id = str(frame.session.get("session_id") or "")
-        turn_id = "current"
-        if frame.conversation:
-            turn_id = str(frame.conversation[-1].get("turn_id") or "current")
+        turn_id = _snapshot_turn_id(frame)
 
         snapshot = ContextSnapshot.create(
             stage="reviewer",

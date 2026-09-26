@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -31,6 +31,57 @@ def model_request_messages_hash(messages: tuple[Mapping[str, str], ...]) -> str:
     return _sha256([dict(message) for message in messages])
 
 
+def _is_structured_output_capability_rejection(exc: Exception) -> bool:
+    """Return True only for explicit structured-output capability rejection.
+
+    Timeouts, auth failures, rate limits, 5xx responses, transport failures,
+    and generic provider errors must propagate unchanged.  Providers expose
+    capability rejection through different exception shapes, so inspect a
+    small provider-neutral surface instead of special-casing provider names.
+    """
+
+    explicit_codes = {
+        "unsupported_response_format",
+        "response_format_not_supported",
+        "json_schema_not_supported",
+        "schema_not_supported",
+    }
+
+    code_candidates = [
+        getattr(exc, "code", None),
+        getattr(exc, "error_code", None),
+    ]
+    error_payload = getattr(exc, "error", None)
+    if isinstance(error_payload, Mapping):
+        code_candidates.extend(
+            [error_payload.get("code"), error_payload.get("type")]
+        )
+    for code in code_candidates:
+        if str(code or "").strip().lower() in explicit_codes:
+            return True
+
+    status_code = getattr(exc, "status_code", None)
+    response = getattr(exc, "response", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+    if status_code not in {400, 422}:
+        return False
+
+    message = str(exc).lower()
+    mentions_contract = "json_schema" in message or "response_format" in message
+    mentions_rejection = any(
+        marker in message
+        for marker in (
+            "not supported",
+            "unsupported",
+            "does not support",
+            "isn't supported",
+            "is not supported",
+        )
+    )
+    return mentions_contract and mentions_rejection
+
+
 def build_model_input_audit_record(request: "ModelRequest") -> ModelInputAuditRecord:
     context = dict(request.audit_context or {})
     if not request.call_id:
@@ -41,8 +92,16 @@ def build_model_input_audit_record(request: "ModelRequest") -> ModelInputAuditRe
         raise ValueError(
             "audited ModelRequest missing audit context: " + ", ".join(missing)
         )
+    audit_identity = {
+        "principal_id": str(context["principal_id"]),
+        "session_id": str(context["session_id"]),
+        "turn_id": str(context["turn_id"]),
+        "stage": request.stage,
+        "call_id": request.call_id,
+        "attempt": int(request.attempt),
+    }
     return ModelInputAuditRecord(
-        audit_id=f"{request.call_id}:{request.attempt}",
+        audit_id=f"mai-{_sha256(audit_identity)}",
         principal_id=str(context["principal_id"]),
         session_id=str(context["session_id"]),
         turn_id=str(context["turn_id"]),
@@ -159,15 +218,23 @@ class LLMConfigStageModelClient:
     async def complete(self, request: ModelRequest) -> ModelResponse:
         started_at = monotonic()
         outcome = "error"
-        if request.audit_context is not None:
-            audit_record = build_model_input_audit_record(request)
+        effective_model_name = request.model_name or self.resolve_main_model(
+            thinking=request.request_reasoning
+        )
+        effective_request = (
+            request
+            if request.model_name == effective_model_name
+            else replace(request, model_name=effective_model_name)
+        )
+        if effective_request.audit_context is not None:
+            audit_record = build_model_input_audit_record(effective_request)
             if self.audit_sink is None:
                 raise RuntimeError("audited ModelRequest requires an audit sink")
             await self.audit_sink(audit_record)
         from app.core.config import settings
         is_deepseek = (
             getattr(settings, "LLM_PROVIDER", None) == "deepseek"
-            or "deepseek" in str(request.model_name or "").lower()
+            or "deepseek" in str(effective_model_name or "").lower()
         )
         try:
             if request.response_schema and not is_deepseek:
@@ -187,22 +254,24 @@ class LLMConfigStageModelClient:
 
             try:
                 content = await self.llm_config.chat_completion(
-                    messages=[dict(message) for message in request.messages],
-                    model=request.model_name,
-                    temperature=request.temperature,
-                    request_reasoning=request.request_reasoning,
-                    timeout_seconds=request.timeout_seconds,
+                    messages=[dict(message) for message in effective_request.messages],
+                    model=effective_model_name,
+                    temperature=effective_request.temperature,
+                    request_reasoning=effective_request.request_reasoning,
+                    timeout_seconds=effective_request.timeout_seconds,
                     **structured_output,
                 )
-            except Exception:
-                # If provider rejects json_schema, fallback to json_object
-                if structured_output.get("response_format", {}).get("type") == "json_schema":
+            except Exception as exc:
+                if (
+                    structured_output.get("response_format", {}).get("type") == "json_schema"
+                    and _is_structured_output_capability_rejection(exc)
+                ):
                     content = await self.llm_config.chat_completion(
-                        messages=[dict(message) for message in request.messages],
-                        model=request.model_name,
-                        temperature=request.temperature,
-                        request_reasoning=request.request_reasoning,
-                        timeout_seconds=request.timeout_seconds,
+                        messages=[dict(message) for message in effective_request.messages],
+                        model=effective_model_name,
+                        temperature=effective_request.temperature,
+                        request_reasoning=effective_request.request_reasoning,
+                        timeout_seconds=effective_request.timeout_seconds,
                         response_format={"type": "json_object"},
                     )
                 else:
@@ -215,7 +284,7 @@ class LLMConfigStageModelClient:
                     call_id=request.call_id,
                     stage=request.stage,
                     attempt=request.attempt,
-                    model_name=request.model_name,
+                    model_name=effective_model_name,
                     timeout_seconds=request.timeout_seconds,
                     elapsed_seconds=max(0.0, monotonic() - started_at),
                     outcome=outcome,
