@@ -190,6 +190,11 @@ class SearchApplicationService:
         results = await self._results_from_frozen_evidence(run_result.frozen_evidence)
         published = run_result.published_result
         elapsed = (datetime.now() - started_at).total_seconds()
+        publication_state = (
+            "clarification_required"
+            if run_result.publication_state == "clarification"
+            else run_result.publication_state
+        )
         return SearchResponse(
             query=request.query,
             results=results,
@@ -201,11 +206,10 @@ class SearchApplicationService:
             session_id=run_result.session_id,
             trace_id=run_result.trace_id,
             final_mode="agent",
-            publication_state=run_result.publication_state,
+            publication_state=publication_state,
             map_action=published.map_action,
             pending_tool_call_id=getattr(run_result, "pending_tool_call_id", None),
             continuation_token=getattr(run_result, "continuation_token", None),
-
         )
 
     async def stream(
@@ -276,7 +280,11 @@ class SearchApplicationService:
                     session_id=run_result.session_id,
                     trace_id=run_result.trace_id,
                     final_mode="agent",
-                    publication_state=run_result.publication_state,
+                    publication_state=(
+                        "clarification_required"
+                        if run_result.publication_state == "clarification"
+                        else run_result.publication_state
+                    ),
                     map_action=published.map_action,
                     pending_tool_call_id=run_result.pending_tool_call_id,
                     continuation_token=run_result.continuation_token,

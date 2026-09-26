@@ -36,12 +36,16 @@ class AuthUserResponse(BaseModel):
 class LoginResponse(BaseModel):
     user: AuthUserResponse
     message: str
+    access_token: str | None = None
+    token: str | None = None
 
 
 class DemoLoginResponse(BaseModel):
     user: AuthUserResponse
     quota: DemoQuotaStatus
     message: str
+    access_token: str | None = None
+    token: str | None = None
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -65,6 +69,8 @@ async def login(request: LoginRequest, response: Response) -> LoginResponse:
     return LoginResponse(
         user=AuthUserResponse(username=request.username, role="admin"),
         message="Login successful.",
+        access_token=token,
+        token=token,
     )
 
 
@@ -97,6 +103,8 @@ async def demo_login(
         user=AuthUserResponse(username=visitor_identity.username, role="visitor", quota=quota),
         quota=quota,
         message="Demo session started.",
+        access_token=token,
+        token=token,
     )
 
 

@@ -213,3 +213,8 @@ Desktop.ini
 
 # Worktrees
 .worktrees/
+
+# Test artifacts
+test-results/
+playwright-report/
+evals/results/

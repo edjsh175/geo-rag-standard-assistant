@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.search_models import DocumentResult
+from app.services.agent.context.engine import ContextEngine
 from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.answer_generator import AnswerGenerationError
 from app.services.agent.controller import ControllerOutputError
@@ -24,12 +25,12 @@ from app.services.rag.contracts import (
 def make_candidate(chunk_id: str, text: str) -> RetrievalCandidate:
     result = DocumentResult(
         id=chunk_id,
-        title="规划标准",
+        title="瑙勫垝鏍囧噯",
         content=text,
         similarity=0.9,
         metadata={
             "chunk_id": chunk_id,
-            "document_name": "规划标准",
+            "document_name": "瑙勫垝鏍囧噯",
             "match_type": "keyword",
         },
         spatial_info=None,
@@ -84,7 +85,7 @@ class ReuseThenComposeController:
             return ToolCall(
                 tool_call_id="reuse-1",
                 name="reuse_evidence",
-                arguments={"query": "滑坡监测"},
+                arguments={"query": "婊戝潯鐩戞祴"},
             )
         return ToolCall(
             tool_call_id="compose-2",
@@ -98,7 +99,7 @@ class ClarifyController:
         return ToolCall(
             tool_call_id="clarify-1",
             name="clarify",
-            arguments={"question": "请明确行政区。"},
+            arguments={"question": "璇锋槑纭鏀垮尯銆?},
         )
 
 
@@ -130,7 +131,7 @@ class BrowserThenComposeController:
             return ToolCall(
                 tool_call_id="browser-import-1",
                 name="import_vector_dataset",
-                arguments={"file_ref": "vf_1", "name": "测试图层"},
+                arguments={"file_ref": "vf_1", "name": "娴嬭瘯鍥惧眰"},
             )
         return ToolCall(
             tool_call_id="compose-browser-1",
@@ -147,7 +148,7 @@ class FakeAnswerGenerator:
         self.snapshots.append(snapshot)
         return GeneratedAnswer(
             kind="knowledge_answer",
-            answer="基于冻结证据回答",
+            answer="鍩轰簬鍐荤粨璇佹嵁鍥炵瓟",
             citations=tuple(item.citation_id for item in snapshot.items),
         )
 
@@ -158,7 +159,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
     generator = FakeAnswerGenerator()
     runtime = AgentRuntime(
         retrieval_port=FakeRetrievalPort(
-            [make_candidate("chunk-1", "重庆市滑坡监测要求")]
+            [make_candidate("chunk-1", "閲嶅簡甯傛粦鍧＄洃娴嬭姹?)]
         ),
         controller=RetrieveThenComposeController(),
         answer_generator=generator,
@@ -167,7 +168,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
 
     result = await runtime.run(
         AgentRunRequest(
-            question="重庆市滑坡监测有什么要求？",
+            question="閲嶅簡甯傛粦鍧＄洃娴嬫湁浠€涔堣姹傦紵",
             session_id="session-1",
             principal_id="admin:test",
         )
@@ -175,7 +176,7 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
 
     assert result.publication_state == "published"
     assert result.trace_id
-    assert result.answer.answer == "基于冻结证据回答"
+    assert result.answer.answer == "鍩轰簬鍐荤粨璇佹嵁鍥炵瓟"
     assert result.frozen_evidence is generator.snapshots[0]
     assert result.frozen_evidence.items[0].chunk_id == "chunk-1"
     assert [event.event_type for event in result.events] == [
@@ -194,16 +195,29 @@ async def test_runtime_executes_controller_tool_loop_and_publishes_frozen_answer
 @pytest.mark.asyncio
 async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None:
     store = InMemoryAgentSessionStore()
+    class RecordingContextEngine(ContextEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.build_calls = []
+
+        def build_frame(self, **kwargs):
+            recorded = dict(kwargs)
+            recorded["events"] = list(kwargs.get("events") or ())
+            self.build_calls.append(recorded)
+            return super().build_frame(**kwargs)
+
+    context_engine = RecordingContextEngine()
     runtime = AgentRuntime(
         retrieval_port=FakeRetrievalPort(),
         controller=BrowserThenComposeController(),
         answer_generator=FakeAnswerGenerator(),
         session_store=store,
+        context_engine=context_engine,
     )
 
     pending = await runtime.run(
         AgentRunRequest(
-            question="导入数据并确认结果",
+            question="瀵煎叆鏁版嵁骞剁‘璁ょ粨鏋?,
             session_id="browser-session",
             principal_id="admin:test",
         )
@@ -213,7 +227,7 @@ async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None
 
     result = await runtime.run(
         AgentRunRequest(
-            question="导入数据并确认结果",
+            question="瀵煎叆鏁版嵁骞剁‘璁ょ粨鏋?,
             session_id="browser-session",
             principal_id="admin:test",
             continuation_token=pending.continuation_token,
@@ -233,6 +247,52 @@ async def test_browser_continuation_receipt_becomes_freezable_evidence() -> None
     assert len(result.frozen_evidence.items) == 1
     assert result.frozen_evidence.items[0].source == "browser_gis"
     assert '"layer_ref":"ul_1"' in result.frozen_evidence.items[0].text
+    assert result.turn_id == pending.turn_id
+    assert len(context_engine.build_calls) == 2
+    assert context_engine.build_calls[0]["current_turn_id"] == pending.turn_id
+    assert context_engine.build_calls[1]["current_turn_id"] == pending.turn_id
+    assert any(
+        event.turn_id == pending.turn_id and event.event_type == "browser_tool_completed"
+        for event in context_engine.build_calls[1]["events"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_passes_latest_current_turn_tool_completion_to_context_engine() -> None:
+    class RecordingContextEngine(ContextEngine):
+        def __init__(self) -> None:
+            super().__init__()
+            self.build_calls = []
+
+        def build_frame(self, **kwargs):
+            recorded = dict(kwargs)
+            recorded["events"] = list(kwargs.get("events") or ())
+            self.build_calls.append(recorded)
+            return super().build_frame(**kwargs)
+
+    context_engine = RecordingContextEngine()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-current", "褰撳墠闂鐩稿叧鏍囧噯鍐呭")]),
+        controller=RetrieveThenComposeController(),
+        answer_generator=FakeAnswerGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+        context_engine=context_engine,
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="鏌ヨ褰撳墠闂瀵瑰簲鏍囧噯",
+            session_id="session-current-runtime-facts",
+            principal_id="admin:test",
+        )
+    )
+
+    assert result.publication_state == "published"
+    assert len(context_engine.build_calls) == 2
+    second_build = context_engine.build_calls[1]
+    assert second_build["current_turn_id"] == result.turn_id
+    assert second_build["events"][-1].event_type == "tool_completed", [event.event_type for event in second_build["events"]]
+    assert second_build["events"][-1].payload["status"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -286,7 +346,7 @@ async def test_runtime_resolves_main_model_once_and_preserves_identity_across_st
             self.model_names.append(model_name)
             return GeneratedAnswer(
                 kind="knowledge_answer",
-                answer="稳定模型身份回答",
+                answer="绋冲畾妯″瀷韬唤鍥炵瓟",
                 citations=tuple(item.citation_id for item in snapshot.items),
             )
 
@@ -303,7 +363,7 @@ async def test_runtime_resolves_main_model_once_and_preserves_identity_across_st
     generator = IdentityAnswerGenerator()
     reviewer = IdentityReviewer()
     runtime = AgentRuntime(
-        retrieval_port=FakeRetrievalPort([make_candidate("chunk-identity", "证据")]),
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-identity", "璇佹嵁")]),
         controller=controller,
         answer_generator=generator,
         reviewer=reviewer,
@@ -312,7 +372,7 @@ async def test_runtime_resolves_main_model_once_and_preserves_identity_across_st
 
     result = await runtime.run(
         AgentRunRequest(
-            question="要求？",
+            question="瑕佹眰锛?,
             session_id="session-identity",
             principal_id="admin:test",
             reviewer_enabled=True,
@@ -332,14 +392,14 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
     store = InMemoryAgentSessionStore()
     first_runtime = AgentRuntime(
         retrieval_port=FakeRetrievalPort(
-            [make_candidate("chunk-history", "历史滑坡监测要求")]
+            [make_candidate("chunk-history", "鍘嗗彶婊戝潯鐩戞祴瑕佹眰")]
         ),
         controller=RetrieveThenComposeController(),
         answer_generator=FakeAnswerGenerator(),
         session_store=store,
     )
     await first_runtime.run(
-        AgentRunRequest(question="滑坡监测要求", session_id="session-1", principal_id="admin:test")
+        AgentRunRequest(question="婊戝潯鐩戞祴瑕佹眰", session_id="session-1", principal_id="admin:test")
     )
 
     same_session_runtime = AgentRuntime(
@@ -349,7 +409,7 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
         session_store=store,
     )
     reused = await same_session_runtime.run(
-        AgentRunRequest(question="刚才那个要求呢？", session_id="session-1", principal_id="admin:test")
+        AgentRunRequest(question="鍒氭墠閭ｄ釜瑕佹眰鍛紵", session_id="session-1", principal_id="admin:test")
     )
     assert reused.frozen_evidence.items[0].chunk_id == "chunk-history"
 
@@ -361,7 +421,7 @@ async def test_same_session_can_explicitly_reuse_evidence_but_other_session_cann
     )
     with pytest.raises(ValueError, match="Frozen Evidence"):
         await other_session_runtime.run(
-            AgentRunRequest(question="刚才那个要求呢？", session_id="session-2", principal_id="admin:test")
+            AgentRunRequest(question="鍒氭墠閭ｄ釜瑕佹眰鍛紵", session_id="session-2", principal_id="admin:test")
         )
 
 
@@ -375,11 +435,11 @@ async def test_runtime_can_end_with_structured_clarification_without_evidence() 
     )
 
     result = await runtime.run(
-        AgentRunRequest(question="查一下这个", session_id="session-1", principal_id="admin:test")
+        AgentRunRequest(question="鏌ヤ竴涓嬭繖涓?, session_id="session-1", principal_id="admin:test")
     )
 
     assert result.publication_state == "clarification"
-    assert result.clarification == "请明确行政区。"
+    assert result.clarification == "璇锋槑纭鏀垮尯銆?
     assert result.answer is None
 
     session = runtime.session_store.get("admin:test", "session-1")
@@ -389,7 +449,7 @@ async def test_runtime_can_end_with_structured_clarification_without_evidence() 
         for event in session.events
         if event.event_type == "assistant_message"
     ]
-    assert assistant_messages[-1] == "请明确行政区。"
+    assert assistant_messages[-1] == "璇锋槑纭鏀垮尯銆?
 
 
 @pytest.mark.asyncio
@@ -404,7 +464,7 @@ async def test_reviewer_is_only_invoked_when_request_explicitly_enables_it() -> 
 
     reviewer = FakeReviewer()
     runtime = AgentRuntime(
-        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "证据")]),
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "璇佹嵁")]),
         controller=RetrieveThenComposeController(),
         answer_generator=FakeAnswerGenerator(),
         reviewer=reviewer,
@@ -412,11 +472,11 @@ async def test_reviewer_is_only_invoked_when_request_explicitly_enables_it() -> 
     )
 
     disabled = await runtime.run(
-        AgentRunRequest(question="问题一", session_id="session-1", principal_id="admin:test")
+        AgentRunRequest(question="闂涓€", session_id="session-1", principal_id="admin:test")
     )
     enabled = await runtime.run(
         AgentRunRequest(
-            question="问题二",
+            question="闂浜?,
             session_id="session-2",
             principal_id="admin:test",
             reviewer_enabled=True,
@@ -435,7 +495,7 @@ async def test_reviewer_rejection_blocks_publication() -> None:
             return SimpleNamespace(verdict="UNSUPPORTED", findings=())
 
     runtime = AgentRuntime(
-        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "证据")]),
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "璇佹嵁")]),
         controller=RetrieveThenComposeController(),
         answer_generator=FakeAnswerGenerator(),
         reviewer=RejectingReviewer(),
@@ -444,7 +504,7 @@ async def test_reviewer_rejection_blocks_publication() -> None:
 
     result = await runtime.run(
         AgentRunRequest(
-            question="问题",
+            question="闂",
             session_id="session-1",
             principal_id="admin:test",
             reviewer_enabled=True,
@@ -482,23 +542,23 @@ async def test_legacy_history_seeds_only_a_new_session_and_then_session_is_autho
 
     await runtime.run(
         AgentRunRequest(
-            question="第二问",
+            question="绗簩闂?,
             session_id="session-1",
             principal_id="admin:test",
-            legacy_history=({"role": "user", "content": "第一问"},),
+            legacy_history=({"role": "user", "content": "绗竴闂?},),
         )
     )
     await runtime.run(
         AgentRunRequest(
-            question="第三问",
+            question="绗笁闂?,
             session_id="session-1",
             principal_id="admin:test",
-            legacy_history=({"role": "user", "content": "伪造旧历史"},),
+            legacy_history=({"role": "user", "content": "浼€犳棫鍘嗗彶"},),
         )
     )
 
-    assert "第一问" in controller.contexts[0]
-    assert "伪造旧历史" not in controller.contexts[1]
+    assert "绗竴闂? in controller.contexts[0]
+    assert "浼€犳棫鍘嗗彶" not in controller.contexts[1]
 
 
 def test_session_store_isolates_same_session_id_by_principal() -> None:
@@ -520,7 +580,7 @@ async def test_runtime_reports_resource_fuse_as_structured_failure() -> None:
 
     result = await runtime.run(
         AgentRunRequest(
-            question="一直检索",
+            question="涓€鐩存绱?,
             session_id="session-fuse",
             principal_id="admin:test",
             max_steps=1,
@@ -529,7 +589,7 @@ async def test_runtime_reports_resource_fuse_as_structured_failure() -> None:
 
     assert result.publication_state == "resource_fuse"
     assert result.answer is None
-    assert result.limitation == "Agent 运行达到资源保护上限，未发布答案。"
+    assert result.limitation == "Agent 杩愯杈惧埌璧勬簮淇濇姢涓婇檺锛屾湭鍙戝竷绛旀銆?
     assert result.events[-1].payload["state"] == "resource_fuse"
 
     session = runtime.session_store.get("admin:test", "session-fuse")
@@ -568,7 +628,7 @@ async def test_runtime_reports_retrieval_unavailable_as_distinct_structured_fail
 
     result = await runtime.run(
         AgentRunRequest(
-            question="规划标准",
+            question="瑙勫垝鏍囧噯",
             session_id="session-retrieval-down",
             principal_id="admin:test",
         )
@@ -576,7 +636,7 @@ async def test_runtime_reports_retrieval_unavailable_as_distinct_structured_fail
 
     assert result.publication_state == "retrieval_unavailable"
     assert result.answer is None
-    assert result.limitation == "知识检索服务当前不可用，未发布答案。"
+    assert result.limitation == "鐭ヨ瘑妫€绱㈡湇鍔″綋鍓嶄笉鍙敤锛屾湭鍙戝竷绛旀銆?
     assert result.events[-1].payload["state"] == "retrieval_unavailable"
 
 
@@ -607,7 +667,7 @@ async def test_runtime_reports_invalid_controller_output_as_structured_failure()
 
     result = await runtime.run(
         AgentRunRequest(
-            question="问题",
+            question="闂",
             session_id="session-invalid-controller",
             principal_id="admin:test",
         )
@@ -639,7 +699,7 @@ async def test_runtime_returns_invalid_tool_arguments_to_controller_for_replanni
             return ToolCall(
                 tool_call_id="clarify-after-denial",
                 name="clarify",
-                arguments={"question": "请补充具体的土地整治问题。"},
+                arguments={"question": "璇疯ˉ鍏呭叿浣撶殑鍦熷湴鏁存不闂銆?},
             )
 
     controller = RecoveringController()
@@ -652,7 +712,7 @@ async def test_runtime_returns_invalid_tool_arguments_to_controller_for_replanni
 
     result = await runtime.run(
         AgentRunRequest(
-            question="问题",
+            question="闂",
             session_id="session-invalid-tool",
             principal_id="admin:test",
         )
@@ -677,7 +737,7 @@ async def test_runtime_reports_answer_generation_failure_as_structured_failure()
             raise AnswerGenerationError("invalid structured answer")
 
     runtime = AgentRuntime(
-        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "证据")]),
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "璇佹嵁")]),
         controller=RetrieveThenComposeController(),
         answer_generator=FailingGenerator(),
         session_store=InMemoryAgentSessionStore(),
@@ -685,7 +745,7 @@ async def test_runtime_reports_answer_generation_failure_as_structured_failure()
 
     result = await runtime.run(
         AgentRunRequest(
-            question="问题",
+            question="闂",
             session_id="session-invalid-answer",
             principal_id="admin:test",
         )
@@ -725,7 +785,7 @@ async def test_runtime_derives_reasoning_capability_from_model_adapter_not_reque
 
     await runtime.run(
         AgentRunRequest(
-            question="需要思考",
+            question="闇€瑕佹€濊€?,
             session_id="session-reasoning",
             principal_id="admin:test",
             thinking=True,

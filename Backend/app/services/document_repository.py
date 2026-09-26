@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import db_manager
+from app.services.document_chunker import compute_chunk_uid, compute_content_hash
 
 
 def _json(value: Any) -> str:
@@ -307,17 +308,37 @@ class DocumentRepository:
             await session.execute(delete_sql, {"document_id": document_id})
             for chunk in chunks:
                 embedding = chunk.get("embedding")
+                chunk_index = chunk["chunk_index"]
+                header_path = chunk.get("header_path")
+                content = chunk["content"]
+                content_hash = chunk.get("content_hash") or compute_content_hash(content)
+                chunk_id = (
+                    chunk.get("id")
+                    or chunk.get("chunk_uid")
+                    or compute_chunk_uid(
+                        document_id=document_id,
+                        section_path=header_path,
+                        chunk_index=chunk_index,
+                        content_hash=content_hash,
+                    )
+                )
+                chunk_metadata = dict(chunk.get("metadata") or {})
+                chunk_metadata.setdefault("chunk_uid", str(chunk_id))
+                chunk_metadata.setdefault("content_hash", content_hash)
+                if header_path is not None:
+                    chunk_metadata.setdefault("section_path", header_path)
+
                 await session.execute(
                     insert_sql,
                     {
-                        "id": str(uuid4()),
+                        "id": str(chunk_id),
                         "document_id": document_id,
                         "version_id": version_id,
-                        "chunk_index": chunk["chunk_index"],
-                        "header_path": chunk.get("header_path"),
+                        "chunk_index": chunk_index,
+                        "header_path": header_path,
                         "page_number": chunk.get("page_number"),
-                        "content": chunk["content"],
-                        "metadata": _json(chunk.get("metadata")),
+                        "content": content,
+                        "metadata": _json(chunk_metadata),
                         "embedding": str(embedding) if embedding is not None else None,
                         "created_at": now,
                     },

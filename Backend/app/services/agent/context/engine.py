@@ -16,21 +16,28 @@ from app.services.agent.context.snapshot import ContextSnapshot
 from app.services.agent.events import AgentEvent
 
 
-def extract_previous_turn_runtime_facts(events: Sequence[AgentEvent]) -> dict[str, Any]:
-    """Extract authoritative execution facts from the immediate previous turn."""
-    if not events:
-        return {}
-    turn_ids = []
-    for ev in reversed(events):
-        tid = getattr(ev, "turn_id", None)
-        if tid and tid not in turn_ids:
-            turn_ids.append(tid)
-    if not turn_ids:
-        return {}
-    target_turn_id = turn_ids[0]
-    prev_events = [ev for ev in events if getattr(ev, "turn_id", None) == target_turn_id]
-    if not prev_events:
-        return {}
+def _empty_turn_runtime_facts(turn_id: str | None) -> dict[str, Any]:
+    return {
+        "turn_id": turn_id,
+        "controller_actions": [],
+        "tool_calls": [],
+        "clarification": None,
+        "publication_state": None,
+        "review_verdict": None,
+        "map_facts": [],
+    }
+
+
+def _extract_turn_runtime_facts(
+    events: Sequence[AgentEvent], turn_id: str | None
+) -> dict[str, Any]:
+    """Extract authoritative execution facts for one explicitly identified turn."""
+    facts = _empty_turn_runtime_facts(turn_id)
+    if not turn_id:
+        return facts
+    turn_events = [ev for ev in events if getattr(ev, "turn_id", None) == turn_id]
+    if not turn_events:
+        return facts
 
     controller_actions: list[str] = []
     tool_calls: list[dict[str, Any]] = []
@@ -39,7 +46,7 @@ def extract_previous_turn_runtime_facts(events: Sequence[AgentEvent]) -> dict[st
     review_verdict: str | None = None
     map_facts: list[dict[str, Any]] = []
 
-    for ev in prev_events:
+    for ev in turn_events:
         t = ev.event_type
         p = ev.payload or {}
         if t == "controller_decision":
@@ -49,13 +56,19 @@ def extract_previous_turn_runtime_facts(events: Sequence[AgentEvent]) -> dict[st
         elif t == "tool_started":
             tool_calls.append({"tool": p.get("tool_name"), "status": "started", "call_id": p.get("tool_call_id")})
         elif t == "tool_completed":
-            for tc in tool_calls:
-                if tc.get("call_id") == p.get("tool_call_id"):
-                    tc["status"] = p.get("status", "completed")
-                    if "error" in p:
-                        tc["error"] = p["error"]
+            call = next((tc for tc in tool_calls if tc.get("call_id") == p.get("tool_call_id")), None)
+            if call is None:
+                call = {"tool": p.get("tool_name"), "call_id": p.get("tool_call_id")}
+                tool_calls.append(call)
+            call["status"] = p.get("status", "completed")
+            if "error" in p:
+                call["error"] = p["error"]
         elif t == "browser_tool_completed":
             map_facts.append({"tool": p.get("tool_name"), "status": p.get("status"), "effect": p.get("effect")})
+            for call in tool_calls:
+                if call.get("call_id") == p.get("tool_call_id"):
+                    call["status"] = p.get("status", "completed")
+                    call["source"] = "browser_receipt"
         elif t in ("clarification_requested", "clarify"):
             clarification = {"requested": True, "details": p}
         elif t == "publication_completed":
@@ -63,14 +76,43 @@ def extract_previous_turn_runtime_facts(events: Sequence[AgentEvent]) -> dict[st
         elif t == "review_completed":
             review_verdict = str(p.get("verdict") or "")
 
-    return {
-        "turn_id": target_turn_id,
+    facts.update({
         "controller_actions": controller_actions,
         "tool_calls": tool_calls,
         "clarification": clarification,
         "publication_state": publication_state,
         "review_verdict": review_verdict,
         "map_facts": map_facts,
+    })
+    return facts
+
+
+def extract_previous_turn_runtime_facts(events: Sequence[AgentEvent]) -> dict[str, Any]:
+    """Extract facts from the most recently represented turn (legacy helper)."""
+    turn_id = next(
+        (getattr(ev, "turn_id", None) for ev in reversed(events) if getattr(ev, "turn_id", None)),
+        None,
+    )
+    if not turn_id:
+        return {}
+    return _extract_turn_runtime_facts(events, turn_id)
+
+
+def extract_scoped_runtime_facts(
+    events: Sequence[AgentEvent], *, current_turn_id: str
+) -> dict[str, Any]:
+    """Return explicitly namespaced facts for current and immediately prior turns."""
+    previous_turn_id = next(
+        (
+            getattr(ev, "turn_id", None)
+            for ev in reversed(events)
+            if getattr(ev, "turn_id", None) and getattr(ev, "turn_id", None) != current_turn_id
+        ),
+        None,
+    )
+    return {
+        "current_turn": _extract_turn_runtime_facts(events, current_turn_id),
+        "previous_turn": _extract_turn_runtime_facts(events, previous_turn_id),
     }
 
 
@@ -92,6 +134,7 @@ class ContextEngine:
         spatial_context: Mapping[str, Any] | None = None,
         tool_contracts: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        current_turn_id: str | None = None,
     ) -> ContextFrame:
         """Construct a structured ContextFrame from session facts and runtime inputs."""
         conv_list: list[dict[str, Any]] = []
@@ -100,6 +143,8 @@ class ContextEngine:
         for ev in events:
             source_event_ids.append(ev.event_id)
             if ev.event_type in {"user_message", "assistant_message"}:
+                if ev.event_type == "user_message" and current_turn_id and ev.turn_id == current_turn_id:
+                    continue
                 text = ev.payload.get("text")
                 if isinstance(text, str) and text.strip():
                     conv_list.append({
@@ -132,7 +177,11 @@ class ContextEngine:
                     "selectable_for_snapshot": True,
                 })
 
-        runtime_facts = extract_previous_turn_runtime_facts(events)
+        runtime_facts = (
+            extract_scoped_runtime_facts(events, current_turn_id=current_turn_id)
+            if current_turn_id is not None
+            else extract_previous_turn_runtime_facts(events)
+        )
         if metadata:
             runtime_facts.update({k: v for k, v in metadata.items() if k not in runtime_facts})
 
@@ -191,7 +240,10 @@ class ContextEngine:
 
         session_id = str(frame.session.get("session_id") or "")
         turn_id = "current"
-        if frame.conversation:
+        current_facts = frame.runtime_facts.get("current_turn") if isinstance(frame.runtime_facts, Mapping) else None
+        if isinstance(current_facts, Mapping) and current_facts.get("turn_id"):
+            turn_id = str(current_facts["turn_id"])
+        elif frame.conversation:
             turn_id = str(frame.conversation[-1].get("turn_id") or "current")
 
         snapshot = ContextSnapshot.create(

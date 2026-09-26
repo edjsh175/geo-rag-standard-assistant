@@ -13,6 +13,7 @@ from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.structured_candidate import (
     StructuredCandidateProtocolError,
     execute_structured_candidate,
+    extract_json_object,
 )
 
 
@@ -254,14 +255,7 @@ class AnswerGenerator:
         *,
         snapshot: FrozenEvidenceSnapshot,
     ) -> GeneratedAnswer:
-        if not content or not content.strip():
-            raise ValueError("empty structured output")
-        try:
-            payload = json.loads(content)
-        except (TypeError, json.JSONDecodeError):
-            raise ValueError("invalid structured output")
-        if not isinstance(payload, dict):
-            raise ValueError("invalid structured output")
+        payload = extract_json_object(content)
 
         kind = payload.get("kind")
         if kind != "knowledge_answer":

@@ -14,6 +14,7 @@ from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.structured_candidate import (
     StructuredCandidateProtocolError,
     execute_structured_candidate,
+    extract_json_object,
 )
 
 
@@ -109,14 +110,7 @@ class GroundingReviewer:
         snapshot: FrozenEvidenceSnapshot,
         expected_unit_ids: tuple[str, ...],
     ) -> ReviewResult:
-        if not content:
-            raise ValueError("reviewer returned empty structured output")
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError("reviewer returned invalid structured output") from exc
-        if not isinstance(payload, dict):
-            raise ValueError("reviewer returned invalid structured output")
+        payload = extract_json_object(content)
 
         verdict = payload.get("verdict")
         raw_findings = payload.get("findings")
@@ -180,18 +174,30 @@ def build_answer_repair_scope(
     findings_by_unit = {getattr(f, "unit_id", ""): f for f in raw_findings}
     immutable_units: list[str] = []
     editable_units: list[dict[str, Any]] = []
-    allowed_evidence = [item.citation_id for item in snapshot.items]
+    all_snapshot_citations = {item.citation_id for item in snapshot.items}
 
     for unit in answer.units:
         finding = findings_by_unit.get(unit.unit_id)
         if finding and finding.status == "SUPPORTED":
             immutable_units.append(unit.unit_id)
         else:
+            # Tighten to finding-linked / unit-linked evidence within the frozen snapshot
+            finding_citations = tuple(getattr(finding, "citations", ())) if finding else ()
+            linked_citations = [
+                c for c in dict.fromkeys((*finding_citations, *unit.citations))
+                if c in all_snapshot_citations
+            ]
+            unit_allowed_evidence = (
+                linked_citations
+                if linked_citations
+                else [item.citation_id for item in snapshot.items]
+            )
+
             editable_units.append({
                 "unit_id": unit.unit_id,
                 "status": finding.status if finding else "UNSUPPORTED",
                 "current_text": unit.text,
-                "allowed_evidence_ids": allowed_evidence,
+                "allowed_evidence_ids": unit_allowed_evidence,
             })
 
     return {

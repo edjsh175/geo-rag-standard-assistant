@@ -3,9 +3,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import re
+import uuid
 
 from app.services.document_parser import ParsedDocument
+
+
+GEOAI_CHUNK_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "chunk.geoai.local")
+
+
+def compute_content_hash(content: str) -> str:
+    """Compute deterministic SHA-256 fingerprint for chunk content."""
+    return hashlib.sha256((content or "").strip().encode("utf-8")).hexdigest()
+
+
+def compute_chunk_uid(
+    document_id: str,
+    section_path: str | None,
+    chunk_index: int,
+    content_hash: str,
+) -> str:
+    """Deterministically derive stable logical chunk_uid (RFC 4122 UUIDv5).
+
+    Reindexing logically unchanged chunks retains their citation / Evidence identity.
+    """
+    norm_doc = str(document_id or "").strip()
+    norm_section = str(section_path or "").strip()
+    norm_index = int(chunk_index)
+    norm_hash = str(content_hash or "").strip()
+    key = f"{norm_doc}:{norm_section}:{norm_index}:{norm_hash}"
+    return str(uuid.uuid5(GEOAI_CHUNK_NAMESPACE, key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +41,11 @@ class DocumentChunk:
     content: str
     header_path: str | None = None
     page_number: int | None = None
+    content_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.content_hash:
+            object.__setattr__(self, "content_hash", compute_content_hash(self.content))
 
 
 class DocumentChunker:

@@ -74,8 +74,13 @@ class LLMConfigStageModelClient:
     async def complete(self, request: ModelRequest) -> ModelResponse:
         started_at = monotonic()
         outcome = "error"
+        from app.core.config import settings
+        is_deepseek = (
+            getattr(settings, "LLM_PROVIDER", None) == "deepseek"
+            or "deepseek" in str(request.model_name or "").lower()
+        )
         try:
-            if request.response_schema:
+            if request.response_schema and not is_deepseek:
                 structured_output = {
                     "response_format": {
                         "type": "json_schema",
@@ -85,7 +90,7 @@ class LLMConfigStageModelClient:
                         },
                     }
                 }
-            elif request.stage in {"controller", "answer_generation", "reviewer"}:
+            elif request.response_schema or request.stage in {"controller", "answer_generation", "reviewer"}:
                 structured_output = {"response_format": {"type": "json_object"}}
             else:
                 structured_output = {}

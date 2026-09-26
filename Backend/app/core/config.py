@@ -6,7 +6,10 @@ Use environment variables in production.
 from pathlib import Path
 from typing import List, Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+SCHEMA_VECTOR_DIMENSION: int = 2048
 
 
 class Settings(BaseSettings):
@@ -21,6 +24,9 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://localhost:8080",
         "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:3000",
     ]
 
     DATABASE_URL: str = "postgresql+asyncpg://geoai:geoai_dev_password@localhost:5432/geoai_db"
@@ -93,11 +99,46 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FILE: Optional[Path] = Path("logs/geoai.log")
 
+    @field_validator("PG_VECTOR_DIMENSION")
+    @classmethod
+    def validate_pg_vector_dimension(cls, v: int) -> int:
+        if v != SCHEMA_VECTOR_DIMENSION:
+            raise ValueError(
+                f"PG_VECTOR_DIMENSION must be {SCHEMA_VECTOR_DIMENSION} "
+                f"(database schema invariant in policy_chunks and document_chunks tables, got {v})"
+            )
+        return v
+
+    @field_validator("OLLAMA_EMBEDDING_DIMENSIONS")
+    @classmethod
+    def validate_ollama_embedding_dimensions(cls, v: int) -> int:
+        if v != SCHEMA_VECTOR_DIMENSION:
+            raise ValueError(
+                f"OLLAMA_EMBEDDING_DIMENSIONS must be {SCHEMA_VECTOR_DIMENSION} "
+                f"(database schema invariant in policy_chunks and document_chunks tables, got {v})"
+            )
+        return v
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
         extra = "ignore"
+
+
+def validate_embedding_dimension_invariants(cfg: Settings | None = None) -> None:
+    """Validate that PG_VECTOR_DIMENSION and OLLAMA_EMBEDDING_DIMENSIONS satisfy the schema invariant (2048)."""
+    current = cfg or settings
+    if current.PG_VECTOR_DIMENSION != SCHEMA_VECTOR_DIMENSION:
+        raise ValueError(
+            f"PG_VECTOR_DIMENSION must be {SCHEMA_VECTOR_DIMENSION} "
+            f"(database schema invariant in policy_chunks and document_chunks tables, got {current.PG_VECTOR_DIMENSION})"
+        )
+    if current.OLLAMA_EMBEDDING_DIMENSIONS != SCHEMA_VECTOR_DIMENSION:
+        raise ValueError(
+            f"OLLAMA_EMBEDDING_DIMENSIONS must be {SCHEMA_VECTOR_DIMENSION} "
+            f"(database schema invariant in policy_chunks and document_chunks tables, got {current.OLLAMA_EMBEDDING_DIMENSIONS})"
+        )
 
 
 settings = Settings()

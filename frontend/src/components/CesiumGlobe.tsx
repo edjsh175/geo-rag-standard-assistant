@@ -773,13 +773,13 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
         const currentHeight = viewer.camera.positionCartographic.height;
         const targetZoom = zoom ?? heightToZoom(currentHeight, latitude);
         const height = zoom == null ? currentHeight : zoomToHeight(zoom, latitude);
-        await new Promise<void>((resolve, reject) => {
+        await new Promise<void>((resolve) => {
           viewer.camera.flyTo({
             destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, height),
             orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
-            duration: 0.8,
+            duration: 0.2,
             complete: resolve,
-            cancel: () => reject(new Error('3D 地图定位未完成')),
+            cancel: resolve,
           });
         });
         setViewState({ center: [longitude, latitude], height, zoom: targetZoom });

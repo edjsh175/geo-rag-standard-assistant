@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 import json
 import logging
 from typing import Any, Mapping, Sequence
@@ -21,12 +23,18 @@ from app.services.agent.contracts import EvidenceItem
 from app.services.agent.events import AgentEvent
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.session import AgentSession, PendingBrowserExecution
+from app.services.agent.tool_runtime import RetrievalRequestConstraints, ToolObservation
+from app.models.search_models import MetadataFilter, SpatialFilter
 
 logger = logging.getLogger(__name__)
 
 
 def _json_dumps(val: Any) -> str:
     return json.dumps(val, ensure_ascii=False, default=str, sort_keys=True)
+
+
+def _pending_json_dumps(val: Any) -> str:
+    return json.dumps(_pending_json_value(val), ensure_ascii=False, allow_nan=False, sort_keys=True)
 
 
 def _json_loads(val: Any) -> Any:
@@ -40,6 +48,87 @@ def _json_loads(val: Any) -> Any:
         return val
 
 
+def _pending_json_value(value: Any) -> Any:
+    """Convert pending state values to JSON-safe primitives without stringifying objects."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return _pending_json_value(value.value)
+    if isinstance(value, Mapping):
+        return {str(key): _pending_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_pending_json_value(item) for item in value]
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        return _pending_json_value(value.model_dump(mode="python"))
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            item.name: _pending_json_value(getattr(value, item.name))
+            for item in fields(value)
+        }
+    raise TypeError(f"unsupported pending execution JSON value: {type(value).__name__}")
+
+
+def _serialize_pending_observation(value: Any) -> dict[str, Any]:
+    if not isinstance(value, ToolObservation):
+        raise TypeError("pending observations must be ToolObservation instances")
+    return {
+        "__pending_type__": "ToolObservation",
+        "tool_call_id": value.tool_call_id,
+        "tool_name": value.tool_name,
+        "status": value.status,
+        "payload": _pending_json_value(value.payload),
+        "is_terminal": value.is_terminal,
+    }
+
+
+def _deserialize_pending_observation(value: Any) -> ToolObservation:
+    if not isinstance(value, Mapping) or value.get("__pending_type__") != "ToolObservation":
+        raise ValueError("pending execution contains an invalid observation")
+    payload = value.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ValueError("pending execution observation payload is invalid")
+    return ToolObservation(
+        tool_call_id=str(value["tool_call_id"]),
+        tool_name=str(value["tool_name"]),
+        status=str(value["status"]),
+        payload=dict(payload),
+        is_terminal=bool(value.get("is_terminal", False)),
+    )
+
+
+def _serialize_retrieval_constraints(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, RetrievalRequestConstraints):
+        raise TypeError("pending retrieval_constraints must be RetrievalRequestConstraints")
+    return {
+        "__pending_type__": "RetrievalRequestConstraints",
+        "top_k": value.top_k,
+        "threshold": value.threshold,
+        "search_mode": value.search_mode,
+        "use_rerank": value.use_rerank,
+        "metadata_filter": _pending_json_value(value.metadata_filter) if value.metadata_filter else None,
+        "spatial_filter": _pending_json_value(value.spatial_filter) if value.spatial_filter else None,
+    }
+
+
+def _deserialize_retrieval_constraints(value: Any) -> RetrievalRequestConstraints | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or value.get("__pending_type__") != "RetrievalRequestConstraints":
+        raise ValueError("pending execution retrieval constraints are invalid")
+    metadata_filter = value.get("metadata_filter")
+    spatial_filter = value.get("spatial_filter")
+    return RetrievalRequestConstraints(
+        top_k=int(value["top_k"]),
+        threshold=float(value["threshold"]),
+        search_mode=str(value["search_mode"]),
+        use_rerank=bool(value["use_rerank"]),
+        metadata_filter=MetadataFilter.model_validate(metadata_filter) if metadata_filter is not None else None,
+        spatial_filter=SpatialFilter.model_validate(spatial_filter) if spatial_filter is not None else None,
+    )
 class AgentStore(ABC):
     """Abstract persistence contract for Agent sessions, events, evidence, and snapshots."""
 
@@ -547,7 +636,7 @@ class PostgresAgentStore(AgentStore):
                     event_id, principal_id, session_id, turn_id, trace_id, sequence, event_type, payload, created_at
                 )
                 VALUES (
-                    :event_id, :principal_id, :session_id, :turn_id, :trace_id, :sequence, :event_type, :payload::jsonb, :created_at
+                    :event_id, :principal_id, :session_id, :turn_id, :trace_id, :sequence, :event_type, CAST(:payload AS jsonb), :created_at
                 )
                 """
             )
@@ -646,7 +735,7 @@ class PostgresAgentStore(AgentStore):
                 )
                 VALUES (
                     :id, :principal_id, :session_id, :evidence_id, :citation_id, :first_turn_id,
-                    :chunk_id, :document_id, :text, :title, :score, :metadata::jsonb, :source, :match_type, :content_hash, TRUE
+                    :chunk_id, :document_id, :text, :title, :score, CAST(:metadata AS jsonb), :source, :match_type, :content_hash, TRUE
                 )
                 ON CONFLICT (principal_id, session_id, evidence_id) DO UPDATE SET
                     citation_id = EXCLUDED.citation_id,
@@ -737,7 +826,7 @@ class PostgresAgentStore(AgentStore):
                 )
                 VALUES (
                     :snapshot_id, :principal_id, :session_id, :turn_id, :stage,
-                    :projection_hash, :snapshot_payload::jsonb, :token_usage_estimate, :source_event_ids::jsonb, :created_at
+                    :projection_hash, CAST(:snapshot_payload AS jsonb), :token_usage_estimate, CAST(:source_event_ids AS jsonb), :created_at
                 )
                 ON CONFLICT (snapshot_id) DO NOTHING
                 """
@@ -827,8 +916,8 @@ class PostgresAgentStore(AgentStore):
                 )
                 VALUES (
                     :token, :principal_id, :session_id, :question, :turn_id, :trace_id, :tool_call_id, :tool_name,
-                    :observations::jsonb, :request_context::jsonb, :reviewer_enabled, :thinking, :max_steps, :steps_used,
-                    :max_elapsed_seconds, :retrieval_constraints::jsonb, :main_model_name, 'awaiting_browser', :expires_at
+                    CAST(:observations AS jsonb), CAST(:request_context AS jsonb), :reviewer_enabled, :thinking, :max_steps, :steps_used,
+                    :max_elapsed_seconds, CAST(:retrieval_constraints AS jsonb), :main_model_name, 'awaiting_browser', :expires_at
                 )
                 ON CONFLICT (token) DO UPDATE SET
                     status = 'awaiting_browser',
@@ -848,14 +937,20 @@ class PostgresAgentStore(AgentStore):
                     "trace_id": pending.trace_id,
                     "tool_call_id": pending.tool_call_id,
                     "tool_name": pending.tool_name,
-                    "observations": _json_dumps(list(pending.observations)),
+                    "observations": _pending_json_dumps(
+                        [_serialize_pending_observation(item) for item in pending.observations]
+                    ),
                     "request_context": _json_dumps(dict(pending.request_context)),
                     "reviewer_enabled": pending.reviewer_enabled,
                     "thinking": pending.thinking,
                     "max_steps": pending.max_steps,
                     "steps_used": pending.steps_used,
                     "max_elapsed_seconds": pending.max_elapsed_seconds,
-                    "retrieval_constraints": _json_dumps(pending.retrieval_constraints) if pending.retrieval_constraints else None,
+                    "retrieval_constraints": (
+                        _pending_json_dumps(_serialize_retrieval_constraints(pending.retrieval_constraints))
+                        if pending.retrieval_constraints is not None
+                        else None
+                    ),
                     "main_model_name": pending.main_model_name,
                     "expires_at": expires_at,
                 },
@@ -872,11 +967,11 @@ class PostgresAgentStore(AgentStore):
         async with self._manager.get_postgres_session() as db_session:
             sql = text(
                 """
-                SELECT token, question, turn_id, trace_id, tool_call_id, tool_name,
+                SELECT token, session_id, question, turn_id, trace_id, tool_call_id, tool_name,
                        observations, request_context, reviewer_enabled, thinking, max_steps,
                        steps_used, max_elapsed_seconds, retrieval_constraints, main_model_name, expires_at
                 FROM geoai_pending_browser_executions
-                WHERE principal_id = :principal_id AND (session_id = :session_id OR session_id = '') AND status = 'awaiting_browser'
+                WHERE principal_id = :principal_id AND session_id = :session_id AND status = 'awaiting_browser'
                 ORDER BY created_at DESC
                 LIMIT 1
                 """
@@ -895,21 +990,34 @@ class PostgresAgentStore(AgentStore):
         if expires_at and datetime.now(timezone.utc) > expires_at:
             return None
 
+        try:
+            observations = tuple(
+                _deserialize_pending_observation(item)
+                for item in (_json_loads(row["observations"]) or ())
+            )
+            retrieval_constraints = _deserialize_retrieval_constraints(
+                _json_loads(row["retrieval_constraints"])
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("Ignoring invalid persisted browser continuation for session %s: %s", session_id, exc)
+            return None
+
         return PendingBrowserExecution(
             token=row["token"],
+            session_id=row.get("session_id") or session_id.strip(),
             question=row["question"],
             turn_id=row["turn_id"],
             trace_id=row["trace_id"],
             tool_call_id=row["tool_call_id"],
             tool_name=row["tool_name"],
-            observations=tuple(_json_loads(row["observations"]) or ()),
+            observations=observations,
             request_context=_json_loads(row["request_context"]) or {},
             reviewer_enabled=bool(row["reviewer_enabled"]),
             thinking=bool(row["thinking"]),
             max_steps=int(row["max_steps"]),
             steps_used=int(row["steps_used"]),
             max_elapsed_seconds=float(row["max_elapsed_seconds"]),
-            retrieval_constraints=_json_loads(row["retrieval_constraints"]),
+            retrieval_constraints=retrieval_constraints,
             main_model_name=row["main_model_name"],
         )
 
@@ -926,11 +1034,10 @@ class PostgresAgentStore(AgentStore):
                 """
                 UPDATE geoai_pending_browser_executions
                 SET status = 'resumed'
-                WHERE principal_id = :principal_id AND (session_id = :session_id OR session_id = '') AND status = 'awaiting_browser'
+                WHERE principal_id = :principal_id AND session_id = :session_id AND status = 'awaiting_browser'
                 """
             )
             await db_session.execute(
                 sql,
                 {"principal_id": principal_id.strip(), "session_id": session_id.strip()},
             )
-

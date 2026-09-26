@@ -18,7 +18,7 @@ class PublicationStateError(ValueError):
     pass
 
 
-_PUBLISHABLE_STATES = {"published", "clarification", "limitation"}
+_PUBLISHABLE_STATES = {"published", "clarification", "clarification_required", "limitation"}
 _CONTINUATION_STATES = {"tool_execution_required"}
 _BLOCKED_STATES = {
     "resource_fuse",

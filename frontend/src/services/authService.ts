@@ -8,16 +8,27 @@ type DemoLoginResponse = components['schemas']['DemoLoginResponse'];
 
 export const authService = {
   async login(credentials: LoginCredentials): Promise<AuthUser> {
-    const response: LoginResponse = await apiPost('/api/auth/login', credentials);
+    const response = await apiPost('/api/auth/login', credentials) as LoginResponse & { token?: string; access_token?: string };
+    const token = response.token || response.access_token;
+    if (token && typeof window !== 'undefined') {
+      localStorage.setItem('geoai_token', token);
+    }
     return response.user;
   },
 
   async logout(): Promise<void> {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('geoai_token');
+    }
     await apiPost('/api/auth/logout');
   },
 
   async startDemo(): Promise<AuthUser> {
-    const response: DemoLoginResponse = await apiPost('/api/auth/demo');
+    const response = await apiPost('/api/auth/demo') as DemoLoginResponse & { token?: string; access_token?: string };
+    const token = response.token || response.access_token;
+    if (token && typeof window !== 'undefined') {
+      localStorage.setItem('geoai_token', token);
+    }
     return {
       ...response.user,
       quota: response.quota,

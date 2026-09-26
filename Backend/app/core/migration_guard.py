@@ -42,7 +42,11 @@ async def verify_required_database_tables(
     engine: AsyncEngine | None,
     required_tables: Sequence[str] | None = None,
 ) -> None:
-    """Verify that all required tables exist in PostgreSQL public schema."""
+    """Verify that all required tables exist in PostgreSQL public schema and embedding dimension invariants hold."""
+    from app.core.config import validate_embedding_dimension_invariants
+
+    validate_embedding_dimension_invariants()
+
     if engine is None:
         raise DatabaseMigrationError("PostgreSQL engine is not initialized.")
 

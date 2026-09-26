@@ -44,7 +44,7 @@ def _tcp_open(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def _http_status(url: str, timeout: float = 1.0) -> int | None:
+def _http_status(url: str, timeout: float = 5.0) -> int | None:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             return response.status

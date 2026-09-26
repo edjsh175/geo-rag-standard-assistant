@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 from app.services.demo_quota_service import DemoQuotaStatus
 from app.services.agent.contracts import MapAction
@@ -169,6 +169,27 @@ class SearchResponse(BaseModel):
         None,
         description="Opaque token required to resume a pending browser GIS tool call.",
     )
+
+    @field_serializer("map_action", when_used="always")
+    def serialize_map_action(self, value: Optional[MapAction]) -> Optional[Dict[str, Any]]:
+        if value is None:
+            return None
+        payload = getattr(value, "payload", None)
+        if isinstance(payload, Mapping):
+            def _unfreeze(v: Any) -> Any:
+                if isinstance(v, Mapping):
+                    return {str(k): _unfreeze(val) for k, val in v.items()}
+                if isinstance(v, (list, tuple)):
+                    return [_unfreeze(val) for val in v]
+                return v
+            payload = _unfreeze(payload)
+        return {
+            "type": getattr(value, "type", ""),
+            "target": getattr(value, "target", ""),
+            "adcode": getattr(value, "adcode", None),
+            "name": getattr(value, "name", None),
+            "payload": payload,
+        }
 
 
 class SearchHistory(BaseModel):

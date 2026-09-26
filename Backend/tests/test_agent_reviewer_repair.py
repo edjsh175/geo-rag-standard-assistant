@@ -84,8 +84,8 @@ def test_build_answer_repair_scope():
     assert scope["immutable_units"] == ["unit-1"]
     assert len(scope["editable_units"]) == 1
     assert scope["editable_units"][0]["unit_id"] == "unit-2"
-    assert "E1" in scope["editable_units"][0]["allowed_evidence_ids"]
-    assert "E2" in scope["editable_units"][0]["allowed_evidence_ids"]
+    # Unit 2 was linked to E2; E1 belongs to unit 1 and must NOT be allowed
+    assert scope["editable_units"][0]["allowed_evidence_ids"] == ["E2"]
 
 
 def test_validate_answer_repair_draft_success():

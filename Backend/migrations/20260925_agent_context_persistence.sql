@@ -2,9 +2,9 @@
 -- Stores Agent sessions, events (event sourcing), evidence items, context snapshots, and pending browser tool executions.
 
 CREATE TABLE IF NOT EXISTS geoai_agent_sessions (
-    id VARCHAR(64) PRIMARY KEY,
-    principal_id VARCHAR(64) NOT NULL,
-    session_id VARCHAR(64) NOT NULL,
+    id VARCHAR(255) PRIMARY KEY,
+    principal_id VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
     workspace_id VARCHAR(64) NOT NULL DEFAULT 'default',
     status VARCHAR(32) NOT NULL DEFAULT 'active',
     next_turn_number INTEGER NOT NULL DEFAULT 1,
@@ -23,8 +23,8 @@ CREATE INDEX IF NOT EXISTS idx_geoai_agent_sessions_updated_at
 
 CREATE TABLE IF NOT EXISTS geoai_agent_events (
     event_id VARCHAR(64) PRIMARY KEY,
-    principal_id VARCHAR(64) NOT NULL,
-    session_id VARCHAR(64) NOT NULL,
+    principal_id VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
     turn_id VARCHAR(64) NOT NULL,
     trace_id VARCHAR(64) NOT NULL DEFAULT '',
     sequence BIGINT NOT NULL,
@@ -42,9 +42,9 @@ CREATE INDEX IF NOT EXISTS idx_geoai_agent_events_created_at
 
 
 CREATE TABLE IF NOT EXISTS geoai_agent_evidence (
-    id VARCHAR(64) PRIMARY KEY,
-    principal_id VARCHAR(64) NOT NULL,
-    session_id VARCHAR(64) NOT NULL,
+    id VARCHAR(255) PRIMARY KEY,
+    principal_id VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
     evidence_id VARCHAR(64) NOT NULL,
     citation_id VARCHAR(64) NOT NULL,
     first_turn_id VARCHAR(64) NOT NULL,
@@ -68,8 +68,8 @@ CREATE INDEX IF NOT EXISTS idx_geoai_agent_evidence_session_active
 
 CREATE TABLE IF NOT EXISTS geoai_context_snapshots (
     snapshot_id VARCHAR(64) PRIMARY KEY,
-    principal_id VARCHAR(64) NOT NULL,
-    session_id VARCHAR(64) NOT NULL,
+    principal_id VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
     turn_id VARCHAR(64) NOT NULL,
     stage VARCHAR(32) NOT NULL,
     projection_hash VARCHAR(64) NOT NULL,
@@ -88,8 +88,8 @@ CREATE INDEX IF NOT EXISTS idx_geoai_context_snapshots_hash
 
 CREATE TABLE IF NOT EXISTS geoai_pending_browser_executions (
     token VARCHAR(64) PRIMARY KEY,
-    principal_id VARCHAR(64) NOT NULL,
-    session_id VARCHAR(64) NOT NULL,
+    principal_id VARCHAR(255) NOT NULL,
+    session_id VARCHAR(255) NOT NULL,
     question TEXT NOT NULL,
     turn_id VARCHAR(64) NOT NULL,
     trace_id VARCHAR(64) NOT NULL,

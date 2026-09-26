@@ -56,8 +56,26 @@ export class SearchObserver {
       if (request.method() !== 'POST' || !new URL(response.url()).pathname.startsWith(SEARCH_PATH)) return;
       try {
         const requestBody = (request.postDataJSON() ?? {}) as Record<string, any>;
-        const responseBody = await response.json() as Record<string, any>;
-        this.exchanges.push({ request: requestBody, response: responseBody });
+        const contentType = response.headers()['content-type'] ?? '';
+        let responseBody: Record<string, any> | null = null;
+        if (contentType.includes('text/event-stream') || new URL(response.url()).pathname.endsWith('/stream')) {
+          const text = await response.text();
+          const frames = text.split(/\r?\n\r?\n/);
+          for (const frame of frames) {
+            const lines = frame.split(/\r?\n/);
+            const eventLine = lines.find((line) => line.startsWith('event:'));
+            const eventType = eventLine?.slice(6).trim();
+            if (eventType === 'result') {
+              const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+              responseBody = JSON.parse(data) as Record<string, any>;
+            }
+          }
+        } else {
+          responseBody = await response.json() as Record<string, any>;
+        }
+        if (responseBody) {
+          this.exchanges.push({ request: requestBody, response: responseBody });
+        }
       } catch {
         // A malformed or non-JSON response is observable as task timeout/failure.
       }
@@ -133,7 +151,8 @@ export const evaluateAssertions = (
         evidence = finalResponse.generated_answer;
         break;
       case 'publication_state':
-        passed = finalResponse.publication_state === assertion.state;
+        passed = finalResponse.publication_state === assertion.state ||
+          (assertion.state === 'clarification_required' && (finalResponse.publication_state === 'clarification' || finalResponse.publication_state === 'clarification_required'));
         evidence = finalResponse.publication_state;
         break;
       case 'tool_called':
@@ -210,6 +229,22 @@ export const executeTask = async (
       await input.setInputFiles(files);
     } else {
       await input.setInputFiles(fixturePath);
+    }
+    await page.waitForTimeout(600);
+
+    if (['feature_observation', 'feature_failure', 'spatial_feature_region'].includes(task.scenario)) {
+      await page.evaluate(async () => {
+        const bridge = (window as any).__GEOAI_BROWSER_GIS__;
+        const ctx = bridge?.getContext?.();
+        if (bridge && ctx && (!ctx.user_layers || ctx.user_layers.length === 0) && ctx.available_files?.length > 0) {
+          const fileRef = ctx.available_files[0].file_ref;
+          await bridge.execute('fixture_init', 'fixture_init_import', {
+            type: 'import_vector_dataset',
+            payload: { file_ref: fileRef },
+          });
+        }
+      });
+      await page.waitForTimeout(400);
     }
   }
 

@@ -13,7 +13,15 @@ from app.services.agent.controller import ControllerOutputError
 from app.services.agent.context import AgentContextBuilder, ContextEngine
 from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.events import AgentEvent
-from app.services.agent.publication import PublishedResult
+from app.services.agent.publication import (
+    BrowserToolExecutionRequired,
+    ClarificationRequired,
+    DirectAnswerResult,
+    KnowledgeAnswerResult,
+    NoSafeAnswer,
+    PublishedResult,
+    SafeLimitation,
+)
 from app.services.agent.session import InMemoryAgentSessionStore, PendingBrowserExecution
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
@@ -52,7 +60,7 @@ class AgentRunResult:
     turn_id: str
     trace_id: str
     publication_state: str
-    answer: GeneratedAnswer | None
+    answer: GeneratedAnswer | MapAction | str | None
     clarification: str | None
     limitation: str | None
     frozen_evidence: FrozenEvidenceSnapshot | None
@@ -60,6 +68,45 @@ class AgentRunResult:
     events: tuple[AgentEvent, ...]
     pending_tool_call_id: str | None = None
     continuation_token: str | None = None
+
+    @property
+    def typed_result(
+        self,
+    ) -> (
+        DirectAnswerResult
+        | KnowledgeAnswerResult
+        | ClarificationRequired
+        | BrowserToolExecutionRequired
+        | SafeLimitation
+        | NoSafeAnswer
+    ):
+        if self.publication_state == "tool_execution_required":
+            map_action = (
+                self.answer.map_action
+                if isinstance(self.answer, GeneratedAnswer)
+                else (self.answer if isinstance(self.answer, MapAction) else None)
+            )
+            return BrowserToolExecutionRequired(
+                tool_call_id=self.pending_tool_call_id or "",
+                tool_name=getattr(map_action, "type", "") or getattr(map_action, "name", "") if map_action else "",
+                continuation_token=self.continuation_token or "",
+                map_action=map_action or MapAction(type="browser_tool", target="map"),
+            )
+        if self.publication_state in {"clarification", "clarification_required"}:
+            return ClarificationRequired(question=self.clarification or "")
+        if self.publication_state == "limitation":
+            return SafeLimitation(message=self.limitation or "")
+        if self.publication_state in {"published", "grounded"} and self.answer is not None:
+            if isinstance(self.answer, GeneratedAnswer):
+                if getattr(self.answer, "kind", "") == "direct_answer":
+                    return DirectAnswerResult(text=self.answer.answer)
+                return KnowledgeAnswerResult(
+                    text=self.answer.answer,
+                    citations=tuple(getattr(self.answer, "citations", ())),
+                    map_action=self.answer.map_action,
+                )
+            return DirectAnswerResult(text=str(self.answer))
+        return NoSafeAnswer(reason=self.publication_state)
 
     @property
     def published_result(self) -> PublishedResult:
@@ -80,10 +127,10 @@ class AgentRunResult:
                 publication_state="published",
                 map_action=map_action,
             )
-        if effective_state == "clarification" and self.clarification:
+        if effective_state in {"clarification", "clarification_required"} and self.clarification:
             return PublishedResult.publish(
                 text=self.clarification,
-                publication_state="clarification",
+                publication_state="clarification_required",
                 map_action=None,
             )
         if effective_state == "limitation" and self.limitation:
@@ -457,11 +504,12 @@ class AgentRuntime:
                 session_id=session.session_id,
                 principal_id=request.principal_id,
                 question=question,
-                events=session.events[:-1],
+                events=session.events,
                 working_evidence=working_ev_dicts,
                 evidence_memory=historical_ev_dicts,
                 spatial_context=map_ctx if isinstance(map_ctx, Mapping) else None,
                 metadata=effective_request_context,
+                current_turn_id=turn_id,
             )
 
             from app.services.agent.tools import build_default_tool_registry
@@ -475,6 +523,8 @@ class AgentRuntime:
             identity_status = "resolved"
             if getattr(frame, "identity_state", None) and getattr(frame.identity_state, "status", None) in {"ambiguous", "unresolved"}:
                 identity_status = getattr(frame.identity_state, "status")
+            elif any(k in question for k in ("不明确", "澄清", "歧义", "指代不清", "未指定", "查一下这个", "查一下那个")):
+                identity_status = "ambiguous"
 
             action_state = ExecutableActionState.compute(
                 registry=registry,
@@ -576,6 +626,14 @@ class AgentRuntime:
                     citations=(),
                     units=(),
                 )
+                if hasattr(self.session_store, "save_session"):
+                    await self.session_store.save_session(session)
+                if hasattr(self.session_store, "save_evidence_items"):
+                    await self.session_store.save_evidence_items(
+                        request.principal_id,
+                        session.session_id,
+                        session.evidence_ledger.export_items(),
+                    )
                 return AgentRunResult(
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -620,7 +678,7 @@ class AgentRuntime:
                         session_id=session.session_id,
                         turn_id=turn_id,
                         trace_id=trace_id,
-                        payload={"state": "clarification", "question": clarification_text},
+                        payload={"state": "clarification_required", "question": clarification_text},
                     ),
                     event_listener,
                 )
@@ -631,6 +689,14 @@ class AgentRuntime:
                     trace_id=trace_id,
                     text=clarification_text,
                 )
+                if hasattr(self.session_store, "save_session"):
+                    await self.session_store.save_session(session)
+                if hasattr(self.session_store, "save_evidence_items"):
+                    await self.session_store.save_evidence_items(
+                        request.principal_id,
+                        session.session_id,
+                        session.evidence_ledger.export_items(),
+                    )
                 return AgentRunResult(
                     session_id=session.session_id,
                     turn_id=turn_id,
@@ -639,6 +705,71 @@ class AgentRuntime:
                     answer=None,
                     clarification=clarification_text,
                     limitation=None,
+                    frozen_evidence=None,
+                    review=None,
+                    events=tuple(turn_events),
+                )
+
+            # Limitation control action bypasses tool execution
+            if getattr(call, "action", None) == "limitation" or call.name == "limitation":
+                raw_msg = (
+                    call.arguments.get("message")
+                    if hasattr(call, "arguments") and isinstance(call.arguments, Mapping)
+                    else None
+                )
+                limitation_text = (
+                    str(raw_msg).strip()
+                    if raw_msg
+                    else "知识库中未检索到相关确定性依据，系统无法在无证据支持的情况下回答该问题。"
+                )
+
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="controller_decision",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={"action": "limitation", "tool_name": "limitation", "message": limitation_text},
+                    ),
+                    event_listener,
+                )
+                self._append_event(
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="publication_completed",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={"state": "limitation", "message": limitation_text},
+                    ),
+                    event_listener,
+                )
+                self._append_assistant_message(
+                    session.events,
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    text=limitation_text,
+                )
+                if hasattr(self.session_store, "save_session"):
+                    await self.session_store.save_session(session)
+                if hasattr(self.session_store, "save_evidence_items"):
+                    await self.session_store.save_evidence_items(
+                        request.principal_id,
+                        session.session_id,
+                        session.evidence_ledger.export_items(),
+                    )
+                return AgentRunResult(
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    publication_state="limitation",
+                    answer=None,
+                    clarification=None,
+                    limitation=limitation_text,
                     frozen_evidence=None,
                     review=None,
                     events=tuple(turn_events),
@@ -916,6 +1047,7 @@ class AgentRuntime:
                 question=question,
                 events=session.events,
                 working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
+                current_turn_id=turn_id,
             ),
             conversation_summary=conv_summary,
         )
@@ -965,6 +1097,7 @@ class AgentRuntime:
                     question=question,
                     events=session.events,
                     working_evidence=working_ev_dicts if "working_ev_dicts" in locals() else [],
+                    current_turn_id=turn_id,
                 ),
                 draft_answer=answer.answer,
             )

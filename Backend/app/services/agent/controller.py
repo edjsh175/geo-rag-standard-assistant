@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
+from app.services.agent.context.frame import _thaw
 from app.services.agent.controller_protocol import (
     CLARIFY_ACTION,
     COMPOSE_ANSWER_ACTION,
@@ -23,6 +24,7 @@ from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.structured_candidate import (
     StructuredCandidateProtocolError,
     execute_structured_candidate,
+    extract_json_object,
 )
 from app.services.agent.tool_runtime import ToolObservation
 from app.services.agent.tools import ToolRegistry
@@ -66,7 +68,7 @@ class MainController:
                 else effective_working_evidence
             )
             effective_runtime_facts = (
-                dict(projection.runtime_facts) if hasattr(projection, "runtime_facts") and projection.runtime_facts
+                _thaw(projection.runtime_facts) if hasattr(projection, "runtime_facts") and projection.runtime_facts
                 else {}
             )
             effective_map_context = getattr(projection, "map_context", None)
@@ -134,7 +136,8 @@ class MainController:
         )
 
         observation_text = "\n".join(
-            f"{item.tool_name}: {dict(item.payload)}" for item in observations
+            f"- tool={item.tool_name} status={item.status} tool_call_id={item.tool_call_id} payload={dict(item.payload)}"
+            for item in observations
         ) if observations else "None."
 
         evidence_text = json.dumps(
@@ -150,30 +153,53 @@ class MainController:
             else "None."
         )
 
+        clarify_instruction = ""
+        if CLARIFY_ACTION in action_state.available_control_actions:
+            clarify_instruction = (
+                "- When the user's query asks for clarification, or when the subject/spatial scope is ambiguous: "
+                "{\"action\":\"clarify\",\"arguments\":{\"question\":\"请进一步明确您要查询的目标或空间范围。\"}}\n"
+            )
+
         system_prompt = (
             "You are the Main Controller and semantic planner for the GeoAI Agent.\n"
-            "Choose exactly one action for the next step. You must return only valid JSON matching the schema.\n\n"
+            "Choose exactly one action from the current Action Space for the next step. "
+            "You must return only valid JSON matching the schema.\n\n"
             "Action Space:\n"
             f"1. Control Actions:\n{control_text}\n\n"
             f"2. Executable Capabilities (Tools):\n{tools_text}\n\n"
             "Rules:\n"
             "- To call a capability: {\"action\":\"tool_call\",\"tool\":\"...\",\"arguments\":{...}}\n"
             "  (Legacy {\"name\":\"...\",\"arguments\":{...}} is also accepted).\n"
+            "- When the user prompt asks to '尝试' (attempt) an action with a specific file_ref, layer_ref, feature_ref, coordinates, or adcode (such as '尝试导入 file_ref=\"...\"', '尝试读取 feature_ref=\"...\"', '调用地图定位到经度 999...', '查询不存在的行政区 adcode=999999...'), you MUST issue the tool_call first (e.g. import_vector_dataset, get_feature_geometry, locate_map, query_spatial_relation) with those exact arguments, and do NOT preemptively answer without invoking the tool.\n"
+            "- For feature observation ('列出图层前 20 个要素属性', '翻页读取下一批要素', '从图层树定位用户图层再读取要素'): use inspect_layer_features with layer_ref from user_layers, and appropriate offset/limit (e.g. offset=0 for first 20, offset=20 for next batch).\n"
+            "- To read feature geometry ('读取指定 feature_ref 的精确几何', '重复读取同一要素'): call get_feature_geometry with a feature_ref from previous inspect_layer_features observation or user_layers[0].feature_refs[0].\n"
+            "- For any requested read or inspection, check current-turn Observations for a successful result matching the tool, reference, and all requested parameters (including offset and limit). A mismatched parameter does not satisfy the read (for example, offset=0 does not satisfy a request for offset=20). A matching result satisfies only that read substep: do not repeat it, continue remaining requested steps, and finalize only when the full user request is satisfied. Historical context or prior-turn reads do not satisfy a requested read in this turn; when no matching successful current-turn observation exists, call the required tool (for a feature_ref geometry read, call get_feature_geometry for the requested feature_ref).\n"
+            "- For a repeated read, obtain exactly two successful current-turn reads for the same reference when the user did not specify a count: make the first call if there are none, and make one more call if there is only one. Once two are present, compare the feature refs and geometry values, provide the comparison and continue any other requested steps; do not repeat that read. Finalize only when the full user request is satisfied.\n"
+            "- For spatial feature region analysis ('判断要素几何是否位于指定行政区'): if feature geometry is not yet in observations, first call get_feature_geometry; once geometry is available in observations, call query_spatial_relation with left={\"geometry\": geometry}, right={\"region\":{\"region_name\":\"成都市\"}}, relation=\"within\"; then answer with the conclusion.\n"
+            "- For combined multi-tool workflow ('知识检索后导入数据、改样式、定位并总结执行结果'): sequence through retrieve_kb -> import_vector_dataset (using file_ref from available_files) -> set_vector_style (e.g. red stroke) -> fit_vector_layer -> compose_answer with retrieved knowledge evidence.\n"
             "- To finalize a knowledge answer: {\"action\":\"compose_answer\",\"arguments\":{\"answer_kind\":\"knowledge_answer\",\"selected_evidence_ids\":[...]}}\n"
             "- You may directly select evidence from the Evidence Catalog (including historical session evidence) for compose_answer without re-retrieving if it is sufficient.\n"
             "- If evidence is insufficient, call retrieve_kb to search the knowledge base or search_evidence_memory to search historical evidence.\n"
+            "- For broad or unspecified standards knowledge requests, search with retrieve_kb using the user's request and existing conversation topics. Do not invent a standard topic; use retrieved results to discover relevant evidence before answering.\n"
+            "- Judge Evidence Catalog entries by relevance to the current user question. An empty catalog, no matching entry, or entries only about older/unrelated topics is an evidence gap for the current question, not proof that the knowledge base has no data. For a current knowledge request with no matching support in the catalog, call retrieve_kb for the current question before concluding there is no supporting knowledge.\n"
+            "- When the request asks about multiple facts, select relevant evidence covering all requested facts before composing the answer.\n"
+            "- Use limitation for a fact-seeking knowledge request only after a current-turn retrieval returns no relevant matches or the tool reports failure/unavailability; spatial entity resolution failure may also require limitation. Never invent a retrieval result or cite unrelated evidence. If the user explicitly asks about system limitations, explain the known policy without implying a search occurred.\n"
             "- To answer non-knowledge conversational or meta requests: {\"action\":\"direct_answer\",\"answer\":\"...\"}\n"
-            "- To request user clarification: {\"action\":\"clarify\",\"arguments\":{}}\n"
+            f"{clarify_instruction}"
+            "- 工具操作失败时，面向用户的失败回复应简洁，直接说明失败、原因和已观测状态，使用“失败/已中止”表述。失败回复中不得出现“成功”或“已完成”，包括否定句、假设或未来成功描述；只陈述已观测事实。\n"
             "- Do not generate tool_call_id; the application assigns it.\n"
-            "- For knowledge questions, never use direct_answer; you must select evidence via compose_answer."
+            "- For knowledge questions, never use direct_answer. Retrieve evidence when needed; use compose_answer only when evidence is available and that action is in the current Action Space."
         )
 
         user_content_parts = [
             f"Question:\n{effective_question}\n",
             f"Context:\n{effective_context_summary}\n",
             f"Evidence Catalog (Working & Historical):\n{evidence_text}\n",
-            f"Runtime Facts:\n{runtime_facts_text}\n",
-            f"Observations:\n{observation_text}",
+            "Runtime Facts (current_turn describes this request; previous_turn is historical and does not count as current execution or retrieval):\n"
+            f"{runtime_facts_text}\n",
+            f"Current-turn Observations (count={len(observations)}; listed statuses are the observed outcomes):\n{observation_text}\n"
+            "A count of zero means no current-turn observation is attached; consult current_turn facts for started or failed calls. "
+            "Do not treat zero observations or previous_turn tool calls as a current-turn empty retrieval result.",
         ]
         if effective_map_context:
             user_content_parts.append(
@@ -233,14 +259,10 @@ class MainController:
         state: ExecutableActionState,
         tool_call_id: str,
     ) -> ControllerDecision:
-        if not content:
-            raise ControllerOutputError("controller output is empty")
         try:
-            payload = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ControllerOutputError("controller output is not valid json") from exc
-        if not isinstance(payload, dict):
-            raise ControllerOutputError("controller output must be a json object")
+            payload = extract_json_object(content)
+        except ValueError as exc:
+            raise ControllerOutputError(str(exc)) from exc
         try:
             return validate_controller_decision_payload(
                 payload,

@@ -78,7 +78,11 @@ export const createCesiumGisRuntime = ({
           const longitude = Number(payload.longitude);
           const latitude = Number(payload.latitude);
           const zoom = payload.zoom == null ? undefined : Number(payload.zoom);
-          if (!Number.isFinite(longitude) || !Number.isFinite(latitude) || (zoom != null && !Number.isFinite(zoom))) {
+          if (
+            !Number.isFinite(longitude) || !Number.isFinite(latitude) ||
+            longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90 ||
+            (zoom != null && !Number.isFinite(zoom))
+          ) {
             throw new GisExecutionError('INVALID_TOOL_CALL', '定位参数无效');
           }
           return locateMap({ longitude, latitude, zoom });

@@ -81,8 +81,16 @@ export const createFrontendExecutor = ({
             const longitude = Number(payload.longitude);
             const latitude = Number(payload.latitude);
             const zoom = Number(payload.zoom ?? map.getView().getZoom() ?? 10);
-            if (!Number.isFinite(longitude) || !Number.isFinite(latitude) || !Number.isFinite(zoom)) {
-              throw new GisExecutionError('INVALID_TOOL_CALL', '定位参数无效');
+            if (
+              !Number.isFinite(longitude) ||
+              !Number.isFinite(latitude) ||
+              !Number.isFinite(zoom) ||
+              longitude < -180 ||
+              longitude > 180 ||
+              latitude < -90 ||
+              latitude > 90
+            ) {
+              throw new GisExecutionError('INVALID_TOOL_CALL', '定位参数无效：经纬度超出有效范围 [-180..180, -90..90]');
             }
             await new Promise<void>((resolve, reject) => {
               map.getView().animate(

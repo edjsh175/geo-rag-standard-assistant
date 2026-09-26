@@ -392,9 +392,11 @@ class PostgresRetrievalAdapter:
         match_type: str,
     ) -> DocumentResult:
         metadata = self._coerce_json_dict(getattr(row, "metadata", None))
+        chunk_id = str(row.chunk_id)
         metadata.update(
             {
-                "chunk_id": str(row.chunk_id),
+                "chunk_id": chunk_id,
+                "chunk_uid": metadata.get("chunk_uid") or chunk_id,
                 "document_id": str(row.document_id),
                 "document_name": row.title or row.filename,
                 "original_filename": row.filename,
@@ -599,7 +601,8 @@ class PostgresRetrievalAdapter:
                         c.id::text AS chunk_id,
                         d.id::text AS document_id,
                         d.title, d.filename, d.file_type, d.file_size, d.created_at,
-                        d.metadata, d.spatial_metadata, v.access_url AS download_url,
+                        COALESCE(d.metadata, '{{}}'::jsonb) || COALESCE(c.metadata, '{{}}'::jsonb) AS metadata,
+                        d.spatial_metadata, v.access_url AS download_url,
                         c.content,
                         LEAST(0.95, 0.52 + ({' + '.join(score_parts)})) AS similarity
                     FROM document_chunks c
@@ -741,7 +744,8 @@ class PostgresRetrievalAdapter:
                 c.id::text AS chunk_id,
                 d.id::text AS document_id,
                 d.title, d.filename, d.file_type, d.file_size, d.created_at,
-                d.metadata, d.spatial_metadata, v.access_url AS download_url,
+                COALESCE(d.metadata, '{{}}'::jsonb) || COALESCE(c.metadata, '{{}}'::jsonb) AS metadata,
+                d.spatial_metadata, v.access_url AS download_url,
                 c.content,
                 1 - (
                     CAST(c.embedding AS halfvec(2048)) <=> CAST(:embedding_str AS halfvec(2048))
@@ -816,12 +820,13 @@ class PostgresRetrievalAdapter:
                     c.id::text AS chunk_id,
                     d.id::text AS document_id,
                     d.title, d.filename, d.file_type, d.file_size, d.created_at,
-                    d.metadata, d.spatial_metadata, v.access_url AS download_url,
+                    COALESCE(d.metadata, '{}'::jsonb) || COALESCE(c.metadata, '{}'::jsonb) AS metadata,
+                    d.spatial_metadata, v.access_url AS download_url,
                     c.content
                 FROM document_chunks c
                 JOIN documents d ON d.id = c.document_id
                 LEFT JOIN document_versions v ON v.id = d.current_version_id
-                WHERE c.id::text = ANY(:chunk_ids)
+                WHERE (c.id::text = ANY(:chunk_ids) OR (c.metadata->>'chunk_uid') = ANY(:chunk_ids))
                   AND d.deleted_at IS NULL
                 """
             )
@@ -838,5 +843,10 @@ class PostgresRetrievalAdapter:
                 )
                 for row in rows
             )
-        by_id = {candidate.chunk_id: candidate for candidate in candidates}
+        by_id: dict[str, RetrievalCandidate] = {}
+        for candidate in candidates:
+            by_id[candidate.chunk_id] = candidate
+            candidate_chunk_uid = candidate.metadata.get("chunk_uid")
+            if candidate_chunk_uid and candidate_chunk_uid not in by_id:
+                by_id[candidate_chunk_uid] = candidate
         return [by_id[chunk_id] for chunk_id in normalized_ids if chunk_id in by_id]

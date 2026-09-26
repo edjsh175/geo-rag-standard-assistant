@@ -637,6 +637,7 @@
     ],
     "scenario": "spatial_feature_region",
     "depends_on": [],
+    "fixture": "sample_polygons.geojson",
     "assertions": [
       {
         "type": "tool_called",

@@ -29,6 +29,10 @@ async def lifespan(app: FastAPI):
     validate_admin_auth_configuration()
     logger.info("Admin authentication configuration loaded.")
 
+    from app.core.config import validate_embedding_dimension_invariants
+    validate_embedding_dimension_invariants()
+    logger.info("Embedding dimension invariants verified (PG_VECTOR_DIMENSION=2048, OLLAMA_EMBEDDING_DIMENSIONS=2048).")
+
     logger.info("Initializing database connections...")
     await db_manager.initialize()
 

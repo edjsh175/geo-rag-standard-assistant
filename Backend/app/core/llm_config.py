@@ -11,7 +11,7 @@ import asyncio
 from openai import AsyncOpenAI
 import httpx
 
-from .config import settings
+from .config import settings, validate_embedding_dimension_invariants
 
 logger = logging.getLogger(__name__)
 
@@ -75,21 +75,7 @@ class LLMConfig:
         else:
             self.embedding_provider = EmbeddingProvider.OPENAI
 
-        if (
-            self.embedding_provider == EmbeddingProvider.OLLAMA
-            and settings.OLLAMA_EMBEDDING_DIMENSIONS != settings.PG_VECTOR_DIMENSION
-        ):
-            raise ValueError(
-                "OLLAMA_EMBEDDING_DIMENSIONS must match PG_VECTOR_DIMENSION "
-                f"({settings.OLLAMA_EMBEDDING_DIMENSIONS} != {settings.PG_VECTOR_DIMENSION})"
-            )
-        if (
-            self.embedding_provider == EmbeddingProvider.OLLAMA
-            and settings.PG_VECTOR_DIMENSION != 2048
-        ):
-            raise ValueError(
-                "The current policy_chunks and document_chunks schemas require 2048-dimensional embeddings"
-            )
+        validate_embedding_dimension_invariants()
 
     def get_openai_client(self) -> AsyncOpenAI:
         """获取 OpenAI 客户端"""

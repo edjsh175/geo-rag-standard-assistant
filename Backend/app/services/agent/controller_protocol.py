@@ -14,6 +14,7 @@ from app.services.agent.tools import ToolRegistry, ToolSpec
 COMPOSE_ANSWER_ACTION = "compose_answer"
 DIRECT_ANSWER_ACTION = "direct_answer"
 CLARIFY_ACTION = "clarify"
+LIMITATION_ACTION = "limitation"
 TOOL_CALL_ACTION = "tool_call"
 
 
@@ -41,11 +42,32 @@ def build_control_action_contracts(
     return {
         CLARIFY_ACTION: ControlActionContract(
             name=CLARIFY_ACTION,
-            purpose="请求用户在 Runtime 已确认的实体或空间作用域候选中完成身份确认，并暂停当前轮次。",
-            use_when="当前存在合法且存在歧义的实体或图层/区域候选，且继续决策前必须由用户确认。",
-            avoid_when="没有权威候选时不得使用；严禁模型自主捏造选项、候选或 ID。",
-            result_semantics="Runtime 冻结候选并向用户呈现澄清请求；用户选择后继续决策。",
-            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            purpose="在问题主体不明确、存在歧义或需要用户在候选中明确目标时请求澄清，并暂停当前轮次。",
+            use_when="问题主体不明确、缺少必要目标实体、或需要用户澄清确认目标时使用。",
+            avoid_when="问题意图明确且可继续执行检索或工具操作时禁止使用。",
+            result_semantics="向用户呈现澄清请求，等待用户输入明确信息。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "向用户提出的具体澄清问题。"}
+                },
+                "additionalProperties": False,
+            },
+        ),
+        LIMITATION_ACTION: ControlActionContract(
+            name=LIMITATION_ACTION,
+            purpose="当知识库无证据、超出系统知识范围或存在明确系统限制无法得出结论时，发布限制说明。",
+            use_when="知识库检索无匹配证据、用户要求说明无证据时的系统限制、或无法安全给出专业结论时使用。",
+            avoid_when="存在充分知识库证据可以回答问题时禁止使用。",
+            result_semantics="向用户发布 limitation 状态的安全限制说明并完成当前轮次。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "minLength": 1, "description": "系统限制说明正文。"}
+                },
+                "required": ["message"],
+                "additionalProperties": False,
+            },
         ),
         COMPOSE_ANSWER_ACTION: ControlActionContract(
             name=COMPOSE_ANSWER_ACTION,
@@ -132,11 +154,11 @@ class ExecutableActionState:
 
         if not forbid_finalize:
             control_actions.add(DIRECT_ANSWER_ACTION)
+            control_actions.add(LIMITATION_ACTION)
+            if identity_status in {"ambiguous", "unresolved"}:
+                control_actions.add(CLARIFY_ACTION)
             if effective_has_evidence:
                 control_actions.add(COMPOSE_ANSWER_ACTION)
-
-        if identity_status in {"ambiguous", "unresolved"} and not forbid_finalize:
-            control_actions.add(CLARIFY_ACTION)
 
         if effective_has_evidence:
             allowed_kinds = ("knowledge_answer", "limitation_or_clarification")
@@ -188,7 +210,7 @@ def normalize_legacy_controller_wire(payload: Mapping[str, Any]) -> dict[str, An
     name = normalized.get("name")
     if not action and name:
         name_str = str(name).strip()
-        if name_str in {COMPOSE_ANSWER_ACTION, DIRECT_ANSWER_ACTION, CLARIFY_ACTION}:
+        if name_str in {COMPOSE_ANSWER_ACTION, DIRECT_ANSWER_ACTION, CLARIFY_ACTION, LIMITATION_ACTION}:
             action = name_str
             normalized["action"] = action
             normalized.pop("name", None)
@@ -210,6 +232,10 @@ def normalize_legacy_controller_wire(payload: Mapping[str, Any]) -> dict[str, An
             normalized["action"] = CLARIFY_ACTION
             normalized.pop("tool", None)
             action = CLARIFY_ACTION
+        elif tool == LIMITATION_ACTION:
+            normalized["action"] = LIMITATION_ACTION
+            normalized.pop("tool", None)
+            action = LIMITATION_ACTION
         elif tool == DIRECT_ANSWER_ACTION:
             normalized["action"] = DIRECT_ANSWER_ACTION
             normalized.pop("tool", None)
@@ -328,12 +354,38 @@ def validate_controller_decision_payload(
             tool_call_id=tool_call_id,
         )
 
+    if action == LIMITATION_ACTION:
+        if LIMITATION_ACTION not in state.available_control_actions:
+            raise ValueError("malformed_decision_action: limitation is not currently available")
+        raw_arguments = normalized.get("arguments")
+        message = ""
+        if isinstance(raw_arguments, Mapping):
+            message = str(raw_arguments.get("message") or raw_arguments.get("answer") or "").strip()
+        if not message and isinstance(normalized.get("message"), str):
+            message = normalized["message"].strip()
+        if not message and isinstance(normalized.get("answer"), str):
+            message = normalized["answer"].strip()
+        if not message:
+            message = "当前知识库中未能检索到与该问题匹配的证据来源，无法给出带依据的结论。"
+        return ControllerDecision(
+            action=LIMITATION_ACTION,
+            arguments={"message": message},
+            reason=reason,
+            tool_call_id=tool_call_id,
+        )
+
     if action == CLARIFY_ACTION:
         if CLARIFY_ACTION not in state.available_control_actions:
             raise ValueError("malformed_decision_action: clarify is not currently available")
+        raw_arguments = normalized.get("arguments")
+        question_text = ""
+        if isinstance(raw_arguments, Mapping):
+            question_text = str(raw_arguments.get("question") or "").strip()
+        if not question_text and isinstance(normalized.get("question"), str):
+            question_text = normalized["question"].strip()
         return ControllerDecision(
             action=CLARIFY_ACTION,
-            arguments={},
+            arguments={"question": question_text} if question_text else {},
             reason=reason,
             tool_call_id=tool_call_id,
         )
@@ -349,6 +401,7 @@ def build_controller_decision_schema(
         CLARIFY_ACTION,
         COMPOSE_ANSWER_ACTION,
         DIRECT_ANSWER_ACTION,
+        LIMITATION_ACTION,
     ),
 ) -> dict[str, Any]:
     """Build the request-scoped JSON Schema for Controller decisions."""
@@ -373,7 +426,19 @@ def build_controller_decision_schema(
             "type": "object",
             "properties": {
                 "action": {"const": CLARIFY_ACTION},
-                "arguments": {"type": "object", "properties": {}, "additionalProperties": False},
+                "arguments": dict(contracts[CLARIFY_ACTION].input_schema),
+                "reason": {"type": "string"},
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        })
+
+    if LIMITATION_ACTION in controls:
+        branches.append({
+            "type": "object",
+            "properties": {
+                "action": {"const": LIMITATION_ACTION},
+                "arguments": dict(contracts[LIMITATION_ACTION].input_schema),
                 "reason": {"type": "string"},
             },
             "required": ["action", "arguments"],
@@ -381,11 +446,10 @@ def build_controller_decision_schema(
         })
 
     if capability_schemas:
-        tool_branches = []
         for name, spec in capability_schemas.items():
             s = dict(spec)
             s.setdefault("type", "object")
-            tool_branches.append({
+            branches.append({
                 "type": "object",
                 "properties": {
                     "action": {"const": TOOL_CALL_ACTION},
@@ -396,17 +460,6 @@ def build_controller_decision_schema(
                 "required": ["action", "tool", "arguments"],
                 "additionalProperties": False,
             })
-        branches.append({
-            "type": "object",
-            "properties": {
-                "action": {"const": TOOL_CALL_ACTION},
-                "tool": {"type": "string", "enum": list(capability_schemas)},
-                "arguments": {"type": "object"},
-                "reason": {"type": "string"},
-            },
-            "required": ["action", "tool", "arguments"],
-            "oneOf": tool_branches,
-        })
 
     if DIRECT_ANSWER_ACTION in controls:
         branches.append({

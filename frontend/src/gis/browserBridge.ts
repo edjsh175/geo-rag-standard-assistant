@@ -75,3 +75,11 @@ export const executeBrowserTool = async (
     };
   }
 };
+
+// Expose bridge on window for Playwright E2E harness evaluation
+if (typeof window !== 'undefined') {
+  (window as unknown as { __GEOAI_BROWSER_GIS__?: unknown }).__GEOAI_BROWSER_GIS__ = {
+    execute: (runId: string, toolCallId: string, action: BrowserMapAction) => executeBrowserTool(runId, toolCallId, action),
+    getContext: () => getBrowserMapContext(),
+  };
+}

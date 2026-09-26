@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import inspect
 import pytest
 
+from app.services.agent.context.frame import _thaw
 from app.services.agent.context.budget import (
     CharWeightedTokenEstimator,
     ContextBudgetConfig,
@@ -172,3 +174,70 @@ def test_context_snapshot_deterministic_hash():
     # Identical inputs must yield identical hashes for audit reproducibility
     assert snap1.frame_hash == snap2.frame_hash
     assert snap1.projection_hash == snap2.projection_hash
+
+
+def test_context_engine_scopes_runtime_facts_to_explicit_current_and_previous_turns():
+    assert "current_turn_id" in inspect.signature(ContextEngine.build_frame).parameters
+
+    events = [
+        AgentEvent("user_message", "sess-scope", "turn-old", payload={"text": "查滑坡标准"}, event_id="old-user"),
+        AgentEvent("controller_decision", "sess-scope", "turn-old", payload={"tool_name": "retrieve_kb"}, event_id="old-decision"),
+        AgentEvent("tool_started", "sess-scope", "turn-old", payload={"tool_name": "retrieve_kb", "tool_call_id": "old-call"}, event_id="old-start"),
+        AgentEvent("tool_completed", "sess-scope", "turn-old", payload={"tool_name": "retrieve_kb", "tool_call_id": "old-call", "status": "succeeded"}, event_id="old-complete"),
+        AgentEvent("assistant_message", "sess-scope", "turn-old", payload={"text": "找到滑坡标准"}, event_id="old-assistant"),
+        AgentEvent("user_message", "sess-scope", "turn-current", payload={"text": "查规划标准空间数据要求"}, event_id="current-user"),
+    ]
+
+    frame = ContextEngine().build_frame(
+        session_id="sess-scope",
+        principal_id="user-scope",
+        question="查规划标准空间数据要求",
+        events=events,
+        current_turn_id="turn-current",
+        working_evidence=[],
+        evidence_memory=[],
+        metadata={"current_turn": {"turn_id": "spoofed", "tool_calls": [{"tool": "retrieve_kb"}]}},
+    )
+
+    runtime_facts = _thaw(frame.runtime_facts)
+    assert runtime_facts["current_turn"] == {
+        "turn_id": "turn-current",
+        "controller_actions": [],
+        "tool_calls": [],
+        "clarification": None,
+        "publication_state": None,
+        "review_verdict": None,
+        "map_facts": [],
+    }
+    assert runtime_facts["previous_turn"]["turn_id"] == "turn-old"
+    assert runtime_facts["previous_turn"]["tool_calls"] == [
+        {"tool": "retrieve_kb", "status": "succeeded", "call_id": "old-call"}
+    ]
+    assert "查规划标准空间数据要求" not in [message["text"] for message in frame.conversation]
+    assert frame.source_event_ids[-1] == "current-user"
+
+    _, snapshot = ContextEngine().project_for_controller(
+        frame, tool_contracts_text="", tool_names=""
+    )
+    assert snapshot.turn_id == "turn-current"
+
+
+def test_context_engine_keeps_current_turn_completion_event_in_runtime_facts():
+    events = [
+        AgentEvent("user_message", "sess-current", "turn-current", payload={"text": "查标准"}, event_id="current-user"),
+        AgentEvent("controller_decision", "sess-current", "turn-current", payload={"tool_name": "retrieve_kb"}, event_id="decision"),
+        AgentEvent("tool_started", "sess-current", "turn-current", payload={"tool_name": "retrieve_kb", "tool_call_id": "call-1"}, event_id="started"),
+        AgentEvent("tool_completed", "sess-current", "turn-current", payload={"tool_name": "retrieve_kb", "tool_call_id": "call-1", "status": "succeeded"}, event_id="completed"),
+    ]
+    frame = ContextEngine().build_frame(
+        session_id="sess-current",
+        principal_id="user-current",
+        question="查标准",
+        events=events,
+        current_turn_id="turn-current",
+        working_evidence=[],
+    )
+
+    assert _thaw(frame.runtime_facts)["current_turn"]["tool_calls"] == [
+        {"tool": "retrieve_kb", "status": "succeeded", "call_id": "call-1"}
+    ]

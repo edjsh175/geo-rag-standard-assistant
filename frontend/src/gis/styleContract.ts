@@ -27,10 +27,17 @@ export const mergeVectorStyle = (current: VectorStyle, patch: VectorStylePatch):
   if (!patch || Object.keys(patch).length === 0) {
     throw new GisExecutionError('INVALID_VECTOR_STYLE', 'style 至少包含一个修改项');
   }
+  const cleanStroke = patch.stroke
+    ? Object.fromEntries(Object.entries(patch.stroke).filter(([_, v]) => v != null))
+    : {};
+  const cleanFill = patch.fill
+    ? Object.fromEntries(Object.entries(patch.fill).filter(([_, v]) => v != null))
+    : {};
+
   const next: VectorStyle = {
-    stroke: { ...current.stroke, ...(patch.stroke ?? {}) },
-    fill: { ...current.fill, ...(patch.fill ?? {}) },
-    radius: patch.radius ?? current.radius,
+    stroke: { ...current.stroke, ...cleanStroke },
+    fill: { ...current.fill, ...cleanFill },
+    radius: patch.radius != null ? patch.radius : current.radius,
   };
   return {
     stroke: {

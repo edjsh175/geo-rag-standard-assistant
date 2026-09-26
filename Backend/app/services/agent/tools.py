@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 
 BROWSER_TOOL_NAMES = frozenset(
@@ -88,8 +88,10 @@ class FitVectorLayerInput(BaseModel):
 
 
 class LocateMapInput(BaseModel):
-    longitude: float = Field(..., ge=-180, le=180)
-    latitude: float = Field(..., ge=-90, le=90)
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    longitude: float
+    latitude: float
     zoom: float | None = Field(None, ge=1, le=22)
 
 

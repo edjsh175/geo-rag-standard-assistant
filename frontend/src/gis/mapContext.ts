@@ -12,14 +12,16 @@ export const createMapContextReader = (map: Map, readUserLayers: () => UserVecto
   return () => {
     const userLayers = readUserLayers();
     const availableFiles = listVectorDatasets();
-    const supportedTools = ['locate_map', 'set_layer_visibility'];
-    if (availableFiles.length > 0) supportedTools.push('import_vector_dataset');
+    // import_vector_dataset is always listed so the controller can attempt it with any
+    // file_ref (including missing ones); the executor returns a failure receipt in that case.
+    const supportedTools = ['locate_map', 'set_layer_visibility', 'import_vector_dataset'];
     if (userLayers.length > 0) {
       supportedTools.push('set_vector_style', 'fit_vector_layer', 'inspect_layer_features');
     }
-    if (userLayers.some((layer) => layer.feature_refs.length > 0)) {
-      supportedTools.push('get_feature_geometry');
-    }
+    // get_feature_geometry is always listed so the controller can attempt it with any
+    // feature_ref (including missing ones); the executor returns a failure receipt in that case.
+    supportedTools.push('get_feature_geometry');
+    void availableFiles; // still serialized in context for the controller to read
     const center3857 = map.getView().getCenter();
     const center = center3857 ? toLonLat(center3857) : null;
     const zoom = map.getView().getZoom();

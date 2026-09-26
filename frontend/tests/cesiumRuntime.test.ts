@@ -2,6 +2,31 @@ import { strict as assert } from 'node:assert';
 import { test } from 'vitest';
 
 import { createCesiumGisRuntime } from '../src/gis/cesiumRuntime';
+import { executeBrowserTool, registerBrowserGisRuntime, setActiveBrowserGisRuntime } from '../src/gis/browserBridge';
+
+test('invalid coordinates produce a failed 3d receipt without moving the camera', async () => {
+  let moves = 0;
+  const runtime = createCesiumGisRuntime({
+    readState: () => ({ ready: true, center: [104, 30], zoom: 5, adminVisible: true, satelliteVisible: false }),
+    locateMap: async () => { moves += 1; return {}; },
+    setLayerVisibility: async () => ({}),
+  });
+  const unregister = registerBrowserGisRuntime('3d', runtime);
+  setActiveBrowserGisRuntime('3d');
+  try {
+    for (const [longitude, latitude] of [[999, 999], [-181, 30], [104, 91]]) {
+      const receipt = await executeBrowserTool('invalid-location', `${longitude}:${latitude}`, {
+        type: 'locate_map', target: 'browser_map', payload: { longitude, latitude },
+      });
+      assert.equal(receipt.status, 'failed');
+      assert.equal(receipt.tool_name, 'locate_map');
+      assert.deepEqual(receipt.map_context?.viewport.center, [104, 30]);
+    }
+    assert.equal(moves, 0);
+  } finally {
+    unregister();
+  }
+});
 
 test('cesium runtime exposes only implemented 3d tools and logical map state', () => {
   const runtime = createCesiumGisRuntime({

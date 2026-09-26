@@ -151,7 +151,10 @@ class ContextBudgetManager:
                         trimmed_map["features"] = features[:3]
                         trimmed_map["_features_truncated"] = True
 
-        total_tokens = fixed_cost + conv_cost + ev_cost + (self.estimator.estimate(json.dumps(trimmed_map)) if trimmed_map else 0)
+        total_tokens = fixed_cost + conv_cost + ev_cost + (
+            self.estimator.estimate(json.dumps(trimmed_map, ensure_ascii=False, default=lambda o: dict(o) if hasattr(o, "items") else str(o)))
+            if trimmed_map else 0
+        )
         return trimmed_summary, selected_evidence, trimmed_map, total_tokens
 
     def trim_answer_context(
@@ -165,7 +168,9 @@ class ContextBudgetManager:
         """Trim Answer context to fit within the answer budget."""
         budget = self.config.answer
         if not self.config.enabled:
-            tokens = self.estimator.estimate(question + conversation_summary + json.dumps(list(evidence_items)))
+            tokens = self.estimator.estimate(
+                question + conversation_summary + json.dumps(list(evidence_items), ensure_ascii=False, default=lambda o: dict(o) if hasattr(o, "items") else str(o))
+            )
             return conversation_summary, list(evidence_items), dict(map_context or {}), tokens
 
         target_limit = budget.available_context_tokens

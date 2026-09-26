@@ -115,7 +115,7 @@ interface MapStore {
 export const useMapStore = create<MapStore>((set) => ({
   activeRegion: null,
   viewState: { ...INITIAL_VIEW },
-  viewMode: '3D',
+  viewMode: '2D',
   flyTrigger: 0,
 
   setActiveRegion: (region) =>

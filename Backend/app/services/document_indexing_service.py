@@ -10,7 +10,11 @@ from minio import Minio
 
 from app.core.config import settings
 from app.core.llm_config import llm_config
-from app.services.document_chunker import DocumentChunker
+from app.services.document_chunker import (
+    DocumentChunker,
+    compute_chunk_uid,
+    compute_content_hash,
+)
 from app.services.document_parser import DocumentParser
 from app.services.document_repository import DocumentRepository
 from app.services.document_text_extractor import UnsupportedDocumentParser
@@ -113,22 +117,36 @@ class DocumentIndexingService:
                 raise RuntimeError("Embedding provider returned a mismatched number of vectors.")
 
             base_metadata = dict(payload.get("metadata") or {})
-            chunks = [
-                {
-                    "chunk_index": index,
-                    "header_path": chunk.header_path,
-                    "page_number": chunk.page_number,
-                    "content": chunk.content,
-                    "metadata": {
-                        **base_metadata,
-                        **dict(parsed.metadata or {}),
-                        "title": payload.get("title") or base_metadata.get("title"),
-                        "filename": payload.get("filename"),
-                    },
-                    "embedding": embeddings[index],
-                }
-                for index, chunk in enumerate(document_chunks)
-            ]
+            chunks = []
+            for index, chunk in enumerate(document_chunks):
+                content_hash = chunk.content_hash or compute_content_hash(chunk.content)
+                chunk_uid = compute_chunk_uid(
+                    document_id=payload["document_id"],
+                    section_path=chunk.header_path,
+                    chunk_index=index,
+                    content_hash=content_hash,
+                )
+                chunks.append(
+                    {
+                        "id": chunk_uid,
+                        "chunk_uid": chunk_uid,
+                        "content_hash": content_hash,
+                        "chunk_index": index,
+                        "header_path": chunk.header_path,
+                        "page_number": chunk.page_number,
+                        "content": chunk.content,
+                        "metadata": {
+                            **base_metadata,
+                            **dict(parsed.metadata or {}),
+                            "title": payload.get("title") or base_metadata.get("title"),
+                            "filename": payload.get("filename"),
+                            "chunk_uid": chunk_uid,
+                            "content_hash": content_hash,
+                            "section_path": chunk.header_path,
+                        },
+                        "embedding": embeddings[index],
+                    }
+                )
             await self.repository.replace_chunks(
                 document_id=payload["document_id"],
                 version_id=payload["version_id"],
