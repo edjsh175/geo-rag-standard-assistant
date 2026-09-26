@@ -12,7 +12,6 @@ class AgentSessionRecord:
     id: str
     principal_id: str
     session_id: str
-    workspace_id: str = "default"
     status: str = "active"
     next_turn_number: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)

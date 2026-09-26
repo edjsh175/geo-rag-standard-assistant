@@ -137,7 +137,6 @@ class AgentStore(ABC):
         self,
         principal_id: str,
         session_id: str,
-        workspace_id: str = "default",
     ) -> AgentSession:
         raise NotImplementedError
 
@@ -280,7 +279,6 @@ class InMemoryAgentStore(AgentStore):
         self,
         principal_id: str,
         session_id: str,
-        workspace_id: str = "default",
     ) -> AgentSession:
         async with self._lock:
             key = (principal_id.strip(), session_id.strip())
@@ -565,10 +563,9 @@ class PostgresAgentStore(AgentStore):
         self,
         principal_id: str,
         session_id: str,
-        workspace_id: str = "default",
     ) -> AgentSession:
         if not self._is_postgres_available:
-            return await self._fallback.get_or_create_session(principal_id, session_id, workspace_id)
+            return await self._fallback.get_or_create_session(principal_id, session_id)
 
         principal = principal_id.strip()
         normalized_sess = session_id.strip()
@@ -577,7 +574,7 @@ class PostgresAgentStore(AgentStore):
         async with self._manager.get_postgres_session() as session:
             select_sql = text(
                 """
-                SELECT id, principal_id, session_id, workspace_id, status, next_turn_number, metadata
+                SELECT id, principal_id, session_id, status, next_turn_number, metadata
                 FROM geoai_agent_sessions
                 WHERE principal_id = :principal_id AND session_id = :session_id
                 LIMIT 1
@@ -593,11 +590,11 @@ class PostgresAgentStore(AgentStore):
                 insert_sql = text(
                     """
                     INSERT INTO geoai_agent_sessions (
-                        id, principal_id, session_id, workspace_id, status, next_turn_number, metadata
+                        id, principal_id, session_id, status, next_turn_number, metadata
                     )
-                    VALUES (:id, :principal_id, :session_id, :workspace_id, 'active', 1, '{}'::jsonb)
+                    VALUES (:id, :principal_id, :session_id, DEFAULT, 'active', 1, '{}'::jsonb)
                     ON CONFLICT (principal_id, session_id) DO UPDATE SET updated_at = NOW()
-                    RETURNING id, principal_id, session_id, workspace_id, status, next_turn_number, metadata
+                    RETURNING id, principal_id, session_id, status, next_turn_number, metadata
                     """
                 )
                 res = await session.execute(
@@ -606,7 +603,6 @@ class PostgresAgentStore(AgentStore):
                         "id": record_id,
                         "principal_id": principal,
                         "session_id": normalized_sess,
-                        "workspace_id": workspace_id,
                     },
                 )
                 row = res.mappings().first()
@@ -646,7 +642,7 @@ class PostgresAgentStore(AgentStore):
         async with self._manager.get_postgres_session() as session:
             select_sql = text(
                 """
-                SELECT id, principal_id, session_id, workspace_id, status, next_turn_number, metadata
+                SELECT id, principal_id, session_id, status, next_turn_number, metadata
                 FROM geoai_agent_sessions
                 WHERE principal_id = :principal_id AND session_id = :session_id
                 LIMIT 1
