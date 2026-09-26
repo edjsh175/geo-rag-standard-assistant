@@ -27,6 +27,7 @@ class ControllerContextProjection:
     tool_names: str = ""
     available_capabilities: tuple[str, ...] = ()
     available_control_actions: tuple[str, ...] = ()
+    publication_evidence_budget: Mapping[str, Any] = field(default_factory=_empty_mapping)
     estimated_tokens: int = 0
 
     def sections(self) -> dict[str, Any]:
@@ -43,6 +44,7 @@ class ControllerContextProjection:
             "tool_names": self.tool_names,
             "available_capabilities": list(self.available_capabilities),
             "available_control_actions": list(self.available_control_actions),
+            "publication_evidence_budget": dict(self.publication_evidence_budget or {}),
         }
 
 

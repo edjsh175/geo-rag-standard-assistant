@@ -164,6 +164,7 @@ class ContextEngine:
                 "excerpt": (ev.get("excerpt") or ev.get("text") or "")[:200],
                 "source_type": ev.get("source_type", "working"),
                 "selectable_for_snapshot": True,
+                "publication_token_cost": ev.get("publication_token_cost"),
             })
         for ev in evidence_memory:
             eid = ev.get("evidence_id")
@@ -175,6 +176,7 @@ class ContextEngine:
                     "excerpt": (ev.get("excerpt") or ev.get("text") or "")[:200],
                     "source_type": "historical",
                     "selectable_for_snapshot": True,
+                    "publication_token_cost": ev.get("publication_token_cost"),
                 })
 
         runtime_facts = (
@@ -212,6 +214,7 @@ class ContextEngine:
         tool_names: str,
         available_capabilities: Sequence[str] = (),
         available_control_actions: Sequence[str] = (),
+        publication_evidence_budget: Mapping[str, Any] | None = None,
     ) -> tuple[ControllerContextProjection, ContextSnapshot]:
         """Produce a budgeted projection and audit snapshot for Controller decisions."""
         conv_lines: list[str] = []
@@ -242,6 +245,7 @@ class ContextEngine:
             tool_names=tool_names,
             available_capabilities=tuple(available_capabilities),
             available_control_actions=tuple(available_control_actions),
+            publication_evidence_budget=publication_evidence_budget or {},
             estimated_tokens=tokens,
         )
 

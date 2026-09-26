@@ -648,6 +648,7 @@ class AgentRuntime:
                     "title": item.title,
                     "excerpt": item.text[:800],
                     "score": item.score,
+                    "publication_token_cost": self.context_engine.budget_manager.estimate_publication_evidence_tokens([item]),
                 }
                 for item in working_items
             ]
@@ -659,6 +660,7 @@ class AgentRuntime:
                     "title": item.title,
                     "excerpt": item.text[:800],
                     "score": item.score,
+                    "publication_token_cost": self.context_engine.budget_manager.estimate_publication_evidence_tokens([item]),
                 }
                 for item in historical_items
             ]
@@ -704,6 +706,14 @@ class AgentRuntime:
                 f"- {s.name}: {s.description}" for s in tool_specs
             ) if tool_specs else ""
             tool_names = ", ".join(s.name for s in tool_specs) if tool_specs else ""
+            publication_budget = self.context_engine.budget_manager.check_evidence_selection(
+                question=question,
+                items=(),
+                reviewer_enabled=reviewer_enabled,
+            ).to_dict()
+            publication_budget.pop("allowed", None)
+            publication_budget.pop("evidence_tokens", None)
+            publication_budget["reviewer_enabled"] = reviewer_enabled
 
             proj_ctrl, snapshot_ctrl = self.context_engine.project_for_controller(
                 frame,
@@ -711,6 +721,7 @@ class AgentRuntime:
                 tool_names=tool_names,
                 available_capabilities=tuple(action_state.available_capabilities),
                 available_control_actions=tuple(action_state.available_control_actions),
+                publication_evidence_budget=publication_budget,
             )
             if hasattr(self.session_store, "save_snapshot"):
                 try:
@@ -961,6 +972,63 @@ class AgentRuntime:
                     raw_selected_ids = []
 
                 selected_ids = [str(i).strip() for i in raw_selected_ids if str(i).strip()]
+                items_by_id = {item.evidence_id: item for item in all_ledger_items}
+                selected_items = [items_by_id[evidence_id] for evidence_id in selected_ids]
+                budget_check = self.context_engine.budget_manager.check_evidence_selection(
+                    question=question,
+                    items=selected_items,
+                    reviewer_enabled=reviewer_enabled,
+                )
+                if not budget_check.allowed:
+                    try:
+                        fuse.consume_step(tool_name="compose_answer:evidence_budget_rejected")
+                    except ResourceFuseExceeded:
+                        return await resource_fuse_result()
+                    await self._append_event(
+                        request.principal_id,
+                        session.events,
+                        turn_events,
+                        AgentEvent(
+                            event_type="controller_decision",
+                            session_id=session.session_id,
+                            turn_id=turn_id,
+                            trace_id=trace_id,
+                            payload={
+                                "action": "compose_answer",
+                                "tool_name": "compose_answer",
+                                "arguments": dict(raw_args),
+                            },
+                        ),
+                        event_listener,
+                    )
+                    rejection_payload = {
+                        "reason": "evidence_budget_exceeded",
+                        "selected_evidence_ids": selected_ids,
+                        **budget_check.to_dict(),
+                    }
+                    observations.append(
+                        ToolObservation(
+                            tool_call_id=call.tool_call_id,
+                            tool_name="compose_answer",
+                            status="rejected_evidence_budget",
+                            payload=rejection_payload,
+                            is_terminal=False,
+                        )
+                    )
+                    await self._append_event(
+                        request.principal_id,
+                        session.events,
+                        turn_events,
+                        AgentEvent(
+                            event_type="compose_answer_rejected",
+                            session_id=session.session_id,
+                            turn_id=turn_id,
+                            trace_id=trace_id,
+                            payload=rejection_payload,
+                        ),
+                        event_listener,
+                    )
+                    continue
                 # Freeze selected evidence from ledger
                 snapshot = session.evidence_ledger.freeze(
                     turn_id=turn_id,
@@ -1302,6 +1370,51 @@ class AgentRuntime:
         if reviewer_enabled:
             if self.reviewer is None:
                 raise RuntimeError("reviewer_enabled but no reviewer is configured")
+            reviewer_budget = self.context_engine.budget_manager.check_reviewer_input(
+                question=question,
+                draft_answer=answer.answer,
+                items=snapshot.items,
+            )
+            if not reviewer_budget.allowed:
+                limitation = "候选答案与冻结证据超过 Reviewer 上下文预算，答案未发布。"
+                await self._append_event(
+                    request.principal_id,
+                    session.events,
+                    turn_events,
+                    AgentEvent(
+                        event_type="publication_completed",
+                        session_id=session.session_id,
+                        turn_id=turn_id,
+                        trace_id=trace_id,
+                        payload={
+                            "state": "review_budget_exceeded",
+                            **reviewer_budget.to_dict(),
+                        },
+                    ),
+                    event_listener,
+                )
+                await self._append_assistant_message(
+                    request.principal_id,
+                    session.events,
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    text=limitation,
+                )
+                if hasattr(self.session_store, "save_session"):
+                    await self.session_store.save_session(session)
+                return AgentRunResult(
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    publication_state="review_budget_exceeded",
+                    answer=None,
+                    clarification=None,
+                    limitation=limitation,
+                    frozen_evidence=snapshot,
+                    review=None,
+                    events=tuple(turn_events),
+                )
             proj_rev, snapshot_rev = self.context_engine.project_for_reviewer(
                 frame if "frame" in locals() else self.context_engine.build_frame(
                     session_id=session.session_id,

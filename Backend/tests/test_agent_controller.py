@@ -139,6 +139,57 @@ async def test_controller_receives_working_evidence_catalog_for_semantic_decisio
 
 
 @pytest.mark.asyncio
+async def test_controller_model_request_exposes_publication_evidence_budget_and_item_costs() -> None:
+    from app.services.agent.context.engine import ContextEngine
+
+    client = FakeModelClient(
+        ModelResponse(content='{"action":"direct_answer","answer":"ok"}')
+    )
+    controller = MainController(
+        model_client=client,
+        tool_registry=build_default_tool_registry(),
+    )
+    frame = ContextEngine().build_frame(
+        session_id="budget-controller",
+        principal_id="admin:test",
+        question="继续",
+        events=(),
+        working_evidence=(
+            {
+                "evidence_id": "ev-budget-1",
+                "citation_id": "E1",
+                "title": "预算证据",
+                "excerpt": "摘要",
+                "publication_token_cost": 321,
+            },
+        ),
+        current_turn_id="turn-1",
+    )
+    projection, _ = ContextEngine().project_for_controller(
+        frame,
+        tool_contracts_text="",
+        tool_names="",
+        publication_evidence_budget={
+            "max_evidence_tokens": 900,
+            "answer_context_limit": 5900,
+            "reviewer_context_limit": 2000,
+            "reviewer_enabled": True,
+        },
+    )
+
+    await controller.decide(
+        projection=projection,
+        observations=(),
+        stage_policy=LLMStagePolicy(False, True),
+    )
+
+    user_prompt = client.calls[0].messages[1]["content"]
+    assert "Publication Evidence Budget" in user_prompt
+    assert '"max_evidence_tokens": 900' in user_prompt
+    assert '"publication_token_cost": 321' in user_prompt
+
+
+@pytest.mark.asyncio
 async def test_controller_rejects_non_tool_direct_answer_shape() -> None:
     client = FakeModelClient(
         ModelResponse(content='{"answer":"直接回答知识问题"}')

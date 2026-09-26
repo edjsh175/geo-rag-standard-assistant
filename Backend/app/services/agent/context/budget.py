@@ -61,6 +61,40 @@ class ContextBudgetConfig:
     )
 
 
+@dataclass(frozen=True)
+class EvidenceBudgetCheck:
+    allowed: bool
+    evidence_tokens: int
+    max_evidence_tokens: int
+    answer_context_limit: int
+    reviewer_context_limit: int | None
+    question_tokens: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "evidence_tokens": self.evidence_tokens,
+            "max_evidence_tokens": self.max_evidence_tokens,
+            "answer_context_limit": self.answer_context_limit,
+            "reviewer_context_limit": self.reviewer_context_limit,
+            "question_tokens": self.question_tokens,
+        }
+
+
+@dataclass(frozen=True)
+class ReviewerBudgetCheck:
+    allowed: bool
+    estimated_tokens: int
+    max_context_tokens: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "estimated_tokens": self.estimated_tokens,
+            "max_context_tokens": self.max_context_tokens,
+        }
+
+
 class ContextBudgetManager:
     """Manages token estimation and deterministic multi-stage context trimming."""
 
@@ -74,6 +108,91 @@ class ContextBudgetManager:
 
     def estimate_tokens(self, text: str) -> int:
         return self.estimator.estimate(text)
+
+    @staticmethod
+    def _evidence_field(item: Any, name: str, default: str = "") -> str:
+        if isinstance(item, Mapping):
+            return str(item.get(name) or default)
+        return str(getattr(item, name, default) or default)
+
+    def estimate_publication_evidence_tokens(self, items: Sequence[Any]) -> int:
+        """Estimate the full evidence text that Answer/Reviewer must both receive."""
+        answer_text = "\n\n".join(
+            f"[{self._evidence_field(item, 'citation_id')}] "
+            f"{self._evidence_field(item, 'title')}\n"
+            f"{self._evidence_field(item, 'text', self._evidence_field(item, 'excerpt'))}"
+            for item in items
+        )
+        reviewer_text = "\n\n".join(
+            f"[{self._evidence_field(item, 'citation_id')}] "
+            f"{self._evidence_field(item, 'text', self._evidence_field(item, 'excerpt'))}"
+            for item in items
+        )
+        return max(
+            self.estimator.estimate(answer_text),
+            self.estimator.estimate(reviewer_text),
+        )
+
+    def check_evidence_selection(
+        self,
+        *,
+        question: str,
+        items: Sequence[Any],
+        reviewer_enabled: bool,
+    ) -> EvidenceBudgetCheck:
+        """Validate evidence before freeze; never silently trim a Controller selection."""
+        evidence_tokens = self.estimate_publication_evidence_tokens(items)
+        question_tokens = self.estimator.estimate(question)
+        answer_limit = self.config.answer.available_context_tokens
+        reviewer_limit = (
+            self.config.reviewer.available_context_tokens if reviewer_enabled else None
+        )
+        if not self.config.enabled:
+            max_evidence_tokens = max(evidence_tokens, 0)
+            return EvidenceBudgetCheck(
+                allowed=True,
+                evidence_tokens=evidence_tokens,
+                max_evidence_tokens=max_evidence_tokens,
+                answer_context_limit=answer_limit,
+                reviewer_context_limit=reviewer_limit,
+                question_tokens=question_tokens,
+            )
+        answer_allowance = max(0, answer_limit - question_tokens)
+        reviewer_allowance = (
+            max(0, reviewer_limit - question_tokens)
+            if reviewer_limit is not None
+            else answer_allowance
+        )
+        max_evidence_tokens = min(answer_allowance, reviewer_allowance)
+        return EvidenceBudgetCheck(
+            allowed=evidence_tokens <= max_evidence_tokens,
+            evidence_tokens=evidence_tokens,
+            max_evidence_tokens=max_evidence_tokens,
+            answer_context_limit=answer_limit,
+            reviewer_context_limit=reviewer_limit,
+            question_tokens=question_tokens,
+        )
+
+    def check_reviewer_input(
+        self,
+        *,
+        question: str,
+        draft_answer: str,
+        items: Sequence[Any],
+    ) -> ReviewerBudgetCheck:
+        """Validate the complete Reviewer semantic payload after the draft exists."""
+        evidence_tokens = self.estimate_publication_evidence_tokens(items)
+        estimated_tokens = (
+            self.estimator.estimate(question)
+            + self.estimator.estimate(draft_answer)
+            + evidence_tokens
+        )
+        limit = self.config.reviewer.available_context_tokens
+        return ReviewerBudgetCheck(
+            allowed=(not self.config.enabled) or estimated_tokens <= limit,
+            estimated_tokens=estimated_tokens,
+            max_context_tokens=limit,
+        )
 
     def _json_token_cost(self, value: Any) -> int:
         return self.estimator.estimate(

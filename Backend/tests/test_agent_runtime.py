@@ -6,6 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.agent.context import ContextEngine
+from app.services.agent.context.budget import (
+    ContextBudgetConfig,
+    ContextBudgetManager,
+    StageBudget,
+)
 from app.models.search_models import DocumentResult
 from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.answer_generator import AnswerGenerationError
@@ -167,6 +172,133 @@ class FakeAnswerGenerator:
             answer="基于冻结证据回答",
             citations=tuple(item.citation_id for item in snapshot.items),
         )
+
+
+class BudgetRetryController:
+    async def decide(self, *, question, context_summary, working_evidence, observations, stage_policy):
+        if not observations:
+            return ToolCall(
+                tool_call_id="budget-retrieve",
+                name="retrieve_kb",
+                arguments={"query": question, "search_mode": "keyword"},
+            )
+        latest = observations[-1]
+        if latest.status == "rejected_evidence_budget":
+            return ToolCall(
+                tool_call_id="budget-compose-retry",
+                name="compose_answer",
+                arguments={"evidence_ids": [latest.payload["selected_evidence_ids"][0]]},
+            )
+        return ToolCall(
+            tool_call_id="budget-compose-all",
+            name="compose_answer",
+            arguments={"evidence_ids": list(latest.payload["evidence_ids"])},
+        )
+
+
+class LongAnswerGenerator:
+    async def generate(self, *, question, snapshot, stage_policy):
+        return GeneratedAnswer(
+            kind="knowledge_answer",
+            answer="x" * 1200,
+            citations=tuple(item.citation_id for item in snapshot.items),
+        )
+
+
+class CountingReviewer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def review(self, **kwargs):
+        self.calls += 1
+        raise AssertionError("reviewer must not run when its full input exceeds budget")
+
+
+def make_tight_context_engine(*, available_tokens: int) -> ContextEngine:
+    stage = StageBudget(
+        max_tokens=available_tokens + 100,
+        system_reserve=50,
+        generation_reserve=50,
+    )
+    return ContextEngine(
+        ContextBudgetManager(
+            ContextBudgetConfig(
+                controller=StageBudget(max_tokens=1000, system_reserve=100, generation_reserve=100),
+                answer=stage,
+                reviewer=stage,
+            )
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_compose_answer_over_budget_is_rejected_before_freeze_and_can_retry_smaller_selection() -> None:
+    generator = FakeAnswerGenerator()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(
+            [
+                make_candidate("chunk-budget-1", "A" * 160),
+                make_candidate("chunk-budget-2", "B" * 160),
+            ]
+        ),
+        controller=BudgetRetryController(),
+        answer_generator=generator,
+        session_store=InMemoryAgentSessionStore(),
+        context_engine=make_tight_context_engine(available_tokens=75),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="budget test",
+            session_id="budget-selection",
+            principal_id="admin:test",
+        )
+    )
+
+    assert result.publication_state == "published"
+    rejected = [event for event in result.events if event.event_type == "compose_answer_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0].payload["reason"] == "evidence_budget_exceeded"
+    frozen = [event for event in result.events if event.event_type == "evidence_frozen"]
+    assert len(frozen) == 1
+    assert len(frozen[0].payload["evidence_ids"]) == 1
+    assert len(generator.snapshots) == 1
+    assert len(generator.snapshots[0].items) == 1
+
+
+@pytest.mark.asyncio
+async def test_reviewer_full_input_budget_is_fail_closed_without_trimming_or_reviewer_call() -> None:
+    reviewer = CountingReviewer()
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort(
+            [make_candidate("chunk-review-budget", "short evidence")]
+        ),
+        controller=RetrieveThenComposeController(),
+        answer_generator=LongAnswerGenerator(),
+        reviewer=reviewer,
+        session_store=InMemoryAgentSessionStore(),
+        context_engine=make_tight_context_engine(available_tokens=100),
+    )
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="review budget test",
+            session_id="review-budget",
+            principal_id="admin:test",
+            reviewer_enabled=True,
+        )
+    )
+
+    assert result.publication_state == "review_budget_exceeded"
+    assert result.answer is None
+    assert result.frozen_evidence is not None
+    assert reviewer.calls == 0
+    states = [
+        event.payload.get("state")
+        for event in result.events
+        if event.event_type == "publication_completed"
+    ]
+    assert states[-1] == "review_budget_exceeded"
 
 
 @pytest.mark.asyncio
