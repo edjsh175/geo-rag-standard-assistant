@@ -131,7 +131,7 @@ const Chat: React.FC<ChatProps> = ({
     >
       {/* ── Header ── */}
       <div
-        className="px-5 py-3.5 flex items-center justify-between shrink-0 glass-light"
+        className="relative z-[100] px-5 py-3.5 flex items-center justify-between shrink-0 overflow-visible glass-light"
         style={{ ...glassLightStyle, borderBottom: '0.5px solid var(--color-outline)' }}
       >
         <div className="flex items-center gap-3">
