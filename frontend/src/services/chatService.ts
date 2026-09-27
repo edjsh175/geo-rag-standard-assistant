@@ -395,4 +395,21 @@ export const chatService = {
       references: response.references || [],
     };
   },
+
+  /**
+   * 取消指定的 Agent 运行轮次
+   */
+  async cancelTurn(sessionId: string, turnId: string, reason = 'user_stop'): Promise<boolean> {
+    try {
+      await apiPost('/api/search/query/cancel', {
+        session_id: sessionId,
+        turn_id: turnId,
+        reason,
+      });
+      return true;
+    } catch (error) {
+      console.warn('通知后端取消失败:', error);
+      return false;
+    }
+  },
 };

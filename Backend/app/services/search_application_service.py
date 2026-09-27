@@ -8,6 +8,7 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 from app.models.search_models import SearchRequest, SearchResponse
+from app.services.agent.context.admission import admit_map_context
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
 from app.services.agent.publication import PublishedResult
@@ -65,7 +66,12 @@ class SearchApplicationService:
         """Admit client context by authority before it reaches Agent Runtime."""
         context: dict = {}
         if request.map_context is not None:
-            context["browser_observations"] = {"map_context": request.map_context}
+            admitted_map, rejection_hint = admit_map_context(request.map_context)
+            if admitted_map is not None:
+                context["browser_observations"] = {"map_context": admitted_map}
+            elif rejection_hint is not None:
+                hints = context.setdefault("client_hints", {})
+                hints["map_context"] = rejection_hint
 
         follow_up = request.follow_up_context
         target_id = str(follow_up.target_document_id).strip() if follow_up and follow_up.target_document_id else ""

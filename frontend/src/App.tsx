@@ -582,6 +582,9 @@ export default function App() {
   // 停止生成函数
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
+      if (activeTurn?.session_id && activeTurn?.turn_id) {
+        void chatService.cancelTurn(activeTurn.session_id, activeTurn.turn_id, 'user_stop');
+      }
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsChatLoading(false);
