@@ -157,6 +157,22 @@ class AgentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_sessions(
+        self,
+        principal_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_session(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
     async def allocate_turn_id(
         self,
         principal_id: str,
@@ -385,6 +401,40 @@ class InMemoryAgentStore(AgentStore):
                 self._pending[key] = (session.pending_browser_execution, expires_at)
             else:
                 self._pending.pop(key, None)
+
+    async def list_sessions(
+        self,
+        principal_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        principal = principal_id.strip()
+        results: list[dict[str, Any]] = []
+        async with self._lock:
+            for (pid, sid), sess in self._sessions.items():
+                if pid == principal:
+                    results.append({
+                        "session_id": sid,
+                        "turn_count": len({e.turn_id for e in sess.events if e.turn_id}),
+                        "status": "active",
+                    })
+        return results[:limit]
+
+    async def delete_session(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> bool:
+        principal = principal_id.strip()
+        sid = session_id.strip()
+        key = (principal, sid)
+        async with self._lock:
+            removed = self._sessions.pop(key, None) is not None
+            self._pending.pop(key, None)
+            self._events.pop(key, None)
+            self._evidence.pop(key, None)
+            self._evidence_activations.pop(key, None)
+            self._snapshots.pop(key, None)
+        return removed
 
     async def allocate_turn_id(
         self,
@@ -839,6 +889,75 @@ class PostgresAgentStore(AgentStore):
             await self.clear_pending_execution(principal, normalized_sess)
         if session.conversation_memory is not None:
             await self.save_conversation_memory(session.conversation_memory)
+
+    async def list_sessions(
+        self,
+        principal_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if not self._is_postgres_available:
+            return await self._fallback.list_sessions(principal_id, limit)
+
+        async with self._manager.get_postgres_session() as db_session:
+            sql = text(
+                """
+                SELECT session_id, status, next_turn_number, updated_at
+                FROM geoai_agent_sessions
+                WHERE principal_id = :principal_id AND status != 'deleted'
+                ORDER BY updated_at DESC
+                LIMIT :limit
+                """
+            )
+            res = await db_session.execute(
+                sql,
+                {"principal_id": principal_id.strip(), "limit": limit},
+            )
+            rows = res.mappings().all()
+            return [
+                {
+                    "session_id": row["session_id"],
+                    "status": row["status"],
+                    "turn_count": max(0, row["next_turn_number"] - 1),
+                    "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+                }
+                for row in rows
+            ]
+
+    async def delete_session(
+        self,
+        principal_id: str,
+        session_id: str,
+    ) -> bool:
+        if not self._is_postgres_available:
+            return await self._fallback.delete_session(principal_id, session_id)
+
+        async with self._manager.get_postgres_session() as db_session:
+            sql = text(
+                """
+                UPDATE geoai_agent_sessions
+                SET status = 'deleted', updated_at = NOW()
+                WHERE principal_id = :principal_id AND session_id = :session_id AND status != 'deleted'
+                RETURNING session_id
+                """
+            )
+            res = await db_session.execute(
+                sql,
+                {"principal_id": principal_id.strip(), "session_id": session_id.strip()},
+            )
+            row = res.mappings().first()
+            if row is not None:
+                await db_session.execute(
+                    text(
+                        """
+                        UPDATE geoai_pending_browser_executions
+                        SET status = 'cancelled'
+                        WHERE principal_id = :principal_id AND session_id = :session_id
+                        """
+                    ),
+                    {"principal_id": principal_id.strip(), "session_id": session_id.strip()},
+                )
+                return True
+            return False
 
     async def allocate_turn_id(
         self,

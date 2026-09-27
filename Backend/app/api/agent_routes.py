@@ -5,17 +5,78 @@ from __future__ import annotations
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.auth import AdminIdentity
-from app.core.security import require_authenticated_admin
+from app.core.auth import AdminIdentity, UserIdentity
+from app.core.security import require_authenticated_admin, require_authenticated_user
+from app.services.agent.session_service import AgentSessionService
 from app.services.agent.store import PostgresAgentStore
 from app.services.agent.trace_service import AgentTraceService
 
 router = APIRouter()
-_trace_service = AgentTraceService(PostgresAgentStore())
+_store = PostgresAgentStore()
+_trace_service = AgentTraceService(_store)
+_session_service = AgentSessionService(_store)
 
 
 def get_agent_trace_service() -> AgentTraceService:
     return _trace_service
+
+
+def get_agent_session_service() -> AgentSessionService:
+    return _session_service
+
+
+def _extract_principal(user: UserIdentity) -> str:
+    if user.role == "visitor":
+        if not user.visitor_id:
+            raise HTTPException(status_code=400, detail="visitor_id is required")
+        return f"visitor:{user.visitor_id}"
+    return f"admin:{user.username}"
+
+
+@router.get("/sessions")
+async def list_sessions(
+    limit: int = Query(50, ge=1, le=100),
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    session_service: AgentSessionService = Depends(get_agent_session_service),
+) -> list[dict[str, Any]]:
+    """List sessions owned by the authenticated principal."""
+    principal = _extract_principal(current_user)
+    return await session_service.list_sessions(principal_id=principal, limit=limit)
+
+
+@router.get("/sessions/{session_id}")
+async def get_session_detail(
+    session_id: str,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    session_service: AgentSessionService = Depends(get_agent_session_service),
+) -> dict[str, Any]:
+    """Retrieve full conversation history, messages, and turns for a session."""
+    principal = _extract_principal(current_user)
+    detail = await session_service.get_session_detail(
+        principal_id=principal,
+        session_id=session_id,
+    )
+    if detail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session not found: {session_id}",
+        )
+    return detail
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    session_service: AgentSessionService = Depends(get_agent_session_service),
+) -> dict[str, Any]:
+    """Delete a session and clear associated pending executions."""
+    principal = _extract_principal(current_user)
+    success = await session_service.delete_session(
+        principal_id=principal,
+        session_id=session_id,
+    )
+    return {"session_id": session_id, "deleted": success}
 
 
 @router.get("/sessions/{session_id}/turns/{turn_id}")

@@ -1,5 +1,6 @@
 import { AxiosError } from 'axios';
 import { apiPost, apiPostSse } from '../lib/api/contractClient';
+import { apiClient } from '../lib/api/config';
 import type { components } from '../lib/api/generated/schema';
 import { executeBrowserTool, getBrowserMapContext } from '../gis/browserBridge';
 import type { BrowserMapAction, BrowserToolReceipt } from '../gis/contracts';
@@ -250,10 +251,26 @@ export const chatService = {
    */
   async getConversationHistory(conversationId: string): Promise<ChatMessage[]> {
     try {
-      void conversationId;
+      if (!conversationId) return [];
+      const res = await apiClient.get<{
+        messages?: Array<{
+          role: 'user' | 'assistant';
+          content: string;
+          timestamp?: string;
+          references?: DocumentResult[];
+        }>;
+      }>(`/agent/sessions/${encodeURIComponent(conversationId)}`);
+      if (Array.isArray(res.data?.messages)) {
+        return res.data.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          references: m.references,
+          timestamp: m.timestamp,
+        }));
+      }
       return [];
     } catch (error) {
-      console.error(`获取对话历史失败 (ID: ${conversationId}):`, error);
+      console.warn(`获取对话历史失败 (ID: ${conversationId}):`, error);
       return [];
     }
   },
@@ -270,7 +287,8 @@ export const chatService = {
    */
   async deleteConversation(conversationId: string): Promise<void> {
     try {
-      console.log(`删除对话: ${conversationId}`);
+      if (!conversationId) return;
+      await apiClient.delete(`/agent/sessions/${encodeURIComponent(conversationId)}`);
     } catch (error) {
       console.error(`删除对话失败 (ID: ${conversationId}):`, error);
     }
