@@ -58,7 +58,7 @@ class ControllerStub:
             return ToolCall(
                 tool_call_id="retrieve-1",
                 name="retrieve_kb",
-                arguments={"query": question, "search_mode": "keyword"},
+                arguments={"query": question, "search_mode": "keyword", "secret": "do-not-expose"},
             )
         return ToolCall(
             tool_call_id="compose-1",
@@ -115,6 +115,16 @@ async def test_runtime_stream_projects_same_run_events_in_order() -> None:
         event.event_type for event in events
     ]
     assert all("reasoning" not in key.lower() for event in events for key in event.payload)
+    started = next(event for event in events if event.event_type == "tool_started")
+    assert started.payload["arguments"] == {"query": "规划标准有什么要求？"}
+    completed = next(event for event in events if event.event_type == "tool_completed")
+    assert completed.payload["result_summary"] == {
+        "evidence_ids": [result.frozen_evidence.items[0].evidence_id],
+        "candidate_count": 1,
+        "admitted_count": 1,
+        "evidence_count": 1,
+    }
+    assert "secret" not in str(started.payload)
 
 
 class StreamApplicationServiceStub:
@@ -126,6 +136,8 @@ class StreamApplicationServiceStub:
         self.calls.append((request, generation_allowed))
         yield SimpleNamespace(
             event=SimpleNamespace(
+                event_id="evt-1",
+                sequence=1,
                 event_type="controller_decision",
                 session_id="session-1",
                 turn_id="turn-1",
@@ -171,5 +183,102 @@ async def test_stream_route_serializes_application_runtime_events_and_final_resp
     assert application_service.calls[0][1] is True
     assert "event: controller_decision" in payload
     assert '"trace_id": "trace-1"' in payload
+    assert '"event_id"' in payload
+    assert '"sequence"' in payload
     assert "event: result" in payload
     assert '"generated_answer": "answer"' in payload
+
+
+@pytest.mark.asyncio
+async def test_session_detail_prefers_assistant_message_over_publication_metadata() -> None:
+    from app.services.agent.events import AgentEvent
+    from app.services.agent.session_service import AgentSessionService
+    from app.services.agent.store import InMemoryAgentStore
+
+    store = InMemoryAgentStore()
+    service = AgentSessionService(session_store=store)
+    await store.get_or_create_session("admin:test", "session-history")
+    await store.append_event("admin:test", AgentEvent(
+        event_type="assistant_message", session_id="session-history", turn_id="turn-1",
+        payload={"text": "服务端保存的完整回答"},
+    ))
+    await store.append_event("admin:test", AgentEvent(
+        event_type="publication_completed", session_id="session-history", turn_id="turn-1",
+        payload={"state": "published", "citations": ["citation-1"]},
+    ))
+
+    detail = await service.get_session_detail(principal_id="admin:test", session_id="session-history")
+    assert detail is not None
+    assistant = next(message for message in detail["messages"] if message["role"] == "assistant")
+    assert assistant["content"] == "服务端保存的完整回答"
+    assert assistant["metadata"]["publication_state"] == "published"
+
+
+@pytest.mark.asyncio
+async def test_reviewer_events_exist_only_for_real_review_and_preserve_verdict() -> None:
+    class Reviewer:
+        async def review(self, **kwargs):
+            return SimpleNamespace(verdict="UNSUPPORTED", findings=({}, {}))
+
+    store = InMemoryAgentSessionStore()
+    runtime = AgentRuntime(
+        retrieval_port=RetrievalPortStub(), controller=ControllerStub(),
+        answer_generator=AnswerGeneratorStub(), reviewer=Reviewer(), session_store=store,
+    )
+    disabled = await runtime.run(AgentRunRequest(
+        question="问题", session_id="review-off", principal_id="admin:test"))
+    enabled = await runtime.run(AgentRunRequest(
+        question="问题", session_id="review-on", principal_id="admin:test", reviewer_enabled=True))
+
+    assert not any(event.event_type.startswith("review_") for event in disabled.events)
+    started = [event for event in enabled.events if event.event_type == "review_started"]
+    completed = [event for event in enabled.events if event.event_type == "review_completed"]
+    assert len(started) == len(completed) == 1
+    assert started[0].payload["review_id"] == completed[0].payload["review_id"]
+    assert completed[0].payload["verdict"] == "UNSUPPORTED"
+    assert completed[0].payload["finding_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_browser_stream_resume_keeps_one_tool_call_id_and_safe_receipt_summary() -> None:
+    class BrowserController:
+        def __init__(self, continuation=False):
+            self.continuation = continuation
+
+        async def decide(self, **kwargs):
+            if not self.continuation:
+                return ToolCall("browser-call-1", "locate_map", {"longitude": 104.06, "latitude": 30.67, "zoom": 12})
+            evidence = kwargs["observations"][-1].payload["evidence_id"]
+            return ToolCall("compose-after-browser", "compose_answer", {"evidence_ids": [evidence]})
+
+    store = InMemoryAgentSessionStore()
+    first = AgentRuntime(
+        retrieval_port=RetrievalPortStub(), controller=BrowserController(),
+        answer_generator=AnswerGeneratorStub(), session_store=store,
+    )
+    pending = await first.run(AgentRunRequest(
+        question="定位成都", session_id="browser-stream", principal_id="admin:test",
+        request_context={"browser_observations": {"map_context": {
+            "ready": True, "supported_tools": ["locate_map"], "dimension": "3d"}}},
+    ))
+    resumed_runtime = AgentRuntime(
+        retrieval_port=RetrievalPortStub(), controller=BrowserController(continuation=True),
+        answer_generator=AnswerGeneratorStub(), session_store=store,
+    )
+    result = await resumed_runtime.run(AgentRunRequest(
+        question="定位成都", session_id="browser-stream", principal_id="admin:test",
+        continuation_token=pending.continuation_token,
+        browser_tool_receipt={
+            "tool_call_id": pending.pending_tool_call_id, "tool_name": "locate_map", "status": "succeeded",
+            "output": {"secret": "must-not-leak"},
+            "effect": {"status": "applied", "state_revision": 7, "credential": "hidden"},
+            "map_context": {"dimension": "3d", "revision": 7},
+        },
+    ))
+    start = next(event for event in pending.events if event.event_type == "tool_started")
+    requested = next(event for event in pending.events if event.event_type == "browser_tool_requested")
+    receipt = next(event for event in result.events if event.event_type == "browser_tool_completed")
+    assert start.payload["tool_call_id"] == requested.payload["tool_call_id"] == receipt.payload["tool_call_id"]
+    assert receipt.payload["receipt"] == {"effect_status": "applied", "state_revision": 7, "map_dimension": "3d"}
+    assert "secret" not in str(receipt.payload)
+    assert len([event for event in result.events if event.event_type == "publication_completed"]) == 1

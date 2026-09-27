@@ -19,10 +19,16 @@ class ToolConfirmationRequired(ToolPolicyViolation):
     """Raised when a ToolSpec requires explicit call confirmation."""
 
 
+class ToolSideEffectDenied(ToolPolicyViolation):
+    """Raised when a side-effect tool is called in an execution context that prohibits side effects."""
+
+
 @dataclass(frozen=True, slots=True)
 class ToolExecutionContext:
     permissions: frozenset[str] = field(default_factory=frozenset)
     confirmed_tool_call_ids: frozenset[str] = field(default_factory=frozenset)
+    allow_side_effects: bool = True
+    allowed_providers: frozenset[str] | None = None
 
 
 class ToolPolicy:
@@ -35,6 +41,18 @@ class ToolPolicy:
         tool_call_id: str,
         context: ToolExecutionContext,
     ) -> None:
+        if spec.side_effect and not context.allow_side_effects:
+            raise ToolSideEffectDenied(
+                f"TOOL_SIDE_EFFECT_DENIED: '{spec.name}' has side-effects which are "
+                "disallowed in the current execution context"
+            )
+
+        if context.allowed_providers is not None and spec.provider not in context.allowed_providers:
+            raise ToolPermissionDenied(
+                f"TOOL_PROVIDER_DENIED: '{spec.name}' provider '{spec.provider}' is not "
+                "permitted in the current execution context"
+            )
+
         required_permission = (spec.permission or "").strip()
         if required_permission and required_permission not in context.permissions:
             raise ToolPermissionDenied(
@@ -73,4 +91,5 @@ __all__ = [
     "ToolPermissionDenied",
     "ToolPolicy",
     "ToolPolicyViolation",
+    "ToolSideEffectDenied",
 ]

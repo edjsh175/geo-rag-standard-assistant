@@ -16,6 +16,142 @@ from app.models.spatial_models import (
 logger = logging.getLogger(__name__)
 
 
+ALLOWED_GEOMETRY_TYPES = frozenset(
+    {
+        "Point",
+        "MultiPoint",
+        "LineString",
+        "MultiLineString",
+        "Polygon",
+        "MultiPolygon",
+        "GeometryCollection",
+    }
+)
+
+MAX_GEOJSON_PAYLOAD_BYTES = 262144  # 256 KB
+
+
+def _validate_coord(coord: Any) -> None:
+    if not isinstance(coord, (list, tuple)):
+        raise ValueError(f"coordinate must be a list or tuple, got {type(coord).__name__}")
+    if len(coord) < 2 or len(coord) > 3:
+        raise ValueError(f"coordinate must have 2 or 3 elements [lon, lat, (elev)], got {len(coord)}")
+    lon, lat = coord[0], coord[1]
+    if isinstance(lon, bool) or isinstance(lat, bool) or not isinstance(lon, (int, float)) or not isinstance(lat, (int, float)):
+        raise ValueError("coordinate values must be numeric")
+    if not (-180.0 <= lon <= 180.0):
+        raise ValueError(f"longitude {lon} out of range [-180, 180]")
+    if not (-90.0 <= lat <= 90.0):
+        raise ValueError(f"latitude {lat} out of range [-90, 90]")
+
+
+def validate_geojson_geometry(geometry: Any, _depth: int = 0) -> None:
+    """严格校验 GeoJSON 几何体对象的领域契约。
+
+    检验项包括：
+    - 字典结构与最大负载大小 (256 KB)
+    - 允许的几何类型 (RFC 7946)
+    - 递归深度限制 (<= 3)
+    - 坐标合法经纬度范围 (lon [-180, 180], lat [-90, 90])
+    - 非空坐标
+    - 多边形线性环最小点数 (>= 4) 与首尾坐标严格闭合
+    - CRS 声明（如存在则仅支持 WGS84 / EPSG:4326）
+    """
+    if _depth > 3:
+        raise ValueError("GeoJSON nesting depth exceeded maximum (3)")
+    if not isinstance(geometry, dict):
+        raise ValueError(f"GeoJSON geometry must be a dictionary, got {type(geometry).__name__}")
+
+    raw_json = json.dumps(geometry, ensure_ascii=False)
+    if len(raw_json.encode("utf-8")) > MAX_GEOJSON_PAYLOAD_BYTES:
+        raise ValueError(f"GeoJSON payload exceeds maximum allowed size ({MAX_GEOJSON_PAYLOAD_BYTES} bytes)")
+
+    geom_type = geometry.get("type")
+    if not isinstance(geom_type, str) or geom_type not in ALLOWED_GEOMETRY_TYPES:
+        raise ValueError(
+            f"unsupported or missing GeoJSON geometry type: {geom_type!r}. "
+            f"Allowed types: {sorted(ALLOWED_GEOMETRY_TYPES)}"
+        )
+
+    crs = geometry.get("crs")
+    if crs is not None:
+        if isinstance(crs, dict):
+            props = crs.get("properties", {})
+            name = props.get("name", "") if isinstance(props, dict) else ""
+            if name and name.upper() not in {
+                "EPSG:4326",
+                "URN:OGC:DEF:CRS:OGC:1.3:CRS84",
+                "URN:OGC:DEF:CRS:EPSG::4326",
+                "CRS84",
+            }:
+                raise ValueError(f"unsupported CRS: {name!r}. Expected WGS84 (EPSG:4326 / CRS84)")
+        else:
+            raise ValueError("CRS must be a dictionary")
+
+    if geom_type == "GeometryCollection":
+        geometries = geometry.get("geometries")
+        if not isinstance(geometries, list) or len(geometries) == 0:
+            raise ValueError("GeometryCollection must have a non-empty 'geometries' list")
+        for g in geometries:
+            validate_geojson_geometry(g, _depth=_depth + 1)
+        return
+
+    coords = geometry.get("coordinates")
+    if coords is None:
+        raise ValueError(f"GeoJSON {geom_type} missing 'coordinates' field")
+    if not isinstance(coords, list) or len(coords) == 0:
+        raise ValueError(f"GeoJSON {geom_type} coordinates cannot be empty")
+
+    if geom_type == "Point":
+        _validate_coord(coords)
+
+    elif geom_type == "MultiPoint":
+        for pt in coords:
+            _validate_coord(pt)
+
+    elif geom_type == "LineString":
+        if len(coords) < 2:
+            raise ValueError(f"LineString must contain at least 2 points, got {len(coords)}")
+        for pt in coords:
+            _validate_coord(pt)
+
+    elif geom_type == "MultiLineString":
+        for line in coords:
+            if not isinstance(line, list) or len(line) < 2:
+                raise ValueError("each line in MultiLineString must contain at least 2 points")
+            for pt in line:
+                _validate_coord(pt)
+
+    elif geom_type == "Polygon":
+        for ring_idx, ring in enumerate(coords):
+            if not isinstance(ring, list) or len(ring) < 4:
+                raise ValueError(
+                    f"Polygon ring {ring_idx} must contain at least 4 coordinates, got {len(ring) if isinstance(ring, list) else 0}"
+                )
+            for pt in ring:
+                _validate_coord(pt)
+            if ring[0][0] != ring[-1][0] or ring[0][1] != ring[-1][1]:
+                raise ValueError(
+                    f"Polygon ring {ring_idx} is not closed: first coordinate {ring[0]} != last coordinate {ring[-1]}"
+                )
+
+    elif geom_type == "MultiPolygon":
+        for poly_idx, poly in enumerate(coords):
+            if not isinstance(poly, list) or len(poly) == 0:
+                raise ValueError(f"MultiPolygon polygon {poly_idx} must be a non-empty list of rings")
+            for ring_idx, ring in enumerate(poly):
+                if not isinstance(ring, list) or len(ring) < 4:
+                    raise ValueError(
+                        f"MultiPolygon polygon {poly_idx} ring {ring_idx} must contain at least 4 coordinates, got {len(ring) if isinstance(ring, list) else 0}"
+                    )
+                for pt in ring:
+                    _validate_coord(pt)
+                if ring[0][0] != ring[-1][0] or ring[0][1] != ring[-1][1]:
+                    raise ValueError(
+                        f"MultiPolygon polygon {poly_idx} ring {ring_idx} is not closed: first coordinate {ring[0]} != last coordinate {ring[-1]}"
+                    )
+
+
 class SpatialService:
     """空间分析服务"""
 
@@ -27,6 +163,7 @@ class SpatialService:
         geometry = operand.get("geometry")
         region = operand.get("region")
         if geometry is not None:
+            validate_geojson_geometry(geometry)
             return (
                 f"ST_SetSRID(ST_GeomFromGeoJSON(:{prefix}_geometry), 4326)",
                 {f"{prefix}_geometry": json.dumps(geometry, ensure_ascii=False)},
@@ -163,85 +300,24 @@ class SpatialService:
         }
 
     async def geocode(self, request: GeocodeRequest) -> GeocodeResponse:
-        """
-        地理编码（地址转坐标）
-
-        Args:
-            request: 地理编码请求
-
-        Returns:
-            地理编码响应
-        """
-        # TODO: 实现地理编码逻辑
-        # 可以使用第三方API如百度地图、高德地图、腾讯地图等
-        try:
-            # 模拟实现
-            coordinates = [116.4074, 39.9042]  # 北京坐标示例
-
-            return GeocodeResponse(
-                address=request.address,
-                coordinates=coordinates,
-                formatted_address=f"{request.address} (模拟)",
-                city=request.city or "北京市",
-                district="海淀区",
-                country="中国",
-                confidence=0.8
-            )
-        except Exception as e:
-            logger.error(f"地理编码失败: {e}")
-            raise
+        """地理编码（地址转坐标）"""
+        raise NotImplementedError("Authoritative geocoding provider is not configured")
 
     async def reverse_geocode(self, request: ReverseGeocodeRequest) -> ReverseGeocodeResponse:
-        """
-        逆地理编码（坐标转地址）
-
-        Args:
-            request: 逆地理编码请求
-
-        Returns:
-            逆地理编码响应
-        """
-        # TODO: 实现逆地理编码逻辑
-        try:
-            return ReverseGeocodeResponse(
-                coordinates=[request.lon, request.lat],
-                address=f"坐标 ({request.lon}, {request.lat})",
-                formatted_address=f"经度: {request.lon}, 纬度: {request.lat} (模拟)",
-                city="北京市",
-                district="海淀区",
-                country="中国",
-                distance=0.0
-            )
-        except Exception as e:
-            logger.error(f"逆地理编码失败: {e}")
-            raise
+        """逆地理编码（坐标转地址）"""
+        raise NotImplementedError("Authoritative reverse geocoding provider is not configured")
 
     async def spatial_query(self, query: SpatialQuery) -> List[Dict[str, Any]]:
-        """
-        空间查询
-
-        Args:
-            query: 空间查询参数
-
-        Returns:
-            空间查询结果
-        """
-        # TODO: 实现空间查询逻辑
-        # 使用PostGIS进行空间查询
-        try:
-            results = []
-            return results
-        except Exception as e:
-            logger.error(f"空间查询失败: {e}")
-            raise
+        """空间查询"""
+        raise NotImplementedError("Authoritative spatial query provider is not implemented; use query_relation or overlay")
 
     async def calculate_distance(
         self,
         point1: List[float],
-        point2: List[float]
+        point2: List[float],
     ) -> float:
         """
-        计算两点间距离（米）
+        计算两点间球面距离（米）
 
         Args:
             point1: 第一个点 [经度, 纬度]
@@ -251,7 +327,7 @@ class SpatialService:
             距离（米）
         """
         try:
-            from math import radians, sin, cos, sqrt, atan2
+            from math import atan2, cos, radians, sin, sqrt
 
             R = 6371000  # 地球半径（米）
 
@@ -263,8 +339,8 @@ class SpatialService:
             dlon = lon2_rad - lon1_rad
             dlat = lat2_rad - lat1_rad
 
-            a = sin(dlat/2)**2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon/2)**2
-            c = 2 * atan2(sqrt(a), sqrt(1-a))
+            a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
+            c = 2 * atan2(sqrt(a), sqrt(1 - a))
 
             distance = R * c
             return distance
@@ -276,65 +352,40 @@ class SpatialService:
     async def create_buffer(
         self,
         center: List[float],
-        distance: float
+        distance: float,
     ) -> Dict[str, Any]:
-        """
-        创建缓冲区
+        """基于 PostGIS 真实地理坐标系 (geography) 计算米级缓冲区。"""
+        if len(center) < 2:
+            raise ValueError("center must contain [lon, lat]")
+        lon, lat = float(center[0]), float(center[1])
+        if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+            raise ValueError(f"center coordinates out of bounds: [{lon}, {lat}]")
+        if distance <= 0:
+            raise ValueError("buffer distance must be positive")
+        from sqlalchemy import text
 
-        Args:
-            center: 中心点 [经度, 纬度]
-            distance: 缓冲距离（米）
-
-        Returns:
-            缓冲区几何对象（GeoJSON）
-        """
-        # TODO: 实现缓冲区创建逻辑
-        try:
-            buffer_geometry = {
-                "type": "Polygon",
-                "coordinates": [[
-                    [center[0] - 0.01, center[1] - 0.01],
-                    [center[0] + 0.01, center[1] - 0.01],
-                    [center[0] + 0.01, center[1] + 0.01],
-                    [center[0] - 0.01, center[1] + 0.01],
-                    [center[0] - 0.01, center[1] - 0.01]
-                ]]
-            }
-            return buffer_geometry
-        except Exception as e:
-            logger.error(f"创建缓冲区失败: {e}")
-            raise
+        sql = text(
+            """
+            SELECT ST_AsGeoJSON(
+                ST_Buffer(ST_SetSRID(ST_Point(:lon, :lat), 4326)::geography, :distance)::geometry
+            )::json AS geometry
+            """
+        )
+        async with db_manager.get_postgres_session() as session:
+            row = (await session.execute(sql, {"lon": lon, "lat": lat, "distance": distance})).mappings().one()
+        geom = row.get("geometry")
+        if geom is None:
+            raise RuntimeError("failed to generate buffer geometry")
+        return geom
 
     async def spatial_analysis(
         self,
         geometry1: Dict[str, Any],
         geometry2: Dict[str, Any],
-        analysis_type: str = "intersection"
+        analysis_type: str = "intersection",
     ) -> Dict[str, Any]:
-        """
-        空间分析
-
-        Args:
-            geometry1: 第一个几何对象
-            geometry2: 第二个几何对象
-            analysis_type: 分析类型
-
-        Returns:
-            空间分析结果
-        """
-        # TODO: 实现空间分析逻辑
-        try:
-            result = {
-                "analysis_type": analysis_type,
-                "is_valid": True,
-                "result_geometry": None,
-                "distance": None,
-                "area": None
-            }
-            return result
-        except Exception as e:
-            logger.error(f"空间分析失败: {e}")
-            raise
+        """空间分析（已收敛至 query_relation 与 overlay）"""
+        raise NotImplementedError("Authoritative spatial_analysis is not implemented; use query_relation or overlay")
 
     async def get_provinces(self, simplify_tolerance: float = 0.001) -> Dict[str, Any]:
         """
@@ -351,8 +402,6 @@ class SpatialService:
         """
         try:
             async with db_manager.get_postgres_session() as session:
-                # 构建SQL查询
-                # 使用json_build_object和json_agg直接构建FeatureCollection
                 sql = """
                     SELECT json_build_object(
                         'type', 'FeatureCollection',
@@ -389,7 +438,6 @@ class SpatialService:
                     }
 
                 feature_collection = row[0]
-                # 确保features字段存在（即使为空）
                 if "features" not in feature_collection:
                     feature_collection["features"] = []
 
@@ -398,8 +446,4 @@ class SpatialService:
 
         except Exception as e:
             logger.error(f"获取行政区划数据失败: {e}")
-            # 返回空FeatureCollection而不是抛出异常，确保前端不会崩溃
-            return {
-                "type": "FeatureCollection",
-                "features": []
-            }
+            raise RuntimeError(f"获取行政区划数据失败: {e}") from e

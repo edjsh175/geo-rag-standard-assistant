@@ -24,6 +24,7 @@ from app.services.agent.controller import ControllerOutputError
 from app.services.agent.context import ContextEngine
 from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.events import AgentEvent
+from app.services.agent.event_projection import browser_receipt_summary, safe_error, tool_result_summary
 from app.services.agent.publication import (
     BrowserToolExecutionRequired,
     ClarificationRequired,
@@ -347,7 +348,8 @@ class AgentRuntime:
                     payload={
                         "output": receipt.get("output"),
                         "error": receipt.get("error"),
-                        "effect": receipt.get("effect") or {},
+                        "receipt": browser_receipt_summary(receipt),
+                        **({"error": safe_error("TOOL_FAILED")} if receipt_status == "failed" else {}),
                         "map_context": receipt.get("map_context") or {},
                     },
                     is_terminal=False,
@@ -388,7 +390,8 @@ class AgentRuntime:
                         "tool_name": pending.tool_name,
                         "tool_call_id": pending.tool_call_id,
                         "status": receipt_status,
-                        "effect": receipt.get("effect") or {},
+                        "receipt": browser_receipt_summary(receipt),
+                        **({"error": safe_error("TOOL_FAILED")} if receipt_status == "failed" else {}),
                     },
                 ),
                 event_listener,
@@ -1241,6 +1244,23 @@ class AgentRuntime:
                 )
                 break
 
+            try:
+                canonical_call = tool_runtime.validate_call(call=call)
+            except ToolExecutionError as exc:
+                logger.info("Agent tool call rejected (%s): %s", call.name, type(exc).__name__)
+                await self._append_event(
+                    request.principal_id, session.events, turn_events,
+                    AgentEvent(event_type="tool_completed", session_id=session.session_id,
+                               turn_id=turn_id, trace_id=trace_id,
+                               payload={"tool_name": call.name, "tool_call_id": call.tool_call_id,
+                                        "status": "denied", "error": safe_error("TOOL_INVALID_ARGUMENTS"),
+                                        "result_summary": {}}),
+                    event_listener,
+                )
+                observations.append(ToolObservation(tool_call_id=call.tool_call_id, tool_name=call.name,
+                                                    status="denied", payload={"error": str(exc)}))
+                continue
+            call = canonical_call
             await self._append_event(
                 request.principal_id,
                 session.events,
@@ -1263,16 +1283,32 @@ class AgentRuntime:
                     session_id=session.session_id,
                     turn_id=turn_id,
                     trace_id=trace_id,
-                    payload={"tool_name": call.name, "tool_call_id": call.tool_call_id},
+                    payload={"tool_name": call.name, "tool_call_id": call.tool_call_id, "arguments": dict(call.arguments)},
                 ),
                 event_listener,
             )
 
             try:
-                observation = await tool_runtime.execute(turn_id=turn_id, call=call)
+                observation = await tool_runtime.execute_validated(turn_id=turn_id, call=call)
             except ResourceFuseExceeded:
+                await self._append_event(
+                    request.principal_id, session.events, turn_events,
+                    AgentEvent(event_type="tool_completed", session_id=session.session_id,
+                               turn_id=turn_id, trace_id=trace_id,
+                               payload={"tool_name": call.name, "tool_call_id": call.tool_call_id,
+                                        "status": "failed", "error": safe_error("TOOL_FAILED"),
+                                        "result_summary": {}}), event_listener,
+                )
                 return await resource_fuse_result()
             except RetrievalUnavailableError:
+                await self._append_event(
+                    request.principal_id, session.events, turn_events,
+                    AgentEvent(event_type="tool_completed", session_id=session.session_id,
+                               turn_id=turn_id, trace_id=trace_id,
+                               payload={"tool_name": call.name, "tool_call_id": call.tool_call_id,
+                                        "status": "failed", "error": safe_error("TOOL_UNAVAILABLE"),
+                                        "result_summary": {}}), event_listener,
+                )
                 return await retrieval_unavailable_result()
             except ToolExecutionError as exc:
                 observation = ToolObservation(
@@ -1296,7 +1332,8 @@ class AgentRuntime:
                             "tool_name": observation.tool_name,
                             "tool_call_id": observation.tool_call_id,
                             "status": observation.status,
-                            "error": str(exc),
+                            "error": safe_error("TOOL_FAILED"),
+                            "result_summary": {},
                         },
                     ),
                     event_listener,
@@ -1318,6 +1355,7 @@ class AgentRuntime:
                         "tool_name": observation.tool_name,
                         "tool_call_id": observation.tool_call_id,
                         "status": observation.status,
+                        "result_summary": tool_result_summary(observation.tool_name, observation),
                     },
                 ),
                 event_listener,
@@ -1638,12 +1676,37 @@ class AgentRuntime:
                 )
                 if main_model_name is not None:
                     reviewer_kwargs["model_name"] = main_model_name
+                review_id = f"review-{uuid4().hex}"
+                await self._append_event(
+                    request.principal_id, session.events, turn_events,
+                    AgentEvent(event_type="review_started", session_id=session.session_id,
+                               turn_id=turn_id, trace_id=trace_id,
+                               payload={"review_id": review_id, "attempt": 1}),
+                    event_listener,
+                )
                 review = await self.reviewer.review(
                     **_supported_kwargs(self.reviewer.review, reviewer_kwargs)
                 )
             except TimeoutError:
+                await self._append_event(
+                    request.principal_id, session.events, turn_events,
+                    AgentEvent(event_type="review_completed", session_id=session.session_id,
+                               turn_id=turn_id, trace_id=trace_id,
+                               payload={"review_id": review_id, "attempt": 1,
+                                        "error": safe_error("REVIEW_FAILED")}),
+                    event_listener,
+                )
                 return await resource_fuse_result()
             except Exception as exc:
+                if "review_id" in locals():
+                    await self._append_event(
+                        request.principal_id, session.events, turn_events,
+                        AgentEvent(event_type="review_completed", session_id=session.session_id,
+                                   turn_id=turn_id, trace_id=trace_id,
+                                   payload={"review_id": review_id, "attempt": 1,
+                                            "error": safe_error("REVIEW_FAILED")}),
+                        event_listener,
+                    )
                 limitation = "证据审查执行失败，答案未发布。"
                 await self._append_event(
                     request.principal_id,
@@ -1683,6 +1746,16 @@ class AgentRuntime:
                     review=None,
                     events=tuple(turn_events),
                 )
+
+            await self._append_event(
+                request.principal_id, session.events, turn_events,
+                AgentEvent(event_type="review_completed", session_id=session.session_id,
+                           turn_id=turn_id, trace_id=trace_id,
+                           payload={"review_id": review_id, "attempt": 1,
+                                    "verdict": str(getattr(review, "verdict", "") or "UNKNOWN").upper(),
+                                    "finding_count": len(getattr(review, "findings", ()) or ())}),
+                event_listener,
+            )
 
             if await self._is_cancellation_requested(
                 request.principal_id,
@@ -1760,8 +1833,36 @@ class AgentRuntime:
                                 "context_snapshot_id": snapshot_rev_2.snapshot_id,
                             },
                         }
-                        review_2 = await self.reviewer.review(
+                        review_id_2 = f"review-{uuid4().hex}"
+                        await self._append_event(
+                            request.principal_id, session.events, turn_events,
+                            AgentEvent(event_type="review_started", session_id=session.session_id,
+                                       turn_id=turn_id, trace_id=trace_id,
+                                       payload={"review_id": review_id_2, "attempt": 2}),
+                            event_listener,
+                        )
+                        try:
+                            review_2 = await self.reviewer.review(
                             **_supported_kwargs(self.reviewer.review, reviewer_2_kwargs)
+                            )
+                        except Exception:
+                            await self._append_event(
+                                request.principal_id, session.events, turn_events,
+                                AgentEvent(event_type="review_completed", session_id=session.session_id,
+                                           turn_id=turn_id, trace_id=trace_id,
+                                           payload={"review_id": review_id_2, "attempt": 2,
+                                                    "error": safe_error("REVIEW_FAILED")}),
+                                event_listener,
+                            )
+                            raise
+                        await self._append_event(
+                            request.principal_id, session.events, turn_events,
+                            AgentEvent(event_type="review_completed", session_id=session.session_id,
+                                       turn_id=turn_id, trace_id=trace_id,
+                                       payload={"review_id": review_id_2, "attempt": 2,
+                                                "verdict": str(getattr(review_2, "verdict", "") or "UNKNOWN").upper(),
+                                                "finding_count": len(getattr(review_2, "findings", ()) or ())}),
+                            event_listener,
                         )
                         if await self._is_cancellation_requested(
                             request.principal_id,

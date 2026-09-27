@@ -120,6 +120,10 @@ class SpatialOperand(BaseModel):
     def require_one_operand(self):
         if (self.geometry is None) == (self.region is None):
             raise ValueError("operand requires exactly one of geometry or region")
+        if self.geometry is not None:
+            from app.services.spatial_service import validate_geojson_geometry
+
+            validate_geojson_geometry(self.geometry)
         return self
 
 

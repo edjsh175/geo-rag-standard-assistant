@@ -29,6 +29,7 @@ from app.services.agent.answer_generator import AnswerGenerator
 from app.services.agent.conversation_memory import ConversationMemorySummarizer
 from app.services.agent.controller import MainController
 from app.services.agent.events import AgentEvent
+from app.services.agent.event_projection import public_event_payload
 from app.services.agent.model_client import LLMConfigStageModelClient, ModelCallAudit
 from app.services.agent.provider_health import ProviderHealthService
 from app.services.agent.reviewer import GroundingReviewer
@@ -206,6 +207,7 @@ async def stream_search_documents(
         )
 
         async def event_generator():
+            fallback_sequence = 0
             async for frame in application_service.stream(
                 request,
                 generation_allowed=generation_allowed,
@@ -213,11 +215,14 @@ async def stream_search_documents(
             ):
                 if frame.event is not None:
                     event = frame.event
+                    fallback_sequence += 1
                     payload = {
+                        "event_id": getattr(event, "event_id", "") or f"{event.session_id}:{event.turn_id}:{fallback_sequence}",
+                        "sequence": getattr(event, "sequence", 0) or fallback_sequence,
                         "session_id": event.session_id,
                         "turn_id": event.turn_id,
                         "trace_id": event.trace_id,
-                        "payload": dict(event.payload),
+                        "payload": public_event_payload(event.event_type, event.payload),
                         "created_at": event.created_at.isoformat(),
                     }
                     yield (

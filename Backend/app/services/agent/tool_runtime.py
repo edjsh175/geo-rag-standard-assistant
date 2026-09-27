@@ -135,7 +135,8 @@ class ToolRuntime:
         self.execution_context = execution_context or ToolExecutionContext()
         self.policy = policy or ToolPolicy()
 
-    async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+    def validate_call(self, *, call: ToolCall) -> ToolCall:
+        """Return the one canonical schema-validated call used by events and execution."""
         from app.services.agent.tools import CONTROL_ACTION_NAMES
         if call.name in CONTROL_ACTION_NAMES:
             raise ToolExecutionError(f"'{call.name}' is a control action, not an executable tool")
@@ -158,19 +159,40 @@ class ToolRuntime:
         except (KeyError, ToolPolicyViolation) as exc:
             raise ToolExecutionError(str(exc)) from exc
 
-        if self.resource_fuse is not None:
-            self.resource_fuse.consume_step(tool_name=call.name)
-
         try:
             arguments = self.registry.validate(call.name, call.arguments)
         except (KeyError, ValueError) as exc:
             raise ToolExecutionError(str(exc)) from exc
 
-        call = ToolCall(
+        return ToolCall(
             tool_call_id=call.tool_call_id,
             name=call.name,
             arguments=arguments,
         )
+
+    async def execute(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        return await self.execute_validated(turn_id=turn_id, call=self.validate_call(call=call))
+
+    async def execute_validated(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        """Execute a call already returned by validate_call without revalidating it."""
+        from app.services.agent.tools import CONTROL_ACTION_NAMES
+        if call.name in CONTROL_ACTION_NAMES:
+            raise ToolExecutionError("control action is not an executable tool")
+        try:
+            self.policy.authorize(
+                spec=self.registry.get(call.name),
+                tool_call_id=call.tool_call_id,
+                context=self.execution_context,
+            )
+            timeout_seconds = self.policy.effective_timeout_seconds(
+                spec=self.registry.get(call.name),
+                runtime_remaining_seconds=(self.resource_fuse.remaining_seconds if self.resource_fuse else None),
+            )
+        except (KeyError, ToolPolicyViolation):
+            raise ToolExecutionError("tool is unavailable or not authorized") from None
+
+        if self.resource_fuse is not None:
+            self.resource_fuse.consume_step(tool_name=call.name)
 
         try:
             observation = await asyncio.wait_for(

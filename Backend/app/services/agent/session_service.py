@@ -46,6 +46,10 @@ class AgentSessionService:
 
         messages: list[dict[str, Any]] = []
         turns: list[dict[str, Any]] = []
+        evidence_items = (
+            await self.session_store.list_evidence_items(principal_id, session_id, active_only=False)
+            if hasattr(self.session_store, "list_evidence_items") else []
+        )
 
         for turn_id, turn_evs in events_by_turn.items():
             user_ev = next((e for e in turn_evs if e.event_type == "user_message"), None)
@@ -62,20 +66,54 @@ class AgentSessionService:
             pub_ev = next((e for e in reversed(turn_evs) if e.event_type == "publication_completed"), None)
             asst_ev = next((e for e in reversed(turn_evs) if e.event_type == "assistant_message"), None)
             cancelled_ev = next((e for e in reversed(turn_evs) if e.event_type == "run_cancelled"), None)
+            publication_state = (
+                str(pub_ev.payload.get("state") or pub_ev.payload.get("publication_state") or "unknown")
+                if pub_ev else ("cancelled" if cancelled_ev else "processing")
+            )
 
             if pub_ev:
                 payload = dict(pub_ev.payload)
-                answer_text = str(payload.get("generated_answer") or payload.get("answer") or "")
+                # Runtime's assistant_message is the authoritative persisted user text;
+                # publication events can intentionally contain state only.
+                answer_text = str(
+                    (asst_ev.payload.get("text") if asst_ev else None)
+                    or payload.get("generated_answer")
+                    or payload.get("answer")
+                    or ""
+                )
+                frozen_ev = next((e for e in reversed(turn_evs) if e.event_type == "evidence_frozen"), None)
+                selected_ids = set((frozen_ev.payload.get("evidence_ids") or frozen_ev.payload.get("selected_evidence_ids") or []) if frozen_ev else [])
+                answer_ev = next((e for e in reversed(turn_evs) if e.event_type == "answer_generated"), None)
+                cited_ids = set(answer_ev.payload.get("citations") or []) if answer_ev else set()
+                chosen_items = [
+                    item for item in evidence_items
+                    if item.document_id
+                    and item.source not in {"browser_gis", "postgis"}
+                    and ((item.citation_id in cited_ids) if cited_ids else (item.evidence_id in selected_ids))
+                ]
+                references = [
+                    {
+                        "id": item.document_id,
+                        "citation_id": item.citation_id,
+                        "title": item.title,
+                        "document_id": item.document_id,
+                        "source": item.source,
+                    }
+                    for item in chosen_items
+                ]
+                if not answer_ev and not frozen_ev:
+                    legacy_results = payload.get("results")
+                    references = legacy_results if isinstance(legacy_results, list) else []
                 messages.append({
                     "id": f"msg-{pub_ev.event_id}",
                     "role": "assistant",
                     "content": answer_text,
                     "timestamp": pub_ev.created_at.isoformat(),
                     "turn_id": turn_id,
-                    "references": payload.get("results") or payload.get("citations") or [],
+                    "references": references or payload.get("results") or payload.get("citations") or [],
                     "map_action": payload.get("map_action"),
                     "metadata": {
-                        "publication_state": payload.get("state") or payload.get("publication_state", "published"),
+                        "publication_state": publication_state,
                         "trace_id": pub_ev.trace_id,
                         "session_id": session_id,
                     },
@@ -103,7 +141,7 @@ class AgentSessionService:
             turns.append({
                 "turn_id": turn_id,
                 "trace_id": turn_evs[0].trace_id if turn_evs else "",
-                "status": "published" if pub_ev else ("cancelled" if cancelled_ev else "processing"),
+                "status": publication_state,
                 "event_count": len(turn_evs),
                 "events": [
                     {
