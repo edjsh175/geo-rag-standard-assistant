@@ -118,14 +118,38 @@ class DocumentIndexingService:
 
             base_metadata = dict(payload.get("metadata") or {})
             chunks = []
+            total_chunks = len(document_chunks)
+            uids: list[tuple[str, str]] = []
             for index, chunk in enumerate(document_chunks):
-                content_hash = chunk.content_hash or compute_content_hash(chunk.content)
-                chunk_uid = compute_chunk_uid(
+                c_hash = chunk.content_hash or compute_content_hash(chunk.content)
+                c_uid = compute_chunk_uid(
                     document_id=payload["document_id"],
                     section_path=chunk.header_path,
                     chunk_index=index,
-                    content_hash=content_hash,
+                    content_hash=c_hash,
                 )
+                uids.append((c_uid, c_hash))
+
+            for index, chunk in enumerate(document_chunks):
+                chunk_uid, content_hash = uids[index]
+                prev_uid = uids[index - 1][0] if index > 0 else None
+                next_uid = uids[index + 1][0] if index < total_chunks - 1 else None
+
+                chunk_metadata = {
+                    **base_metadata,
+                    **dict(parsed.metadata or {}),
+                    "title": payload.get("title") or base_metadata.get("title"),
+                    "filename": payload.get("filename"),
+                    "chunk_uid": chunk_uid,
+                    "content_hash": content_hash,
+                    "section_path": chunk.header_path,
+                    "page_number": chunk.page_number,
+                    "chunk_policy_id": getattr(chunk, "chunk_policy_id", "section_based_v1"),
+                    "content_role": getattr(chunk, "content_role", "prose"),
+                    "prev_chunk_uid": prev_uid,
+                    "next_chunk_uid": next_uid,
+                    "source_element_orders": getattr(chunk, "source_element_orders", []),
+                }
                 chunks.append(
                     {
                         "id": chunk_uid,
@@ -135,15 +159,7 @@ class DocumentIndexingService:
                         "header_path": chunk.header_path,
                         "page_number": chunk.page_number,
                         "content": chunk.content,
-                        "metadata": {
-                            **base_metadata,
-                            **dict(parsed.metadata or {}),
-                            "title": payload.get("title") or base_metadata.get("title"),
-                            "filename": payload.get("filename"),
-                            "chunk_uid": chunk_uid,
-                            "content_hash": content_hash,
-                            "section_path": chunk.header_path,
-                        },
+                        "metadata": chunk_metadata,
                         "embedding": embeddings[index],
                     }
                 )

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import re
+from typing import Sequence
 import uuid
 
-from app.services.document_parser import ParsedDocument
+from app.services.document_parser import ParsedBlock, ParsedDocument
 
 
 GEOAI_CHUNK_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "chunk.geoai.local")
@@ -42,6 +43,9 @@ class DocumentChunk:
     header_path: str | None = None
     page_number: int | None = None
     content_hash: str | None = None
+    chunk_policy_id: str = "section_based_v1"
+    content_role: str = "prose"
+    source_element_orders: list[int] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.content_hash:
@@ -58,10 +62,195 @@ class DocumentChunker:
         if not markdown:
             return []
 
+        if getattr(document, "blocks", None):
+            return self._chunk_blocks(document.blocks)
+
         sections = self._sections(markdown)
         chunks: list[DocumentChunk] = []
         for header_path, section in sections:
             chunks.extend(self._chunk_section(section, header_path))
+        return chunks
+
+    def _chunk_blocks(self, blocks: list[ParsedBlock]) -> list[DocumentChunk]:
+        chunks: list[DocumentChunk] = []
+        buffer: list[ParsedBlock] = []
+        buffer_len = 0
+        current_header: str | None = None
+        current_page: int | None = None
+
+        def flush_buffer() -> None:
+            nonlocal buffer, buffer_len
+            if not buffer:
+                return
+            combined_text = "\n\n".join(b.content for b in buffer).strip()
+            orders = [b.order for b in buffer]
+            p_nums = [b.page_number for b in buffer if b.page_number is not None]
+            page_num = p_nums[0] if p_nums else None
+            chunks.append(
+                DocumentChunk(
+                    content=combined_text,
+                    header_path=current_header,
+                    page_number=page_num,
+                    chunk_policy_id="section_based_v1",
+                    content_role="prose",
+                    source_element_orders=orders,
+                )
+            )
+            buffer = []
+            buffer_len = 0
+
+        for block in blocks:
+            # Page or section boundary flush
+            page_changed = (
+                block.page_number is not None
+                and current_page is not None
+                and block.page_number != current_page
+            )
+            if block.header_path != current_header or page_changed:
+                flush_buffer()
+                current_header = block.header_path
+                current_page = block.page_number
+            elif current_page is None and block.page_number is not None:
+                current_page = block.page_number
+
+            if block.kind == "heading":
+                flush_buffer()
+                buffer.append(block)
+                buffer_len = len(block.content)
+                continue
+
+            if block.kind == "table":
+                flush_buffer()
+                if len(block.content) > self.chunk_size:
+                    chunks.extend(
+                        self._split_table_row_groups(
+                            block.content,
+                            header_path=current_header,
+                            page_number=block.page_number,
+                            source_order=block.order,
+                        )
+                    )
+                else:
+                    chunks.append(
+                        DocumentChunk(
+                            content=block.content.strip(),
+                            header_path=current_header,
+                            page_number=block.page_number,
+                            chunk_policy_id="section_based_v1",
+                            content_role="table",
+                            source_element_orders=[block.order],
+                        )
+                    )
+                continue
+
+            if block.kind == "code":
+                flush_buffer()
+                chunks.append(
+                    DocumentChunk(
+                        content=block.content.strip(),
+                        header_path=current_header,
+                        page_number=block.page_number,
+                        chunk_policy_id="section_based_v1",
+                        content_role="code",
+                        source_element_orders=[block.order],
+                    )
+                )
+                continue
+
+            # Paragraph
+            if len(block.content) > self.chunk_size:
+                heading_prefix = ""
+                if buffer and all(b.kind == "heading" for b in buffer):
+                    heading_prefix = "\n\n".join(b.content for b in buffer)
+                    buffer = []
+                    buffer_len = 0
+                else:
+                    flush_buffer()
+                split_chunks = self._split_plain(
+                    f"{heading_prefix}\n\n{block.content}" if heading_prefix else block.content,
+                    current_header,
+                )
+                for sc in split_chunks:
+                    chunks.append(
+                        DocumentChunk(
+                            content=sc.content,
+                            header_path=current_header,
+                            page_number=block.page_number,
+                            chunk_policy_id="section_based_v1",
+                            content_role="prose",
+                            source_element_orders=[block.order],
+                        )
+                    )
+                continue
+
+            additional_len = len(block.content) + (2 if buffer else 0)
+            if buffer and (buffer_len + additional_len > self.chunk_size):
+                flush_buffer()
+                buffer = [block]
+                buffer_len = len(block.content)
+            else:
+                buffer.append(block)
+                buffer_len += additional_len
+
+        flush_buffer()
+        return chunks
+
+    def _split_table_row_groups(
+        self,
+        table_text: str,
+        *,
+        header_path: str | None = None,
+        page_number: int | None = None,
+        source_order: int | None = None,
+    ) -> list[DocumentChunk]:
+        lines = [line.strip() for line in table_text.strip().splitlines() if line.strip()]
+        if len(lines) <= 2:
+            return [
+                DocumentChunk(
+                    content=table_text.strip(),
+                    header_path=header_path,
+                    page_number=page_number,
+                    chunk_policy_id="table_rowgroup_v1",
+                    content_role="table",
+                    source_element_orders=[source_order] if source_order is not None else [],
+                )
+            ]
+
+        table_header = lines[0]
+        separator = lines[1]
+        header_prefix = f"{table_header}\n{separator}\n"
+        data_rows = lines[2:]
+
+        row_groups: list[list[str]] = []
+        current_group: list[str] = []
+        current_len = len(header_prefix)
+
+        for row in data_rows:
+            row_len = len(row) + 1
+            if current_group and (current_len + row_len > self.chunk_size):
+                row_groups.append(current_group)
+                current_group = [row]
+                current_len = len(header_prefix) + row_len
+            else:
+                current_group.append(row)
+                current_len += row_len
+
+        if current_group:
+            row_groups.append(current_group)
+
+        chunks: list[DocumentChunk] = []
+        for group in row_groups:
+            group_content = header_prefix + "\n".join(group)
+            chunks.append(
+                DocumentChunk(
+                    content=group_content.strip(),
+                    header_path=header_path,
+                    page_number=page_number,
+                    chunk_policy_id="table_rowgroup_v1",
+                    content_role="table",
+                    source_element_orders=[source_order] if source_order is not None else [],
+                )
+            )
         return chunks
 
     def _sections(self, markdown: str) -> list[tuple[str | None, str]]:
@@ -104,6 +293,10 @@ class DocumentChunker:
                 buffer = ""
 
         for block in blocks:
+            if self._is_table(block) and len(block) > self.chunk_size:
+                flush()
+                output.extend(self._split_table_row_groups(block, header_path=header_path))
+                continue
             if len(block) > self.chunk_size and not self._is_atomic(block):
                 heading_prefix = ""
                 if buffer and re.fullmatch(r"#{1,6}\s+.+", buffer.strip()):
@@ -197,9 +390,12 @@ class DocumentChunker:
         stripped = line.strip()
         return stripped.startswith("|") and stripped.endswith("|")
 
-    @staticmethod
-    def _is_atomic(block: str) -> bool:
+    @classmethod
+    def _is_table(cls, block: str) -> bool:
         stripped = block.lstrip()
-        return stripped.startswith("```") or (
-            stripped.startswith("|") and "\n|" in stripped
-        )
+        return stripped.startswith("|") and "\n|" in stripped
+
+    @classmethod
+    def _is_atomic(cls, block: str) -> bool:
+        stripped = block.lstrip()
+        return stripped.startswith("```") or cls._is_table(block)

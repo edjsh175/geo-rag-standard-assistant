@@ -19,6 +19,7 @@ class ExtractedDocumentText:
 
     text: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    pages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class DocumentTextExtractor:
@@ -40,7 +41,12 @@ class DocumentTextExtractor:
         if suffix in self.JSON_EXTENSIONS or normalized_content_type in {"application/json", "application/geo+json"}:
             return ExtractedDocumentText(text=self._read_json(path))
         if suffix == ".pdf" or normalized_content_type == "application/pdf":
-            return ExtractedDocumentText(text=self._read_pdf(path))
+            full_text, pages_data = self._read_pdf_with_pages(path)
+            return ExtractedDocumentText(
+                text=full_text,
+                metadata={"page_count": len(pages_data)},
+                pages=pages_data,
+            )
         if suffix == ".docx" or normalized_content_type.endswith("wordprocessingml.document"):
             return ExtractedDocumentText(text=self._read_docx(path))
 
@@ -64,16 +70,26 @@ class DocumentTextExtractor:
         data = json.loads(path.read_text(encoding="utf-8"))
         return json.dumps(data, ensure_ascii=False, indent=2)
 
-    @staticmethod
-    def _read_pdf(path: Path) -> str:
+    @classmethod
+    def _read_pdf_with_pages(cls, path: Path) -> tuple[str, list[dict[str, Any]]]:
         try:
             from pypdf import PdfReader
         except ImportError as exc:  # pragma: no cover - depends on runtime extras
             raise UnsupportedDocumentParser("PDF parser dependency is not installed.") from exc
 
         reader = PdfReader(str(path))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        return "\n\n".join(page.strip() for page in pages if page.strip()).strip()
+        pages_data: list[dict[str, Any]] = []
+        for idx, page in enumerate(reader.pages, start=1):
+            page_text = (page.extract_text() or "").strip()
+            if page_text:
+                pages_data.append({"page_number": idx, "text": page_text})
+        full_text = "\n\n".join(p["text"] for p in pages_data).strip()
+        return full_text, pages_data
+
+    @classmethod
+    def _read_pdf(cls, path: Path) -> str:
+        full_text, _ = cls._read_pdf_with_pages(path)
+        return full_text
 
     @staticmethod
     def _read_docx(path: Path) -> str:
