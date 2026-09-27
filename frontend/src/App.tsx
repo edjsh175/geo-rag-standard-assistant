@@ -265,7 +265,29 @@ type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
 const createWelcomeMessage = (): ChatMessageType => ({
   id: 'init-1',
   role: 'assistant',
-  content: '您好！我是 **GeoAI 空间规划智能助手**。我已接入全面的空间规划文档库与地理空间数据库，可以为您提供便捷的专业智能检索服务。\n\n您可以尝试向我提出以下类型的问题：\n- **政策与标准检索**：例如*“请检索关于国土空间规划中城镇开发边界划定的技术标准”*\n- **空间定位协同**：例如*“定位到北京市”*\n- **规划文档查阅**：例如*“总结生态保护红线划定的基本原则”*\n\n请在下方输入框中输入您的指令或疑问，随时开始使用！',
+  content: `您好！我是 **GeoAI 空间规划与地理信息智能体**。
+
+我已全面打通**国土自然资源知识库**、**WebGIS 二三维地图交互引擎**与 **PostGIS 空间拓扑分析底座**，由单一 Agent Controller 自主规划知识查询与空间实操。
+
+您可以随时向我下发自然语言指令或咨询专业规划问题：
+
+### 🌟 核心能力与交互指南
+- 📚 **规划规程与标准检索（证据可溯源 RAG）**
+  - 覆盖国土空间规划“三区三线”、生态保护红线划定、地质灾害预警、自然资源调查等标准规程
+  - 自动引用权威依据，支持开启右上角**“审查门禁”**进行严格事实防幻觉核验
+  - *示例*：“请检索城镇开发边界划定的主要原则与指标要求，并给出标准引用”
+- 🗺️ **WebGIS 二三维联动与地图可视化控制**
+  - 支持 OpenLayers 2D 与 Cesium 3D 视图自由切换
+  - 空间漫游与视口中心控制（*“定位到成都市”*、*“将视角缩放到图层范围”*）
+  - 本地矢量数据登记加载（点击左下角 📎 登记 **SHP / GeoJSON** 矢量图层）
+  - 动态图层样式定制（*“将图层填充调为半透明红色，描边宽度设为 2”*）与图层显隐切换
+- 📐 **空间拓扑计算与几何叠加分析（PostGIS）**
+  - 地图要素属性分页审查与精确几何边界提取（*“查看当前图层要素列表”*）
+  - 空间拓扑谓词与几何叠加分析（包含、相交、邻接判断与交并差面积统计）
+- 💬 **会话管理与全流程透明思考**
+  - 左上角支持**多会话切换与管理**；展开每轮回答可查看完整决策思考链与工具调用回执
+
+请在下方输入您的规划需求或操作指令，随时开始探索！`,
   timestamp: new Date().toISOString(),
   metadata: { document_ids: [], citations: [] },
 });
@@ -1295,6 +1317,7 @@ export default function App() {
               onCreateSession={handleCreateAgentSession}
               onSelectSession={selectAgentSession}
               onDeleteSession={handleDeleteAgentSession}
+              panelWidth={chatPanelWidth}
               isLoading={isChatLoading}
               activeTurn={activeTurn}
               onStopGeneration={handleStopGeneration}

@@ -25,13 +25,14 @@ export interface ChatProps {
   onVectorFilesSelected?: (files: File[]) => Promise<string>;
   reviewerEnabled: boolean;
   onReviewerEnabledChange: (enabled: boolean) => void;
-  sessions: AgentSessionSummary[];
+  sessions?: AgentSessionSummary[];
   activeSessionId?: string;
   sessionLoading?: boolean;
-  onRefreshSessions: () => Promise<void>;
-  onCreateSession: () => Promise<void>;
-  onSelectSession: (sessionId: string) => Promise<void>;
-  onDeleteSession: (sessionId: string) => Promise<void>;
+  onRefreshSessions?: () => Promise<void>;
+  onCreateSession?: () => Promise<void>;
+  onSelectSession?: (sessionId: string) => Promise<void>;
+  onDeleteSession?: (sessionId: string) => Promise<void>;
+  panelWidth?: number;
   disabled?: boolean;
   title?: string;
   status?: string;
@@ -52,13 +53,14 @@ const Chat: React.FC<ChatProps> = ({
   onVectorFilesSelected,
   reviewerEnabled,
   onReviewerEnabledChange,
-  sessions,
+  sessions = [],
   activeSessionId,
   sessionLoading = false,
-  onRefreshSessions,
-  onCreateSession,
-  onSelectSession,
-  onDeleteSession,
+  onRefreshSessions = async () => {},
+  onCreateSession = async () => {},
+  onSelectSession = async () => {},
+  onDeleteSession = async () => {},
+  panelWidth,
   disabled = false,
   title = 'Sentinel GeoAI',
   status = '模型就绪 · RAG 已同步',
@@ -83,11 +85,14 @@ const Chat: React.FC<ChatProps> = ({
     if (isLoading && !isAutoScrollLocked) scrollToBottom({ behavior: 'smooth' });
   }, [isLoading, activeTurn, isAutoScrollLocked, scrollToBottom]);
 
-  const displayQuickTags = [
-    '#土地整治与利用',
-    '#地裂缝监测预警',
-    '#应急避险与处置',
-  ];
+  const displayQuickTags = (quickTags && quickTags.length > 0)
+    ? quickTags
+    : [
+        '#城镇开发边界',
+        '#生态保护红线',
+        '#空间拓扑分析',
+        '#地质灾害预警',
+      ];
 
   const handleSend = useCallback(async () => {
     if (!inputValue.trim() || isLoading || disabled) return;
@@ -157,6 +162,7 @@ const Chat: React.FC<ChatProps> = ({
             activeSessionId={activeSessionId}
             disabled={isLoading || sessionLoading}
             loading={sessionLoading}
+            panelWidth={panelWidth}
             onRefresh={onRefreshSessions}
             onCreate={onCreateSession}
             onSelect={onSelectSession}
