@@ -152,11 +152,111 @@ def validate_geojson_geometry(geometry: Any, _depth: int = 0) -> None:
                     )
 
 
+class RegionResolverError(ValueError):
+    """Base exception for administrative region resolution errors."""
+    pass
+
+
+class RegionNotFoundError(RegionResolverError):
+    """Raised when an administrative region cannot be found by name or adcode."""
+    pass
+
+
+class RegionAmbiguityError(RegionResolverError):
+    """Raised when a region name matches multiple administrative entities (requirement J-07)."""
+
+    def __init__(self, region_name: str, candidates: list[Dict[str, Any]]):
+        self.region_name = region_name
+        self.candidates = candidates
+        candidates_str = ", ".join(
+            f"{c.get('region_name', '')} (adcode: {c.get('adcode', '')})"
+            for c in candidates
+        )
+        super().__init__(
+            f"Administrative region '{region_name}' is ambiguous. "
+            f"Found {len(candidates)} candidates: [{candidates_str}]. "
+            f"Please specify a unique adcode or fully qualified administrative name."
+        )
+
+
 class SpatialService:
     """空间分析服务"""
 
     def __init__(self):
         pass
+
+    async def resolve_region(
+        self,
+        *,
+        adcode: Optional[str] = None,
+        region_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Deterministically resolve an administrative region to a verified stable entity (adcode, region_name).
+        Guarantees:
+        - adcode lookup: verified against spatial_regions;
+        - region_name lookup: exact match first; if multiple found, raises RegionAmbiguityError;
+          if 0 found, checks prefix/alias match; if multiple found, raises RegionAmbiguityError;
+          if 0 found, raises RegionNotFoundError;
+        - Prevents silent LIMIT 1 arbitrary resolution (requirement J-07).
+        """
+        if not adcode and not region_name:
+            raise ValueError("Must provide either adcode or region_name for region resolution")
+
+        from sqlalchemy import text
+
+        async with db_manager.get_postgres_session() as session:
+            if adcode:
+                sql = text("SELECT adcode, region_name FROM spatial_regions WHERE adcode = :adcode")
+                rows = (await session.execute(sql, {"adcode": str(adcode)})).mappings().all()
+                if not rows:
+                    raise RegionNotFoundError(f"Administrative region with adcode '{adcode}' does not exist.")
+                return {"adcode": rows[0]["adcode"], "region_name": rows[0]["region_name"]}
+
+            # Exact match
+            sql_exact = text(
+                "SELECT adcode, region_name FROM spatial_regions WHERE region_name = :region_name ORDER BY adcode ASC"
+            )
+            rows = (await session.execute(sql_exact, {"region_name": str(region_name)})).mappings().all()
+            if len(rows) == 1:
+                return {"adcode": rows[0]["adcode"], "region_name": rows[0]["region_name"]}
+            if len(rows) > 1:
+                candidates = [{"adcode": r["adcode"], "region_name": r["region_name"]} for r in rows]
+                raise RegionAmbiguityError(str(region_name), candidates)
+
+            # Prefix / alias match (e.g. "四川" -> "四川省")
+            sql_prefix = text(
+                "SELECT adcode, region_name FROM spatial_regions WHERE region_name LIKE :prefix ORDER BY adcode ASC"
+            )
+            prefix_rows = (await session.execute(sql_prefix, {"prefix": f"{region_name}%"})).mappings().all()
+            if len(prefix_rows) == 1:
+                return {"adcode": prefix_rows[0]["adcode"], "region_name": prefix_rows[0]["region_name"]}
+            if len(prefix_rows) > 1:
+                candidates = [{"adcode": r["adcode"], "region_name": r["region_name"]} for r in prefix_rows]
+                raise RegionAmbiguityError(str(region_name), candidates)
+
+            raise RegionNotFoundError(f"Administrative region '{region_name}' does not exist.")
+
+    async def _resolve_operand(self, operand: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve region operand to a verified, unambiguous identity before constructing SQL."""
+        geometry = operand.get("geometry")
+        region = operand.get("region")
+        if geometry is not None:
+            return operand
+        if isinstance(region, dict):
+            resolved = await self.resolve_region(
+                adcode=region.get("adcode"),
+                region_name=region.get("region_name"),
+            )
+            return {
+                **operand,
+                "region": {
+                    **region,
+                    "adcode": resolved["adcode"],
+                    "region_name": resolved["region_name"],
+                },
+            }
+        return operand
 
     @staticmethod
     def _operand_sql(prefix: str, operand: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
@@ -171,12 +271,12 @@ class SpatialService:
         if isinstance(region, dict):
             if region.get("adcode"):
                 return (
-                    f"(SELECT geometry FROM spatial_regions WHERE adcode = :{prefix}_adcode LIMIT 1)",
+                    f"(SELECT geometry FROM spatial_regions WHERE adcode = :{prefix}_adcode)",
                     {f"{prefix}_adcode": str(region["adcode"])},
                 )
             if region.get("region_name"):
                 return (
-                    f"(SELECT geometry FROM spatial_regions WHERE region_name = :{prefix}_region_name LIMIT 1)",
+                    f"(SELECT geometry FROM spatial_regions WHERE region_name = :{prefix}_region_name)",
                     {f"{prefix}_region_name": str(region["region_name"])},
                 )
         raise ValueError("invalid spatial operand")
@@ -199,6 +299,8 @@ class SpatialService:
         function = relation_functions.get(relation)
         if function is None:
             raise ValueError(f"unsupported spatial relation: {relation}")
+        left = await self._resolve_operand(left)
+        right = await self._resolve_operand(right)
         left_sql, left_params = self._operand_sql("left", left)
         right_sql, right_params = self._operand_sql("right", right)
         from sqlalchemy import text
@@ -237,6 +339,8 @@ class SpatialService:
         function = overlay_functions.get(operation)
         if function is None:
             raise ValueError(f"unsupported spatial overlay: {operation}")
+        left = await self._resolve_operand(left)
+        right = await self._resolve_operand(right)
         left_sql, left_params = self._operand_sql("left", left)
         right_sql, right_params = self._operand_sql("right", right)
         from sqlalchemy import text

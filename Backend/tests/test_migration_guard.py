@@ -68,3 +68,23 @@ def test_model_input_audit_identity_scope_has_forward_migration() -> None:
     assert "DROP CONSTRAINT IF EXISTS uq_geoai_model_input_audits_call_attempt" in sql
     assert "uq_geoai_model_input_audits_scoped_call_attempt" in sql
     assert "principal_id, session_id, turn_id, stage, call_id, attempt" in sql
+
+
+def test_spatial_regions_table_is_required_by_migration_guard() -> None:
+    assert REQUIRED_TABLE_MIGRATION_MAP["spatial_regions"] == (
+        "Backend/migrations/20260927_spatial_regions.sql"
+    )
+    repo_root = Path(__file__).resolve().parents[2]
+    migration = (
+        repo_root
+        / "Backend"
+        / "migrations"
+        / "20260927_spatial_regions.sql"
+    )
+    assert migration.exists()
+    sql = migration.read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS spatial_regions" in sql
+    assert "GEOMETRY(MultiPolygon, 4326)" in sql
+    assert "uq_spatial_regions_adcode" in sql
+    assert "idx_spatial_regions_geometry" in sql
+

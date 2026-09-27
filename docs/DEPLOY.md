@@ -114,19 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_policy_chunks_standard_code
 CREATE INDEX IF NOT EXISTS idx_policy_chunks_embedding
     ON policy_chunks USING hnsw (embedding vector_cosine_ops);
 
-CREATE TABLE IF NOT EXISTS spatial_regions (
-    id serial PRIMARY KEY,
-    adcode varchar(20),
-    region_name varchar(100),
-    geometry geometry(MultiPolygon, 4326),
-    created_at timestamp DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_spatial_regions_geometry
-    ON spatial_regions USING gist (geometry);
-
 ALTER TABLE policy_chunks OWNER TO geoai;
-ALTER TABLE spatial_regions OWNER TO geoai;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO geoai;
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO geoai;
 SQL
@@ -134,7 +122,7 @@ SQL
 
 向量检索路径要求 `policy_chunks` 存在并已导入标准文档切片及 embedding。启用地图区域查询时，空间检索还要求 `spatial_regions` 存在并已导入生产空间数据。公网验收前必须先完成这些数据导入。
 
-在启动后端服务前，必须按顺序应用全量版本化数据库迁移（包含 API 治理表、文档生命周期、Agent 会话与事件持久化、证据激活以及并发索引约束）：
+在启动后端服务前，必须按顺序应用全量版本化数据库迁移（包含 API 治理表、文档生命周期、Agent 会话与事件持久化、证据激活、并发索引约束以及空间行政区划表单一真源迁移）：
 
 ```bash
 cd /srv/geoai/app
@@ -145,6 +133,7 @@ sudo -u postgres psql -d geoai_db -f Backend/migrations/20260618_document_lifecy
 sudo -u postgres psql -d geoai_db -f Backend/migrations/20260925_agent_context_persistence.sql
 sudo -u postgres psql -d geoai_db -f Backend/migrations/20260926_agent_evidence_activations.sql
 sudo -u postgres psql -d geoai_db -f Backend/migrations/20260927_document_index_concurrency.sql
+sudo -u postgres psql -d geoai_db -f Backend/migrations/20260927_spatial_regions.sql
 
 # 刷新表权限给 geoai 用户
 sudo -u postgres psql -d geoai_db -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO geoai; GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO geoai;"

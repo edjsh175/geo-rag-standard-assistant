@@ -6,9 +6,18 @@
 坐标系：EPSG:4326 (WGS84)
 """
 
-import geopandas as gpd
-import psycopg2
-from psycopg2.extras import execute_values
+try:
+    import geopandas as gpd
+except ImportError:
+    gpd = None
+
+try:
+    import psycopg2
+    from psycopg2.extras import execute_values
+except ImportError:
+    psycopg2 = None
+    execute_values = None
+
 import os
 import sys
 from src.geoai.core.config import DB_CONFIG, SHENG_2022_SHP  # 从新配置模块导入
@@ -69,15 +78,22 @@ def check_shapefile_fields(gdf):
     print(f"字段映射: {field_map}")
     return field_map
 
-def transform_coordinates(gdf):
-    """将坐标系转换为EPSG:4326"""
+def transform_coordinates(gdf, source_crs=None):
+    """将坐标系转换为EPSG:4326（requirement J-04 严格合规：缺失 CRS 拒绝静默假定为 4326，必须 fail-close 或显式指定）"""
     print(f"原始坐标系: {gdf.crs}")
 
-    # 转换坐标系
+    # 检查坐标系
     if gdf.crs is None:
-        print("警告: shapefile没有定义坐标系，尝试使用EPSG:4326")
-        gdf.crs = 'EPSG:4326'
-    else:
+        if source_crs:
+            print(f"使用用户显式指定的源坐标系: {source_crs}")
+            gdf.crs = source_crs
+        else:
+            raise ValueError(
+                "输入空间数据缺少 CRS (坐标参考系) 定义，拒绝隐式假定为 EPSG:4326 以防空间数据静默损坏。"
+                "请在源文件中补充 .prj 投影定义或显式传入 source_crs 参数。"
+            )
+
+    if str(gdf.crs).upper() not in ["EPSG:4326", "4326"]:
         print("正在转换坐标系到EPSG:4326...")
         gdf = gdf.to_crs('EPSG:4326')
 
@@ -111,7 +127,7 @@ def connect_database():
         sys.exit(1)
 
 def check_spatial_regions_table(conn):
-    """检查spatial_regions表是否存在"""
+    """检查spatial_regions表是否存在（requirement J-03 严格合规：Importer 仅拥有数据导入权，无 DDL authority）"""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -136,41 +152,14 @@ def check_spatial_regions_table(conn):
                 print("表结构:")
                 for col in columns:
                     print(f"  - {col[0]}: {col[1]}")
+                return True
             else:
-                print("spatial_regions表不存在，将创建新表")
-                create_spatial_regions_table(conn)
-
-            return exists
+                raise RuntimeError(
+                    "spatial_regions 表不存在。按 requirement J-03 规范，数据导入器不拥有 DDL Authority，"
+                    "请先应用版本化数据库迁移: Backend/migrations/20260927_spatial_regions.sql"
+                )
     except Exception as e:
         print(f"检查表失败: {e}")
-        conn.rollback()
-        return False
-
-def create_spatial_regions_table(conn):
-    """创建spatial_regions表"""
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE spatial_regions (
-                    id SERIAL PRIMARY KEY,
-                    adcode VARCHAR(10) NOT NULL,
-                    region_name VARCHAR(100) NOT NULL,
-                    geometry GEOMETRY(MultiPolygon, 4326),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(adcode)
-                );
-            """)
-
-            # 创建空间索引
-            cur.execute("""
-                CREATE INDEX idx_spatial_regions_geometry
-                ON spatial_regions USING GIST(geometry);
-            """)
-
-            conn.commit()
-            print("成功创建spatial_regions表")
-    except Exception as e:
-        print(f"创建表失败: {e}")
         conn.rollback()
         raise
 

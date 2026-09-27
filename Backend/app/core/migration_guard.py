@@ -38,6 +38,8 @@ REQUIRED_TABLE_MIGRATION_MAP: dict[str, str] = {
     "geoai_model_input_audits": "Backend/migrations/20260926_model_input_audit.sql",
     "geoai_conversation_memory_states": "Backend/migrations/20260926_conversation_memory.sql",
     "geoai_pending_browser_executions": "Backend/migrations/20260925_agent_context_persistence.sql",
+    # 20260927_spatial_regions.sql
+    "spatial_regions": "Backend/migrations/20260927_spatial_regions.sql",
 }
 
 

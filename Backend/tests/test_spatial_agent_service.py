@@ -210,3 +210,206 @@ async def test_j02_create_buffer_validates_inputs_and_uses_postgis(monkeypatch: 
     res = await service.create_buffer(center=[104.0, 30.0], distance=500.0)
     assert res["type"] == "Polygon"
 
+
+def test_j07_operand_sql_has_no_silent_limit_one() -> None:
+    """requirement J-07: Verify that _operand_sql eliminates silent 'LIMIT 1' in region queries."""
+    sql_adcode, params_adcode = SpatialService._operand_sql("left", {"region": {"adcode": "510000"}})
+    assert "LIMIT 1" not in sql_adcode
+    assert ":left_adcode" in sql_adcode
+
+    sql_name, params_name = SpatialService._operand_sql("right", {"region": {"region_name": "四川省"}})
+    assert "LIMIT 1" not in sql_name
+    assert ":right_region_name" in sql_name
+
+
+@pytest.mark.asyncio
+async def test_j07_resolve_region_by_adcode(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = SpatialService()
+
+    class MockResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return [{"adcode": "510000", "region_name": "四川省"}]
+
+    class MockSession:
+        async def execute(self, sql, params):
+            assert "adcode = :adcode" in str(sql)
+            assert params["adcode"] == "510000"
+            return MockResult()
+
+    class MockContext:
+        async def __aenter__(self):
+            return MockSession()
+
+        async def __aexit__(self, *args):
+            pass
+
+    from app.core.database import db_manager
+    monkeypatch.setattr(db_manager, "get_postgres_session", lambda: MockContext())
+
+    resolved = await service.resolve_region(adcode="510000")
+    assert resolved == {"adcode": "510000", "region_name": "四川省"}
+
+
+@pytest.mark.asyncio
+async def test_j07_resolve_region_by_adcode_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.spatial_service import RegionNotFoundError
+
+    service = SpatialService()
+
+    class MockResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class MockSession:
+        async def execute(self, sql, params):
+            return MockResult()
+
+    class MockContext:
+        async def __aenter__(self):
+            return MockSession()
+
+        async def __aexit__(self, *args):
+            pass
+
+    from app.core.database import db_manager
+    monkeypatch.setattr(db_manager, "get_postgres_session", lambda: MockContext())
+
+    with pytest.raises(RegionNotFoundError, match="adcode '999999' does not exist"):
+        await service.resolve_region(adcode="999999")
+
+
+@pytest.mark.asyncio
+async def test_j07_resolve_region_ambiguous_name_fails_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    """requirement J-07: Verify that multiple matching region names raise RegionAmbiguityError with candidate details."""
+    from app.services.spatial_service import RegionAmbiguityError
+
+    service = SpatialService()
+
+    class MockResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            # Duplicate names e.g. 朝阳区 in Beijing and Changchun
+            return [
+                {"adcode": "110105", "region_name": "朝阳区"},
+                {"adcode": "220104", "region_name": "朝阳区"},
+            ]
+
+    class MockSession:
+        async def execute(self, sql, params):
+            return MockResult()
+
+    class MockContext:
+        async def __aenter__(self):
+            return MockSession()
+
+        async def __aexit__(self, *args):
+            pass
+
+    from app.core.database import db_manager
+    monkeypatch.setattr(db_manager, "get_postgres_session", lambda: MockContext())
+
+    with pytest.raises(RegionAmbiguityError) as exc_info:
+        await service.resolve_region(region_name="朝阳区")
+
+    assert exc_info.value.region_name == "朝阳区"
+    assert len(exc_info.value.candidates) == 2
+    assert "110105" in str(exc_info.value)
+    assert "220104" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_j07_resolve_region_prefix_fallback_and_ambiguity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """requirement J-07: Test prefix/alias fallback and ambiguous prefix detection."""
+    from app.services.spatial_service import RegionAmbiguityError, RegionNotFoundError
+
+    service = SpatialService()
+
+    # Case 1: Prefix match has exactly 1 candidate (e.g. "四川" -> "四川省")
+    class MockPrefixSingleSession:
+        async def execute(self, sql, params):
+            class R:
+                def mappings(self):
+                    return self
+
+                def all(self_r):
+                    if "region_name = :region_name" in str(sql):
+                        return []
+                    if "region_name LIKE :prefix" in str(sql):
+                        return [{"adcode": "510000", "region_name": "四川省"}]
+                    return []
+            return R()
+
+    class MockCtx1:
+        async def __aenter__(self):
+            return MockPrefixSingleSession()
+
+        async def __aexit__(self, *args):
+            pass
+
+    from app.core.database import db_manager
+    monkeypatch.setattr(db_manager, "get_postgres_session", lambda: MockCtx1())
+
+    resolved = await service.resolve_region(region_name="四川")
+    assert resolved == {"adcode": "510000", "region_name": "四川省"}
+
+    # Case 2: Prefix match has multiple candidates (e.g. "山" -> 山东省, 山西省) -> Ambiguous
+    class MockPrefixMultiSession:
+        async def execute(self, sql, params):
+            class R:
+                def mappings(self):
+                    return self
+
+                def all(self_r):
+                    if "region_name = :region_name" in str(sql):
+                        return []
+                    if "region_name LIKE :prefix" in str(sql):
+                        return [
+                            {"adcode": "370000", "region_name": "山东省"},
+                            {"adcode": "140000", "region_name": "山西省"},
+                        ]
+                    return []
+            return R()
+
+    class MockCtx2:
+        async def __aenter__(self):
+            return MockPrefixMultiSession()
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(db_manager, "get_postgres_session", lambda: MockCtx2())
+    with pytest.raises(RegionAmbiguityError) as exc_info:
+        await service.resolve_region(region_name="山")
+    assert len(exc_info.value.candidates) == 2
+
+    # Case 3: Neither exact nor prefix match -> RegionNotFoundError
+    class MockEmptySession:
+        async def execute(self, sql, params):
+            class R:
+                def mappings(self):
+                    return self
+
+                def all(self_r):
+                    return []
+            return R()
+
+    class MockCtx3:
+        async def __aenter__(self):
+            return MockEmptySession()
+
+        async def __aexit__(self, *args):
+            pass
+
+    monkeypatch.setattr(db_manager, "get_postgres_session", lambda: MockCtx3())
+    with pytest.raises(RegionNotFoundError, match="不存在|does not exist"):
+        await service.resolve_region(region_name="虚拟行政区")
+
+
