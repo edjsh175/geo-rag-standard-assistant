@@ -201,4 +201,13 @@ async def get_provinces(
         result = await service.get_provinces(simplify_tolerance=simplify)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取行政区划数据失败: {str(e)}")
+        err_msg = str(e).lower()
+        if any(term in err_msg for term in ["connection", "operationalerror", "timeout", "refused", "unavailable"]):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"空间数据库不可用: {str(e)}",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取行政区划数据失败: {str(e)}",
+        )

@@ -4,15 +4,31 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import Any, Iterable, Optional
 
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import nearest_points
 from sqlalchemy import text
 
 from app.core.database import db_manager
 from app.models.search_models import DocumentResult, MetadataFilter, SpatialFilter
+
+
+def haversine_distance_meters(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Great-circle distance in meters between two WGS84 coordinates (requirement J-10)."""
+    r = 6371000.0  # Earth radius in meters
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_phi / 2.0) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    )
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    return r * c
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +171,7 @@ class RagFilterEngine:
             if self._matches_spatial_relation(result_geometry, query_geometry, spatial_filter):
                 result.metadata["spatial_filter_match"] = True
                 result.metadata["spatial_filter_source"] = "document_geometry"
+                result.metadata["spatial_filter_type"] = "geometry_spatial_filter"
                 geometry_matches.append(result)
 
         if geometry_candidates:
@@ -172,6 +189,7 @@ class RagFilterEngine:
             if any(standard_code.startswith(prefix.lower()) for prefix in region_prefixes):
                 result.metadata["spatial_filter_match"] = True
                 result.metadata["spatial_filter_source"] = "region_prefix"
+                result.metadata["spatial_filter_type"] = "region_standard_scope_filter"
                 prefix_matches.append(result)
         return prefix_matches
 
@@ -264,9 +282,10 @@ class RagFilterEngine:
                 metadata={
                     "standard_code": row.standard_code,
                     "document_name": row.document_name,
-                    "match_type": "spatial_region",
+                    "match_type": "region_standard_scope",
                     "spatial_filter_match": True,
                     "spatial_filter_source": "region_prefix",
+                    "spatial_filter_type": "region_standard_scope_filter",
                 },
                 spatial_info=None,
                 file_type="unknown",
@@ -276,6 +295,10 @@ class RagFilterEngine:
             )
             for row in rows
         ]
+
+    async def region_standard_scope_search(self, spatial_query: str, top_k: int) -> list[DocumentResult]:
+        """requirement J-11: Explicit semantic alias for administrative regional standard prefix lookup."""
+        return await self.spatial_search(spatial_query, top_k)
 
     def get_region_prefixes_for_text(self, value: str) -> set[str]:
         compact = self._normalize_text(value)
@@ -403,7 +426,11 @@ class RagFilterEngine:
             return result_geometry.contains(query_geometry)
         if relation == "near":
             max_distance_meters = spatial_filter.distance or 0
-            return result_geometry.distance(query_geometry) * 111_320 <= max_distance_meters
+            if max_distance_meters <= 0:
+                return False
+            # requirement J-10: Geodesic great-circle distance on WGS84 sphere replacing flat 111,320m/deg approximation
+            p1, p2 = nearest_points(result_geometry, query_geometry)
+            return haversine_distance_meters(p1.x, p1.y, p2.x, p2.y) <= max_distance_meters
         if relation == "overlaps":
             return result_geometry.overlaps(query_geometry)
         if relation == "disjoint":
