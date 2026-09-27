@@ -240,6 +240,27 @@ async def test_reviewer_events_exist_only_for_real_review_and_preserve_verdict()
 
 
 @pytest.mark.asyncio
+async def test_reviewer_exception_closes_running_row_with_safe_error() -> None:
+    class Reviewer:
+        async def review(self, **kwargs):
+            raise RuntimeError("provider_key=secret raw stack text")
+
+    runtime = AgentRuntime(
+        retrieval_port=RetrievalPortStub(), controller=ControllerStub(),
+        answer_generator=AnswerGeneratorStub(), reviewer=Reviewer(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+    result = await runtime.run(AgentRunRequest(
+        question="问题", session_id="review-error", principal_id="admin:test", reviewer_enabled=True))
+    started = next(event for event in result.events if event.event_type == "review_started")
+    completed = next(event for event in result.events if event.event_type == "review_completed")
+    assert started.payload["review_id"] == completed.payload["review_id"]
+    assert completed.payload["error"] == {"code": "REVIEW_FAILED", "message": "证据审查执行失败。"}
+    assert "secret" not in str(completed.payload)
+    assert result.publication_state == "review_failed"
+
+
+@pytest.mark.asyncio
 async def test_browser_stream_resume_keeps_one_tool_call_id_and_safe_receipt_summary() -> None:
     class BrowserController:
         def __init__(self, continuation=False):
@@ -256,16 +277,18 @@ async def test_browser_stream_resume_keeps_one_tool_call_id_and_safe_receipt_sum
         retrieval_port=RetrievalPortStub(), controller=BrowserController(),
         answer_generator=AnswerGeneratorStub(), session_store=store,
     )
-    pending = await first.run(AgentRunRequest(
+    initial_frames = [frame async for frame in first.stream(AgentRunRequest(
         question="定位成都", session_id="browser-stream", principal_id="admin:test",
         request_context={"browser_observations": {"map_context": {
             "ready": True, "supported_tools": ["locate_map"], "dimension": "3d"}}},
-    ))
+    ))]
+    pending = next(frame.result for frame in initial_frames if frame.result is not None)
+    initial_events = [frame.event for frame in initial_frames if frame.event is not None]
     resumed_runtime = AgentRuntime(
         retrieval_port=RetrievalPortStub(), controller=BrowserController(continuation=True),
         answer_generator=AnswerGeneratorStub(), session_store=store,
     )
-    result = await resumed_runtime.run(AgentRunRequest(
+    resumed_frames = [frame async for frame in resumed_runtime.stream(AgentRunRequest(
         question="定位成都", session_id="browser-stream", principal_id="admin:test",
         continuation_token=pending.continuation_token,
         browser_tool_receipt={
@@ -274,10 +297,12 @@ async def test_browser_stream_resume_keeps_one_tool_call_id_and_safe_receipt_sum
             "effect": {"status": "applied", "state_revision": 7, "credential": "hidden"},
             "map_context": {"dimension": "3d", "revision": 7},
         },
-    ))
-    start = next(event for event in pending.events if event.event_type == "tool_started")
-    requested = next(event for event in pending.events if event.event_type == "browser_tool_requested")
-    receipt = next(event for event in result.events if event.event_type == "browser_tool_completed")
+    ))]
+    result = next(frame.result for frame in resumed_frames if frame.result is not None)
+    resumed_events = [frame.event for frame in resumed_frames if frame.event is not None]
+    start = next(event for event in initial_events if event.event_type == "tool_started")
+    requested = next(event for event in initial_events if event.event_type == "browser_tool_requested")
+    receipt = next(event for event in resumed_events if event.event_type == "browser_tool_completed")
     assert start.payload["tool_call_id"] == requested.payload["tool_call_id"] == receipt.payload["tool_call_id"]
     assert receipt.payload["receipt"] == {"effect_status": "applied", "state_revision": 7, "map_dimension": "3d"}
     assert "secret" not in str(receipt.payload)
