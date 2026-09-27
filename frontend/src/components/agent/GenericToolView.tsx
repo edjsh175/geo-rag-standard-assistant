@@ -44,20 +44,66 @@ export const GenericToolView: React.FC<GenericToolViewProps> = ({ tool }) => {
   const config = views[tool.toolName];
   const inputFacts = fields(tool.arguments, config?.input || []);
   const outputFacts = fields(tool.output, config?.output || []);
-  return <div className="space-y-2" data-tool-renderer={config ? tool.toolName : 'generic'}>
-    <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Call ID <span className="normal-case font-mono text-slate-300">{tool.callId}</span></div>
-    {config && inputFacts.length > 0 && <div className="flex flex-wrap gap-1">{inputFacts.map((fact) => <span key={fact} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-300">{fact}</span>)}</div>}
-    <section><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">INPUT</div>
-      {tool.arguments && Object.keys(tool.arguments).length ? <pre className="max-h-40 overflow-auto rounded bg-black/40 p-1.5 text-[10px] text-slate-300">{renderJson(tool.arguments)}</pre> : <span className="text-[10px] text-slate-500">无输入字段</span>}
-    </section>
-    <section><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">OUTPUT</div>
-      {tool.output && Object.keys(tool.output).length ? <><div className="mb-1 flex flex-wrap gap-1">{outputFacts.map((fact) => <span key={fact} className="rounded bg-emerald-950/40 px-1.5 py-0.5 text-[10px] text-emerald-200">{fact}</span>)}</div><pre className="max-h-40 overflow-auto rounded bg-black/40 p-1.5 text-[10px] text-emerald-300/90">{renderJson(tool.output)}</pre></> : <span className="text-[10px] text-slate-500">尚无结果</span>}
-    </section>
-    <section><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-400/80">ERROR</div>
-      {tool.error ? <div className="max-h-24 overflow-auto rounded border border-rose-800/30 bg-rose-950/40 p-1.5 text-[10px] text-rose-300">{String(tool.error).slice(0, 700)}</div> : <span className="text-[10px] text-slate-500">无错误</span>}
-    </section>
-    {tool.executionSite === 'browser' && <section><div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-400/80">BROWSER RECEIPT</div>
-      {tool.browserReceipt ? <div className="rounded border border-sky-800/30 bg-sky-950/30 p-1.5 text-[10px] text-sky-200">Status: {tool.browserReceipt.status} · Effect: {tool.browserReceipt.effectStatus || 'unknown'} · Dimension: {tool.browserReceipt.runtimeDimension || 'unknown'} · Revision: {tool.browserReceipt.stateRevision ?? 'unknown'}</div> : <span className="text-[10px] text-slate-500">{tool.status === 'waiting_browser' ? '等待浏览器回执' : '未返回浏览器回执'}</span>}
-    </section>}
-  </div>;
+  return (
+    <div className="space-y-2.5 font-sans" data-tool-renderer={config ? tool.toolName : 'generic'}>
+      <div className="text-[10px] text-on-background/50 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+        <span>Call ID</span>
+        <span className="normal-case font-mono text-on-background/80 font-medium px-1.5 py-0.5 rounded bg-surface-container/60 border border-outline/50">{tool.callId}</span>
+      </div>
+      {config && inputFacts.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {inputFacts.map((fact) => (
+            <span key={fact} className="rounded-md bg-surface-container-high/60 border border-outline/50 px-2 py-0.5 text-[10px] text-on-background/75 font-mono">
+              {fact}
+            </span>
+          ))}
+        </div>
+      )}
+      <section>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-on-background/45">INPUT</div>
+        {tool.arguments && Object.keys(tool.arguments).length ? (
+          <pre className="max-h-40 overflow-auto rounded-lg border border-outline/60 bg-surface-container-lowest/60 p-2 text-[10.5px] text-on-background/85 font-mono shadow-inner leading-relaxed">{renderJson(tool.arguments)}</pre>
+        ) : (
+          <span className="text-[10.5px] text-on-background/40 italic">无输入字段</span>
+        )}
+      </section>
+      <section>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-on-background/45">OUTPUT</div>
+        {tool.output && Object.keys(tool.output).length ? (
+          <>
+            <div className="mb-1.5 flex flex-wrap gap-1">
+              {outputFacts.map((fact) => (
+                <span key={fact} className="rounded-md bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-300 font-mono font-medium">
+                  {fact}
+                </span>
+              ))}
+            </div>
+            <pre className="max-h-40 overflow-auto rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] p-2 text-[10.5px] text-emerald-700 dark:text-emerald-300 font-mono shadow-inner leading-relaxed">{renderJson(tool.output)}</pre>
+          </>
+        ) : (
+          <span className="text-[10.5px] text-on-background/40 italic">尚无结果</span>
+        )}
+      </section>
+      <section>
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-rose-500/90">ERROR</div>
+        {tool.error ? (
+          <div className="max-h-24 overflow-auto rounded-lg border border-rose-500/30 bg-rose-500/10 p-2 text-[10.5px] text-rose-700 dark:text-rose-300 font-mono leading-relaxed">{String(tool.error).slice(0, 700)}</div>
+        ) : (
+          <span className="text-[10.5px] text-on-background/40 italic">无错误</span>
+        )}
+      </section>
+      {tool.executionSite === 'browser' && (
+        <section>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-sky-500/90">BROWSER RECEIPT</div>
+          {tool.browserReceipt ? (
+            <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-2 text-[10.5px] text-sky-700 dark:text-sky-300 font-mono leading-relaxed">
+              Status: {tool.browserReceipt.status} · Effect: {tool.browserReceipt.effectStatus || 'unknown'} · Dimension: {tool.browserReceipt.runtimeDimension || 'unknown'} · Revision: {tool.browserReceipt.stateRevision ?? 'unknown'}
+            </div>
+          ) : (
+            <span className="text-[10.5px] text-on-background/40 italic">{tool.status === 'waiting_browser' ? '等待浏览器回执' : '未返回浏览器回执'}</span>
+          )}
+        </section>
+      )}
+    </div>
+  );
 };

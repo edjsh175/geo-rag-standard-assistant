@@ -15,22 +15,22 @@ const titles: Record<string, string> = {
 
 export const ToolRow: React.FC<ToolRowProps> = ({ tool, paused = false }) => {
   const icon = tool.status === 'running'
-    ? <Clock className={`h-3.5 w-3.5 text-amber-400 ${paused ? '' : 'motion-reduce:animate-none animate-spin'}`} />
+    ? <Clock className={`h-3.5 w-3.5 text-amber-500 ${paused ? '' : 'motion-reduce:animate-none animate-spin'}`} />
     : tool.status === 'waiting_browser'
-      ? <Globe className={`h-3.5 w-3.5 text-sky-400 ${paused ? '' : 'motion-reduce:animate-none animate-pulse'}`} />
+      ? <Globe className={`h-3.5 w-3.5 text-sky-500 ${paused ? '' : 'motion-reduce:animate-none animate-pulse'}`} />
       : tool.status === 'succeeded'
-        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-        : <XCircle className="h-3.5 w-3.5 text-rose-400" />;
+        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+        : <XCircle className="h-3.5 w-3.5 text-rose-500" />;
   const rowStatus = tool.status === 'succeeded' ? 'succeeded'
     : tool.status === 'failed' || tool.status === 'cancelled' ? 'failed'
       : tool.status === 'waiting_browser' ? 'waiting' : 'running';
   const title = titles[tool.toolName] || tool.toolName || '未知工具';
   return <DisclosureRow
-    icon={tool.executionSite === 'browser' ? <Globe className="h-3.5 w-3.5 text-sky-400" /> : <Wrench className="h-3.5 w-3.5 text-slate-400" />}
+    icon={tool.executionSite === 'browser' ? <Globe className="h-3.5 w-3.5 text-sky-500" /> : <Wrench className="h-3.5 w-3.5 text-on-background/50" />}
     title={title}
     summary={`调用 ${tool.callId}${tool.executionSite === 'browser' ? ' · 浏览器地图运行时' : ''}`}
     status={rowStatus}
-    badge={<div className="flex items-center gap-1.5 text-[11px]">{icon}<span className="font-mono">{tool.status}</span></div>}
+    badge={<div className="flex items-center gap-1.5 text-[11px] text-on-background/60">{icon}<span className="font-mono text-on-background/70">{tool.status}</span></div>}
     defaultExpanded={false}
   >
     <GenericToolView tool={tool} />

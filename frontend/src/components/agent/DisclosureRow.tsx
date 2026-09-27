@@ -1,6 +1,8 @@
 import React, { useId, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 
+import { cn } from '../../lib/utils';
+
 export interface DisclosureRowProps {
   icon?: React.ReactNode;
   title: string;
@@ -27,35 +29,37 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
   const getStatusColor = () => {
     switch (status) {
       case 'running':
-        return 'text-amber-500 border-amber-500/30 bg-amber-500/10';
+        return 'text-amber-600 dark:text-amber-400 border-amber-500/35 bg-amber-500/10';
       case 'succeeded':
-        return 'text-emerald-500 border-emerald-500/30 bg-emerald-500/10';
+        return 'text-emerald-600 dark:text-emerald-400 border-emerald-500/35 bg-emerald-500/10';
       case 'failed':
-        return 'text-rose-500 border-rose-500/30 bg-rose-500/10';
+        return 'text-rose-600 dark:text-rose-400 border-rose-500/35 bg-rose-500/10';
       case 'waiting':
-        return 'text-sky-500 border-sky-500/30 bg-sky-500/10';
+        return 'text-sky-600 dark:text-sky-400 border-sky-500/35 bg-sky-500/10';
       default:
-        return 'text-slate-400 border-slate-500/20 bg-slate-500/5';
+        return 'text-on-background/60 border-outline bg-surface-container/40';
     }
   };
 
   return (
-    <div className="w-full rounded-lg border border-white/5 bg-white/[0.02] text-xs transition-colors overflow-hidden">
+    <div className="w-full rounded-lg border border-outline/50 bg-surface-container/30 text-xs transition-all overflow-hidden">
       <button
         type="button"
         disabled={!hasContent}
         aria-expanded={hasContent ? isExpanded : undefined}
         aria-controls={hasContent ? contentId : undefined}
         onClick={() => setIsExpanded((prev) => !prev)}
-        className={`w-full flex items-center gap-2 px-3 py-2 text-left select-none transition-colors ${
-          hasContent ? 'hover:bg-white/[0.04] cursor-pointer' : 'cursor-default'
-        }`}
+        className={cn(
+          "w-full flex items-center gap-2 px-3 py-2 text-left select-none transition-colors",
+          hasContent ? "hover:bg-surface-container-high/40 cursor-pointer" : "cursor-default"
+        )}
       >
         {hasContent && (
           <span
-            className={`transition-transform duration-150 motion-reduce:transition-none text-slate-400 ${
-              isExpanded ? 'rotate-90' : 'rotate-0'
-            }`}
+            className={cn(
+              "transition-transform duration-150 motion-reduce:transition-none text-on-background/40",
+              isExpanded && "rotate-90"
+            )}
           >
             <ChevronRight className="w-3.5 h-3.5" />
           </span>
@@ -63,10 +67,10 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
 
         {icon && <span className="shrink-0">{icon}</span>}
 
-        <span className="font-medium text-slate-200 shrink-0">{title}</span>
+        <span className="font-medium text-on-background/90 shrink-0">{title}</span>
 
         {summary && (
-          <span className="truncate text-slate-400 font-normal ml-1 flex-1">
+          <span className="truncate text-on-background/50 font-normal ml-1 flex-1">
             {summary}
           </span>
         )}
@@ -75,7 +79,10 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
 
         {!badge && status && (
           <span
-            className={`ml-auto px-1.5 py-0.5 rounded text-[10px] font-mono border uppercase shrink-0 ${getStatusColor()}`}
+            className={cn(
+              "ml-auto px-1.5 py-0.5 rounded text-[10px] font-mono border uppercase tracking-wider shrink-0",
+              getStatusColor()
+            )}
           >
             {status}
           </span>
@@ -83,7 +90,7 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
       </button>
 
       {hasContent && isExpanded && (
-        <div id={contentId} className="border-t border-white/5 bg-black/20 p-2.5 text-slate-300 font-mono text-[11px] whitespace-pre-wrap break-all">
+        <div id={contentId} className="border-t border-outline/40 bg-surface-lowest/50 p-2.5 text-on-background/80 font-mono text-[11px] whitespace-pre-wrap break-all leading-relaxed">
           {children}
         </div>
       )}

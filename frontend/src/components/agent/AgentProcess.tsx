@@ -46,7 +46,7 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         return (
           <DisclosureRow
             key={`decision-${idx}`}
-            icon={<Compass className="w-3.5 h-3.5 text-amber-400" />}
+            icon={<Compass className="w-3.5 h-3.5 text-amber-500" />}
             title="Controller 决策"
             summary={item.summary}
             status="info"
@@ -57,18 +57,18 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         return (
           <DisclosureRow
             key={`evidence-${idx}`}
-            icon={<FileCheck className="w-3.5 h-3.5 text-blue-400" />}
+            icon={<FileCheck className="w-3.5 h-3.5 text-blue-500" />}
             title="证据冻结"
             summary={`锁定 ${item.evidenceCount} 条证据快照进行生成`}
             status="succeeded"
           >
-            <div className="text-[11px] text-slate-300">
-              Snapshot ID: {item.snapshotId}
-              <div className="mt-1 flex flex-wrap gap-1">
+            <div className="text-[11px] text-on-background/70 font-sans">
+              <span className="font-mono text-on-background/50">Snapshot ID: {item.snapshotId}</span>
+              <div className="mt-1.5 flex flex-wrap gap-1 font-mono">
                 {item.evidenceIds.map((id) => (
                   <span
                     key={id}
-                    className="px-1.5 py-0.5 rounded bg-blue-950/40 border border-blue-800/40 text-blue-300 text-[10px]"
+                    className="px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/25 text-blue-600 dark:text-blue-300 text-[10px] font-medium"
                   >
                     {id}
                   </span>
@@ -82,7 +82,7 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         return (
           <DisclosureRow
             key={`stage-${idx}`}
-            icon={<Sparkles className="w-3.5 h-3.5 text-purple-400" />}
+            icon={<Sparkles className="w-3.5 h-3.5 text-purple-500" />}
             title={item.stageName === 'cancellation' ? '执行停止' : '生成规划回答'}
             summary={item.summary}
             status={item.status === 'failed' ? 'failed' : item.status === 'running' ? 'running' : 'succeeded'}
@@ -100,11 +100,11 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         return (
           <DisclosureRow
             key={`review-${idx}`}
-            icon={<ShieldCheck className="w-3.5 h-3.5 text-teal-400" />}
+            icon={<ShieldCheck className="w-3.5 h-3.5 text-teal-500" />}
             title="Grounding 审查"
             summary={item.summary}
             status={reviewStatus}
-            badge={<span className="text-[10px] font-mono text-slate-400">{item.verdict || item.status || 'unknown'}</span>}
+            badge={<span className="text-[10px] font-mono text-on-background/50">{item.verdict || item.status || 'unknown'}</span>}
           />
         );
 
@@ -112,7 +112,7 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         return (
           <DisclosureRow
             key={`pub-${idx}`}
-            icon={<Send className="w-3.5 h-3.5 text-emerald-400" />}
+            icon={<Send className="w-3.5 h-3.5 text-emerald-500" />}
             title="结果发布"
             summary={item.summary}
             status={item.state === 'published' ? 'succeeded' : 'info'}
@@ -123,7 +123,7 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
 
   return (
     <div
-      className={`my-2 rounded-xl border border-white/10 bg-slate-900/60 backdrop-blur-md overflow-hidden text-xs ${className}`}
+      className={`my-2.5 rounded-xl border border-outline bg-surface-container-low/75 backdrop-blur-md overflow-hidden text-xs shadow-xs transition-all duration-200 ${className}`}
     >
       <button
         type="button"
@@ -134,22 +134,22 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         }}
         aria-expanded={isExpanded}
         aria-controls={contentId}
-        className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.03] hover:bg-white/[0.05] transition-colors cursor-pointer select-none text-left"
+        className="w-full flex items-center justify-between px-3.5 py-2.5 bg-surface-container/35 hover:bg-surface-container/65 transition-colors cursor-pointer select-none text-left"
       >
         <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full bg-primary-container ${turn.status === 'running' && !turn.interruption ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
-          <span className="font-semibold text-slate-200 text-xs">
+          <span className={`w-2 h-2 rounded-full bg-primary-container ${turn.status === 'running' && !turn.interruption ? 'animate-pulse motion-reduce:animate-none' : ''}`} style={turn.status === 'running' && !turn.interruption ? { boxShadow: '0 0 8px rgba(240,112,64,0.6)' } : {}} />
+          <span className="font-semibold text-on-background text-xs tracking-wide">
             Agent 执行流程
           </span>
-          <span className="text-[11px] text-slate-400">
+          <span className="text-[11px] text-on-background/55">
             · {turn.items.length} 步骤
             {toolCount > 0 && ` (${toolCount} 个工具)`}
             {reviewItem && ` · 审查: ${reviewItem.verdict || reviewItem.status || 'unknown'}`}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 text-slate-400">
-          <span className="text-[11px] font-mono uppercase">
+        <div className="flex items-center gap-1.5 text-on-background/50">
+          <span className="text-[10.5px] font-mono uppercase tracking-wider">
             {turn.status}
           </span>
           {isExpanded ? (
@@ -161,8 +161,8 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
       </button>
 
       {isExpanded && (
-        <div id={contentId} className="p-2.5 space-y-1.5 border-t border-white/5 bg-black/10">
-          {turn.interruption && <div role="status" className="rounded border border-amber-700/40 bg-amber-950/30 px-2 py-1.5 text-amber-200">{turn.interruption.kind === 'stopped' ? '生成已停止' : '连接中断'}：{turn.interruption.message}</div>}
+        <div id={contentId} className="p-2.5 space-y-1.5 border-t border-outline/50 bg-surface-lowest/40 backdrop-blur-sm">
+          {turn.interruption && <div role="status" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-300 text-[11.5px] leading-relaxed">{turn.interruption.kind === 'stopped' ? '生成已停止' : '连接中断'}：{turn.interruption.message}</div>}
           {turn.items.map((item, idx) => renderItem(item, idx))}
         </div>
       )}

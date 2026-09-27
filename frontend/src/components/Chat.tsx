@@ -159,12 +159,12 @@ const Chat: React.FC<ChatProps> = ({
         ))}
 
         {isLoading && (
-          <div className="flex gap-3 items-start" style={{ marginRight: '40px' }}>
+          <div className="flex gap-3 items-start" style={{ marginRight: '32px' }}>
             <div
-              className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-              style={{ background: 'rgba(240,112,64,0.08)', border: '0.5px solid rgba(240,112,64,0.2)' }}
+              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+              style={{ background: 'rgba(240,112,64,0.10)', border: '0.5px solid rgba(240,112,64,0.25)', boxShadow: '0 0 10px rgba(240,112,64,0.12)' }}
             >
-              <Sparkles className="w-3.5 h-3.5" style={{ color: 'rgba(240,112,64,0.7)' }} />
+              <Sparkles className="w-3.5 h-3.5 animate-pulse-soft" style={{ color: '#f07040' }} />
             </div>
             <div className="flex-1 space-y-3">
               {activeTurn && <AgentProcess turn={activeTurn}
@@ -172,15 +172,14 @@ const Chat: React.FC<ChatProps> = ({
                 onExpandedChange={(expanded) => processDisclosureRef.current.set(processKey(activeTurn), expanded)}
               />}
               <div
-                className="rounded-xl rounded-tl-sm p-4 text-sm bg-surface-container/60 border-l-[1.5px] border-primary-container"
+                className="rounded-2xl rounded-tl-xs p-4 text-sm bg-surface-container-low/80 backdrop-blur-md border border-outline border-l-2 border-l-primary-container shadow-xs"
               >
                 <LoadingIndicator text="GeoAI 正在检索空间规划标准..." />
               </div>
               {onStopGeneration && (
                 <button
                   onClick={onStopGeneration}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] font-medium transition-colors"
-                  style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.75)', border: '0.5px solid rgba(239,68,68,0.2)' }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition-all bg-red-500/10 hover:bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/25 cursor-pointer"
                 >
                   <X className="w-3 h-3" /> 停止生成
                 </button>
@@ -300,69 +299,104 @@ interface ChatMessageProps {
 const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick, processExpanded, onProcessExpandedChange }) => {
   const isUser = message.role === 'user';
   return (
-    <div className={cn('flex min-w-0 max-w-full', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
+    <div
+      className={cn(
+        'flex min-w-0 max-w-full transition-opacity duration-200',
+        isUser ? 'justify-end' : 'gap-3 items-start'
+      )}
+      style={isUser ? { marginLeft: '36px' } : { marginRight: '24px' }}
+    >
       {/* AI avatar */}
       {!isUser && (
         <div
-          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-          style={{ background: 'rgba(240,112,64,0.08)', border: '0.5px solid rgba(240,112,64,0.2)' }}
+          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
+          style={{
+            background: 'rgba(240,112,64,0.10)',
+            border: '0.5px solid rgba(240,112,64,0.25)',
+            boxShadow: '0 0 10px rgba(240,112,64,0.12)',
+          }}
         >
-          <Sparkles className="w-3.5 h-3.5" style={{ color: 'rgba(240,112,64,0.65)' }} />
+          <Sparkles className="w-3.5 h-3.5" style={{ color: '#f07040' }} />
         </div>
       )}
 
       <div className="min-w-0 flex-1 space-y-3">
         {/* Agent Process Timeline */}
         {!isUser && message.metadata?.agent_turn && (
-          <AgentProcess turn={message.metadata.agent_turn} defaultExpanded={processExpanded} onExpandedChange={onProcessExpandedChange} />
+          <AgentProcess
+            turn={message.metadata.agent_turn}
+            defaultExpanded={processExpanded}
+            onExpandedChange={onProcessExpandedChange}
+          />
         )}
 
         {/* Bubble */}
         <div
           className={cn(
-            "max-w-full overflow-hidden rounded-xl text-[15px] leading-[1.75] p-3.5 border break-words",
-            isUser ? "bg-primary-container/[0.07] border-primary-container/[0.18] text-on-background/90" : "bg-surface-container/60 border-outline text-on-background/90"
-          )}
-          style={
+            "max-w-full overflow-hidden text-[15px] leading-[1.75] p-4 border break-words transition-all duration-200",
             isUser
-              ? { borderBottomRightRadius: '4px' }
-              : { borderLeft: '1.5px solid rgba(240,112,64,0.30)', borderRadius: '0 10px 10px 10px' }
-          }
+              ? "rounded-2xl rounded-tr-xs bg-primary-container/[0.12] dark:bg-primary-container/[0.10] border-primary-container/25 text-on-background shadow-xs"
+              : "rounded-2xl rounded-tl-xs bg-surface-container-low/80 backdrop-blur-md border-outline border-l-2 border-l-primary-container text-on-background/90 shadow-xs"
+          )}
+          style={{
+            boxShadow: isUser
+              ? '0 2px 10px rgba(240,112,64,0.06)'
+              : '0 2px 12px rgba(0,0,0,0.04)',
+          }}
         >
           {!isUser ? (
             <div className="prose max-w-full">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
             </div>
-          ) : message.content}
+          ) : (
+            message.content
+          )}
         </div>
 
         {/* Timestamp */}
-        <p className="text-[12.5px] font-mono mt-1 opacity-40" style={{ color: 'var(--color-on-background)', textAlign: isUser ? 'right' : 'left', letterSpacing: '0.05em' }}>
-          {new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+        <p
+          className="text-[11.5px] font-mono mt-1 opacity-45 px-1"
+          style={{
+            color: 'var(--color-on-background)',
+            textAlign: isUser ? 'right' : 'left',
+            letterSpacing: '0.04em',
+          }}
+        >
+          {new Date(message.timestamp).toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
         </p>
 
         {/* Citations */}
         {message.metadata?.citations && message.metadata.citations.length > 0 && (
-          <div className="space-y-2">
+          <div className="space-y-2 mt-2 pt-1">
+            <div className="flex items-center gap-1.5 px-0.5 text-[11px] font-semibold text-on-background/45 uppercase tracking-wider">
+              <FileText className="w-3.5 h-3.5 text-primary-container" />
+              <span>参考资料与溯源</span>
+            </div>
             {message.metadata.citations.map((citation, idx) => (
               <motion.div
                 key={idx}
-                whileHover={{ x: 4 }}
+                whileHover={{ x: 3 }}
                 onClick={() => onCitationClick?.(citation)}
-                className="rounded-xl p-3.5 cursor-pointer transition-all bg-surface-container/70 border border-outline hover:border-primary-container/30"
+                className="group rounded-xl p-3.5 cursor-pointer transition-all duration-200 bg-surface-container-low/75 hover:bg-surface-container/90 border border-outline hover:border-primary-container/40 shadow-xs hover:shadow-sm"
               >
                 <div className="flex justify-between items-center mb-1.5">
-                  <span
-                    className="text-[11.5px] font-semibold px-1.5 py-0.5 rounded font-mono bg-primary-container/10 text-primary-container"
-                  >
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md font-mono bg-primary-container/10 border border-primary-container/20 text-primary-container">
                     {citation.document_id}
                   </span>
-                  <span className="text-[11.5px] font-mono text-emerald-500/70">
-                    {(citation.confidence * 100).toFixed(1)}%
+                  <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" />
+                    {(citation.confidence * 100).toFixed(1)}% 匹配
                   </span>
                 </div>
-                <h4 className="text-[13.5px] font-semibold mb-1 text-on-background/80">{citation.title}</h4>
-                <p className="text-[12.5px] line-clamp-2 opacity-50 text-on-background">{citation.excerpt}</p>
+                <h4 className="text-[13.5px] font-semibold mb-1 text-on-background/85 group-hover:text-primary-container transition-colors leading-snug">
+                  {citation.title}
+                </h4>
+                <p className="text-[12px] line-clamp-2 text-on-background/55 leading-relaxed">
+                  {citation.excerpt}
+                </p>
               </motion.div>
             ))}
           </div>
