@@ -117,9 +117,19 @@ class SpatialService:
             SELECT
                 left_geom IS NOT NULL AS left_found,
                 right_geom IS NOT NULL AS right_found,
-                CASE WHEN result_geom IS NULL THEN NULL ELSE ST_AsGeoJSON(result_geom)::json END AS geometry,
+                CASE WHEN result_geom IS NULL THEN NULL ELSE ST_GeometryType(result_geom) END AS geom_type,
                 CASE WHEN result_geom IS NULL OR ST_IsEmpty(result_geom) THEN 0
-                    ELSE ST_Area(result_geom::geography) END AS area_m2
+                    ELSE ST_NPoints(result_geom) END AS n_points,
+                CASE WHEN result_geom IS NULL OR ST_IsEmpty(result_geom) THEN 0
+                    ELSE ST_Area(result_geom::geography) END AS area_m2,
+                CASE WHEN result_geom IS NULL THEN NULL
+                    ELSE json_build_array(ST_XMin(result_geom), ST_YMin(result_geom), ST_XMax(result_geom), ST_YMax(result_geom))
+                END AS bbox,
+                CASE
+                    WHEN result_geom IS NULL THEN NULL
+                    WHEN ST_NPoints(result_geom) > 100 THEN ST_AsGeoJSON(ST_SimplifyPreserveTopology(result_geom, 0.001))::json
+                    ELSE ST_AsGeoJSON(result_geom)::json
+                END AS geometry
             FROM result
             """
         )
@@ -127,10 +137,29 @@ class SpatialService:
             row = (await session.execute(sql, {**left_params, **right_params})).mappings().one()
         if not row["left_found"] or not row["right_found"]:
             raise ValueError("spatial operand was not found")
+
+        n_points = int(row.get("n_points") or 0)
+        geom = row.get("geometry")
+        geom_type = row.get("geom_type")
+        bbox = row.get("bbox")
+        area_m2 = float(row.get("area_m2") or 0)
+
+        geometry_truncated = False
+        if geom is not None:
+            geom_str = json.dumps(geom) if not isinstance(geom, str) else geom
+            if len(geom_str) > 8192:
+                geom = None
+                geometry_truncated = True
+
         return {
             "operation": operation,
-            "geometry": row["geometry"],
-            "area_m2": float(row["area_m2"] or 0),
+            "geometry_type": geom_type,
+            "area_m2": area_m2,
+            "bbox": bbox,
+            "point_count": n_points,
+            "is_simplified": n_points > 100,
+            "geometry_truncated": geometry_truncated,
+            "geometry": geom,
         }
 
     async def geocode(self, request: GeocodeRequest) -> GeocodeResponse:
