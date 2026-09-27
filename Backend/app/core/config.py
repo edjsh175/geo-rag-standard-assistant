@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     AUTH_COOKIE_SAMESITE: str = "lax"
     SYSTEM_API_KEY: Optional[str] = None
     SYSTEM_CLEAR_CACHE_CONFIRM_VALUE: str = "clear-cache"
+    TRUST_PROXY_HEADERS: bool = False
+    TRUSTED_PROXIES: List[str] = ["127.0.0.1", "::1"]
     PUBLIC_DEMO_ENABLED: bool = True
     DEMO_DAILY_AI_QUOTA_PER_VISITOR: int = 10
     DEMO_DAILY_AI_QUOTA_PER_IP: int = 30

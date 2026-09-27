@@ -31,11 +31,28 @@ class UserIdentity:
     ip_hash: Optional[str] = None
 
 
+import ipaddress
+
+KNOWN_INSECURE_SECRETS = {
+    "dev-only-secret-key-set-SECRET_KEY-in-env",
+    "secret",
+    "changeme",
+    "default",
+    "password",
+    "123456",
+}
+
+
 def validate_admin_auth_configuration() -> None:
     if not settings.ADMIN_USERNAME:
         raise RuntimeError("ADMIN_USERNAME is not configured.")
     if not settings.SECRET_KEY:
         raise RuntimeError("SECRET_KEY is not configured.")
+    if not settings.DEBUG and settings.SECRET_KEY in KNOWN_INSECURE_SECRETS:
+        raise RuntimeError(
+            "SECRET_KEY is using an insecure default/placeholder value while DEBUG=False. "
+            "Please configure a strong SECRET_KEY in your production environment."
+        )
     if not settings.ADMIN_PASSWORD_HASH and not settings.ADMIN_PASSWORD:
         raise RuntimeError("Either ADMIN_PASSWORD_HASH or ADMIN_PASSWORD must be configured.")
     if settings.ADMIN_PASSWORD_HASH:
@@ -111,13 +128,36 @@ def clear_auth_cookie(response: Response) -> None:
     )
 
 
+def _is_trusted_proxy(host: str | None) -> bool:
+    if not host:
+        return False
+    if getattr(settings, "TRUST_PROXY_HEADERS", False):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        trusted_list = getattr(settings, "TRUSTED_PROXIES", ["127.0.0.1", "::1"])
+        for proxy_str in trusted_list:
+            try:
+                if "/" in proxy_str:
+                    if ip in ipaddress.ip_network(proxy_str, strict=False):
+                        return True
+                else:
+                    if ip == ipaddress.ip_address(proxy_str):
+                        return True
+            except ValueError:
+                continue
+    except ValueError:
+        return False
+    return False
+
+
 def get_client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    peer_ip = request.client.host if request.client else None
+    if _is_trusted_proxy(peer_ip):
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
+    return peer_ip or "unknown"
 
 
 def hash_client_ip(request: Request) -> str:
