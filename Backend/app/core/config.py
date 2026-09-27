@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     SIMILARITY_THRESHOLD: float = 0.7
     TOP_K_RESULTS: int = 10
 
+    RERANKER_TYPE: str = "local"
+    RERANKER_BASE_URL: Optional[str] = None
+    RERANKER_TIMEOUT_SECONDS: float = 10.0
+    RERANKER_MODEL_NAME: str = ""
+
     SPATIAL_SEARCH_RADIUS: float = 5000.0
     COORDINATE_SYSTEM: str = "EPSG:4326"
 

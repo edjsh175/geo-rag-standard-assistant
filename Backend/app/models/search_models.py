@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 
 from app.services.demo_quota_service import DemoQuotaStatus
 from app.services.agent.contracts import MapAction
@@ -39,6 +39,12 @@ class DocumentResult(BaseModel):
     title: str = Field(..., description="Document title.")
     content: str = Field(..., description="Snippet or summary content.")
     similarity: float = Field(..., ge=0, le=1, description="Similarity score.")
+    vector_similarity: Optional[float] = Field(None, description="Raw cosine/vector similarity if vector branch.")
+    keyword_score: Optional[float] = Field(None, description="BM25 or keyword match score.")
+    rrf_score: Optional[float] = Field(None, description="Fused Reciprocal Rank Fusion score.")
+    rerank_score: Optional[float] = Field(None, description="Reranker output score (heuristic or cross-encoder).")
+    final_rank_score: Optional[float] = Field(None, description="Canonical final ranking score used for ordering.")
+    score_kind: str = Field("similarity", description="The primary semantic source of final_rank_score ('similarity', 'keyword', 'rrf', 'rerank', 'composite').")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata payload.")
     spatial_info: Optional[Dict[str, Any]] = Field(None, description="Optional spatial metadata.")
     file_type: str = Field(..., description="File extension or logical type.")
@@ -52,6 +58,53 @@ class DocumentResult(BaseModel):
     @classmethod
     def coerce_id_to_str(cls, value: Any) -> str:
         return str(value)
+
+    @model_validator(mode="after")
+    def populate_score_model(self) -> "DocumentResult":
+        if self.rrf_score is None and "rrf_score" in self.metadata:
+            try:
+                self.rrf_score = float(self.metadata["rrf_score"])
+            except (ValueError, TypeError):
+                pass
+        if self.rerank_score is None and "rerank_score" in self.metadata:
+            try:
+                self.rerank_score = float(self.metadata["rerank_score"])
+            except (ValueError, TypeError):
+                pass
+        if self.vector_similarity is None and "vector_similarity" in self.metadata:
+            try:
+                self.vector_similarity = float(self.metadata["vector_similarity"])
+            except (ValueError, TypeError):
+                pass
+        if self.keyword_score is None and "keyword_score" in self.metadata:
+            try:
+                self.keyword_score = float(self.metadata["keyword_score"])
+            except (ValueError, TypeError):
+                pass
+
+        if self.final_rank_score is None:
+            if "final_rank_score" in self.metadata:
+                try:
+                    self.final_rank_score = float(self.metadata["final_rank_score"])
+                except (ValueError, TypeError):
+                    pass
+            if self.final_rank_score is None:
+                if self.rerank_score is not None:
+                    self.final_rank_score = self.rerank_score
+                    self.score_kind = "rerank"
+                elif self.rrf_score is not None:
+                    self.final_rank_score = self.rrf_score
+                    self.score_kind = "rrf"
+                elif self.vector_similarity is not None:
+                    self.final_rank_score = self.vector_similarity
+                    self.score_kind = "similarity"
+                elif self.keyword_score is not None:
+                    self.final_rank_score = self.keyword_score
+                    self.score_kind = "keyword"
+                else:
+                    self.final_rank_score = self.similarity
+                    self.score_kind = self.metadata.get("score_kind", "similarity")
+        return self
 
 
 class FollowUpCandidateDocument(BaseModel):

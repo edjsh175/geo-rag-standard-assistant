@@ -48,6 +48,11 @@ class RetrievalCandidate:
     metadata: dict[str, Any]
     provenance: RetrievalProvenance
     source_result: DocumentResult
+    vector_similarity: float | None = None
+    keyword_score: float | None = None
+    rrf_score: float | None = None
+    rerank_score: float | None = None
+    score_kind: str = "composite"
 
     @classmethod
     def from_document_result(cls, result: DocumentResult) -> "RetrievalCandidate":
@@ -55,12 +60,18 @@ class RetrievalCandidate:
         raw_chunk_id = metadata.get("chunk_id") or result.id
         raw_document_id = metadata.get("document_id")
 
+        final_score = (
+            float(result.final_rank_score)
+            if getattr(result, "final_rank_score", None) is not None
+            else float(result.similarity)
+        )
+
         return cls(
             chunk_id=str(raw_chunk_id),
             document_id=str(raw_document_id) if raw_document_id is not None else None,
             text=result.content or "",
             title=result.title or "",
-            score=float(result.similarity),
+            score=final_score,
             metadata=metadata,
             provenance=RetrievalProvenance(
                 source="postgres",
@@ -71,6 +82,11 @@ class RetrievalCandidate:
                 },
             ),
             source_result=result,
+            vector_similarity=getattr(result, "vector_similarity", None),
+            keyword_score=getattr(result, "keyword_score", None),
+            rrf_score=getattr(result, "rrf_score", None),
+            rerank_score=getattr(result, "rerank_score", None),
+            score_kind=getattr(result, "score_kind", "composite") or "composite",
         )
 
 

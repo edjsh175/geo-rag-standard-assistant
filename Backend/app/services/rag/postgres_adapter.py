@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.core.database import db_manager
 from app.core.llm_config import llm_config
 from app.models.search_models import DocumentResult
@@ -29,7 +30,7 @@ from app.services.rag.contracts import (
 from app.services.rag.filters import RagFilterEngine
 from app.services.rag.fusion import rrf_fuse
 from app.services.rag.query_planner import QueryPlanner
-from app.services.rag.reranker import BaseReranker, RagReranker
+from app.services.rag.reranker import BaseReranker, RagReranker, create_reranker
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,15 @@ class PostgresRetrievalAdapter:
 
     def __init__(self, reranker: BaseReranker | None = None) -> None:
         self.filter_engine = RagFilterEngine()
-        self.reranker = reranker or RagReranker()
+        if reranker is not None:
+            self.reranker = reranker
+        else:
+            self.reranker = create_reranker(
+                reranker_type=getattr(settings, "RERANKER_TYPE", "local"),
+                base_url=getattr(settings, "RERANKER_BASE_URL", None),
+                timeout=getattr(settings, "RERANKER_TIMEOUT_SECONDS", 10.0),
+                model_name=getattr(settings, "RERANKER_MODEL_NAME", ""),
+            )
         self.query_planner = QueryPlanner()
 
     async def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
@@ -372,11 +381,25 @@ class PostgresRetrievalAdapter:
         if extra_metadata:
             metadata.update(extra_metadata)
 
+        vec_sim = float(similarity) if "vector" in match_type else None
+        kw_score = float(similarity) if "keyword" in match_type else None
+        s_kind = "similarity" if vec_sim is not None else ("keyword" if kw_score is not None else "exact")
+        metadata["score_kind"] = s_kind
+        metadata["final_rank_score"] = float(similarity)
+        if vec_sim is not None:
+            metadata["vector_similarity"] = vec_sim
+        if kw_score is not None:
+            metadata["keyword_score"] = kw_score
+
         return DocumentResult(
             id=str(row.id),
             title=document_name,
             content=row.content[:500] if row.content else "",
             similarity=float(similarity),
+            vector_similarity=vec_sim,
+            keyword_score=kw_score,
+            final_rank_score=float(similarity),
+            score_kind=s_kind,
             metadata=metadata,
             spatial_info=None,
             file_type=self._infer_file_type(document_name),
@@ -408,11 +431,26 @@ class PostgresRetrievalAdapter:
             getattr(row, "spatial_metadata", None)
         ) or None
         download_url = getattr(row, "download_url", None)
+
+        vec_sim = float(similarity) if "vector" in match_type else None
+        kw_score = float(similarity) if "keyword" in match_type else None
+        s_kind = "similarity" if vec_sim is not None else ("keyword" if kw_score is not None else "exact")
+        metadata["score_kind"] = s_kind
+        metadata["final_rank_score"] = float(similarity)
+        if vec_sim is not None:
+            metadata["vector_similarity"] = vec_sim
+        if kw_score is not None:
+            metadata["keyword_score"] = kw_score
+
         return DocumentResult(
             id=str(row.document_id),
             title=row.title or row.filename,
             content=row.content[:500] if row.content else "",
             similarity=float(similarity),
+            vector_similarity=vec_sim,
+            keyword_score=kw_score,
+            final_rank_score=float(similarity),
+            score_kind=s_kind,
             metadata=metadata,
             spatial_info=spatial_info,
             file_type=row.file_type or self._infer_file_type(row.filename),

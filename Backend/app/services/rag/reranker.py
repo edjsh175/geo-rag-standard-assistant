@@ -79,7 +79,12 @@ class RagReranker(BaseReranker):
         scored_results: list[tuple[float, int, DocumentResult]] = []
 
         for index, result in enumerate(results):
-            score = float(result.similarity)
+            base_score = float(
+                result.final_rank_score
+                if getattr(result, "final_rank_score", None) is not None
+                else result.similarity
+            )
+            score = base_score
             reasons: list[str] = []
 
             if query_standard_code:
@@ -108,8 +113,17 @@ class RagReranker(BaseReranker):
                 score += 0.2
                 reasons.append("spatial_filter_match")
 
-            result.metadata["rerank_score"] = round(score, 6)
+            rerank_val = round(score, 6)
+            result.metadata["rerank_score"] = rerank_val
+            result.metadata["final_rank_score"] = rerank_val
+            result.metadata["score_kind"] = "rerank"
             result.metadata["rerank_reasons"] = reasons
+            try:
+                result.rerank_score = rerank_val
+                result.final_rank_score = rerank_val
+                result.score_kind = "rerank"
+            except Exception:
+                pass
             scored_results.append((score, index, result))
 
         scored_results.sort(key=lambda item: (-item[0], item[1]))
@@ -248,7 +262,17 @@ class RemoteHttpReranker(BaseReranker):
             for idx, score in ranked_items[:top_k]:
                 if 0 <= idx < len(results):
                     doc = results[idx]
-                    doc.metadata["remote_rerank_score"] = score
+                    rerank_val = round(float(score), 6)
+                    doc.metadata["remote_rerank_score"] = rerank_val
+                    doc.metadata["rerank_score"] = rerank_val
+                    doc.metadata["final_rank_score"] = rerank_val
+                    doc.metadata["score_kind"] = "rerank"
+                    try:
+                        doc.rerank_score = rerank_val
+                        doc.final_rank_score = rerank_val
+                        doc.score_kind = "rerank"
+                    except Exception:
+                        pass
                     reranked_docs.append(doc)
 
             return reranked_docs

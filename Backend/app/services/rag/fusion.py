@@ -74,14 +74,27 @@ def rrf_fuse(
     for key, data in sorted_items[:top_k]:
         doc = data["doc"]
         meta = dict(doc.metadata or {})
-        meta["rrf_score"] = round(data["score"], 6)
+        rrf_val = round(data["score"], 6)
+        meta["rrf_score"] = rrf_val
         meta["matched_channels"] = sorted(list(data["labels"]))
-        # Clone doc with updated metadata
+        meta["score_kind"] = "rrf"
+        meta["final_rank_score"] = rrf_val
+
+        vec_sim = getattr(doc, "vector_similarity", None)
+        if vec_sim is None and "vector" in meta["matched_channels"]:
+            vec_sim = doc.similarity
+
+        # Clone doc with updated metadata and canonical score model
         updated_doc = DocumentResult(
             id=doc.id,
             title=doc.title,
             content=doc.content,
-            similarity=float(meta["rrf_score"]),
+            similarity=float(rrf_val),
+            vector_similarity=vec_sim,
+            keyword_score=getattr(doc, "keyword_score", None),
+            rrf_score=rrf_val,
+            final_rank_score=rrf_val,
+            score_kind="rrf",
             metadata=meta,
             spatial_info=doc.spatial_info,
             file_type=doc.file_type,
