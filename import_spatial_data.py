@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-向后兼容性包装器
-新代码应使用: from src.geoai.spatial.importer import *
+离线空间数据导入入口脚本 (Offline Tooling)。
+系统运行时规范服务端单一真源为 Backend/app；src.geoai 属于离线数据预处理工具包。
 """
 import sys
 import os

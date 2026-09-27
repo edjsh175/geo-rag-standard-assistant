@@ -95,6 +95,10 @@ class ResourceFuse:
     def remaining_seconds(self) -> float:
         return max(0.0, self.deadline_at - self._clock())
 
+    @property
+    def remaining_steps(self) -> int:
+        return max(0, self.max_steps - self._steps)
+
     def consume_step(self, *, tool_name: str) -> None:
         self.ensure_within_limits()
         if self._steps >= self.max_steps:

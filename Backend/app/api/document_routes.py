@@ -466,11 +466,10 @@ async def reindex_document(
             }
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
-    return {
-        "document_id": doc_id,
-        "job_id": await contract_service.queue_reindex_job(doc_id, str(actor)),
-        "message": "Document reindex queued.",
-    }
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Reindexing legacy standard policy documents is not supported. Only uploaded documents can be reindexed.",
+    )
 
 
 @router.post(

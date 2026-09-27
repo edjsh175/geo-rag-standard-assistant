@@ -62,7 +62,7 @@ mkdir -p /srv/geoai
 cd /srv/geoai
 git clone https://github.com/edjsh175/geo-rag-planning-assistant.git app
 cd app
-git checkout prod-hardening
+git checkout main
 ```
 
 ## 数据库初始化
@@ -134,11 +134,20 @@ SQL
 
 向量检索路径要求 `policy_chunks` 存在并已导入标准文档切片及 embedding。启用地图区域查询时，空间检索还要求 `spatial_regions` 存在并已导入生产空间数据。公网验收前必须先完成这些数据导入。
 
-如果启用文档上传到检索闭环，还需要应用文档生命周期 migration：
+在启动后端服务前，必须按顺序应用全量版本化数据库迁移（包含 API 治理表、文档生命周期、Agent 会话与事件持久化、证据激活以及并发索引约束）：
 
 ```bash
 cd /srv/geoai/app
+
+# 按顺序应用所有基础结构与 Agent 运行时持久化迁移
+sudo -u postgres psql -d geoai_db -f Backend/migrations/20260617_api_contract_tables.sql
 sudo -u postgres psql -d geoai_db -f Backend/migrations/20260618_document_lifecycle.sql
+sudo -u postgres psql -d geoai_db -f Backend/migrations/20260925_agent_context_persistence.sql
+sudo -u postgres psql -d geoai_db -f Backend/migrations/20260926_agent_evidence_activations.sql
+sudo -u postgres psql -d geoai_db -f Backend/migrations/20260927_document_index_concurrency.sql
+
+# 刷新表权限给 geoai 用户
+sudo -u postgres psql -d geoai_db -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO geoai; GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO geoai;"
 ```
 
 创建 MySQL 元数据数据库。按当前服务器截图口径，数据库名为 `disaster_knowledge`，元数据表名为 `geoai_metadata`。

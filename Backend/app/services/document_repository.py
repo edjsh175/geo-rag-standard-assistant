@@ -18,6 +18,14 @@ def _json(value: Any) -> str:
     return json.dumps(value if value is not None else {}, ensure_ascii=False)
 
 
+class DocumentDeletedConflictError(RuntimeError):
+    """Raised when an indexing or chunk operation targets a deleted document."""
+
+
+class DocumentVersionConflictError(RuntimeError):
+    """Raised when an indexing operation targets an outdated document version."""
+
+
 class DocumentRepository:
     """Persist uploaded documents, versions, chunks, jobs, and events."""
 
@@ -269,11 +277,46 @@ class DocumentRepository:
             row = result.mappings().first()
         return dict(row) if row else None
 
-    async def mark_job_running(self, job_id: str, stage: str) -> None:
-        await self._update_job_and_document(job_id, job_status="running", doc_status=stage, stage=stage, started=True)
+    async def claim_job(self, job_id: str, execution_token: str) -> bool:
+        """Atomically claim an index job if it is queued or retrying."""
+        if not db_manager.postgres_sessionmaker:
+            return True
+        sql = text(
+            """
+            UPDATE index_jobs
+            SET status = 'running',
+                stage = 'parsing',
+                execution_token = :execution_token,
+                started_at = COALESCE(started_at, NOW()),
+                updated_at = NOW()
+            WHERE id = CAST(:job_id AS uuid)
+              AND status IN ('queued', 'retrying')
+            RETURNING id::text
+            """
+        )
+        async with db_manager.get_postgres_session() as session:
+            result = await session.execute(sql, {"job_id": job_id, "execution_token": execution_token})
+            claimed = result.scalar_one_or_none()
+        return bool(claimed)
 
-    async def update_job_stage(self, job_id: str, stage: str) -> None:
-        await self._update_job_and_document(job_id, job_status="running", doc_status=stage, stage=stage)
+    async def mark_job_running(self, job_id: str, stage: str, execution_token: str | None = None) -> None:
+        await self._update_job_and_document(
+            job_id,
+            job_status="running",
+            doc_status=stage,
+            stage=stage,
+            started=True,
+            execution_token=execution_token,
+        )
+
+    async def update_job_stage(self, job_id: str, stage: str, execution_token: str | None = None) -> None:
+        await self._update_job_and_document(
+            job_id,
+            job_status="running",
+            doc_status=stage,
+            stage=stage,
+            execution_token=execution_token,
+        )
 
     async def replace_chunks(
         self,
@@ -281,7 +324,15 @@ class DocumentRepository:
         document_id: str,
         version_id: str,
         chunks: list[dict[str, Any]],
+        execution_token: str | None = None,
     ) -> None:
+        check_sql = text(
+            """
+            SELECT id, deleted_at, current_version_id::text AS current_version_id
+            FROM documents
+            WHERE id = CAST(:document_id AS uuid)
+            """
+        )
         delete_sql = text("DELETE FROM document_chunks WHERE document_id = CAST(:document_id AS uuid)")
         insert_sql = text(
             """
@@ -305,6 +356,24 @@ class DocumentRepository:
         )
         now = datetime.utcnow()
         async with db_manager.get_postgres_session() as session:
+            result = await session.execute(check_sql, {"document_id": document_id})
+            doc_row = None
+            if hasattr(result, "mappings"):
+                mappings = result.mappings()
+                doc_row = mappings.first() if hasattr(mappings, "first") else None
+            elif hasattr(result, "first"):
+                doc_row = result.first()
+
+            if doc_row is not None:
+                if doc_row.get("deleted_at") is not None:
+                    raise DocumentDeletedConflictError(f"Document {document_id} was deleted; chunk replacement aborted.")
+                if doc_row.get("current_version_id") != version_id:
+                    raise DocumentVersionConflictError(
+                        f"Document {document_id} version mismatch: expected {version_id}, found {doc_row.get('current_version_id')}."
+                    )
+            elif hasattr(result, "mappings"):
+                raise DocumentDeletedConflictError(f"Document {document_id} not found.")
+
             await session.execute(delete_sql, {"document_id": document_id})
             for chunk in chunks:
                 embedding = chunk.get("embedding")
@@ -344,7 +413,7 @@ class DocumentRepository:
                     },
                 )
 
-    async def mark_job_succeeded(self, job_id: str) -> None:
+    async def mark_job_succeeded(self, job_id: str, execution_token: str | None = None) -> None:
         await self._update_job_and_document(
             job_id,
             job_status="succeeded",
@@ -352,9 +421,16 @@ class DocumentRepository:
             stage="indexed",
             finished=True,
             clear_error=True,
+            execution_token=execution_token,
         )
 
-    async def mark_job_failed(self, job_id: str, error: str, retrying: bool = False) -> None:
+    async def mark_job_failed(
+        self,
+        job_id: str,
+        error: str,
+        retrying: bool = False,
+        execution_token: str | None = None,
+    ) -> None:
         job_status = "retrying" if retrying else "failed"
         doc_status = "queued" if retrying else "failed"
         await self._update_job_and_document(
@@ -365,6 +441,23 @@ class DocumentRepository:
             error=error[:4000],
             finished=not retrying,
             increment_attempts=True,
+            execution_token=execution_token,
+        )
+
+    async def mark_job_cancelled(
+        self,
+        job_id: str,
+        error: str,
+        execution_token: str | None = None,
+    ) -> None:
+        await self._update_job_and_document(
+            job_id,
+            job_status="cancelled",
+            doc_status="failed",
+            stage="cancelled",
+            error=error[:4000],
+            finished=True,
+            execution_token=execution_token,
         )
 
     async def update_metadata(self, doc_id: str, metadata_patch: dict[str, Any]) -> bool:
@@ -392,6 +485,24 @@ class DocumentRepository:
             version_id = result.scalar_one_or_none()
         if not version_id:
             return None
+
+        # O-03: check for existing active job for this version to suppress duplicate concurrent reindex
+        check_active_sql = text(
+            """
+            SELECT id::text
+            FROM index_jobs
+            WHERE document_id = CAST(:doc_id AS uuid)
+              AND version_id = CAST(:version_id AS uuid)
+              AND status IN ('queued', 'running', 'retrying')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        )
+        async with db_manager.get_postgres_session() as session:
+            active_res = await session.execute(check_active_sql, {"doc_id": doc_id, "version_id": version_id})
+            existing_job_id = active_res.scalar_one_or_none()
+        if existing_job_id:
+            return existing_job_id
 
         job_id = str(uuid4())
         now = datetime.utcnow()
@@ -430,8 +541,21 @@ class DocumentRepository:
               AND deleted_at IS NULL
             """
         )
+        cancel_jobs_sql = text(
+            """
+            UPDATE index_jobs
+            SET status = 'cancelled',
+                error = 'Document was soft-deleted during indexing.',
+                finished_at = NOW(),
+                updated_at = NOW()
+            WHERE document_id = CAST(:doc_id AS uuid)
+              AND status IN ('queued', 'running', 'retrying')
+            """
+        )
         async with db_manager.get_postgres_session() as session:
             result = await session.execute(sql, {"doc_id": doc_id, "deleted_by": requested_by})
+            if result.rowcount:
+                await session.execute(cancel_jobs_sql, {"doc_id": doc_id})
         if result.rowcount:
             await self.append_event(
                 document_id=doc_id,
@@ -486,7 +610,20 @@ class DocumentRepository:
         finished: bool = False,
         increment_attempts: bool = False,
         clear_error: bool = False,
+        execution_token: str | None = None,
     ) -> None:
+        token_clause = ""
+        params: dict[str, Any] = {
+            "job_id": job_id,
+            "job_status": job_status,
+            "stage": stage,
+            "error": error,
+            "attempt_delta": 1 if increment_attempts else 0,
+        }
+        if execution_token:
+            token_clause = "AND (execution_token IS NULL OR execution_token = :execution_token)"
+            params["execution_token"] = execution_token
+
         job_sql = text(
             f"""
             UPDATE index_jobs
@@ -498,6 +635,7 @@ class DocumentRepository:
                 started_at = {'COALESCE(started_at, NOW())' if started else 'started_at'},
                 finished_at = {'NOW()' if finished else 'finished_at'}
             WHERE id = CAST(:job_id AS uuid)
+              {token_clause}
             RETURNING document_id::text
             """
         )
@@ -508,19 +646,11 @@ class DocumentRepository:
                 last_error = :last_error,
                 updated_at = NOW()
             WHERE id = CAST(:document_id AS uuid)
+              AND deleted_at IS NULL
             """
         )
         async with db_manager.get_postgres_session() as session:
-            result = await session.execute(
-                job_sql,
-                {
-                    "job_id": job_id,
-                    "job_status": job_status,
-                    "stage": stage,
-                    "error": error,
-                    "attempt_delta": 1 if increment_attempts else 0,
-                },
-            )
+            result = await session.execute(job_sql, params)
             document_id = result.scalar_one_or_none()
             if document_id:
                 await session.execute(

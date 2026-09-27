@@ -45,21 +45,21 @@ GeoRAG Planning Assistant 最初是一个面向规划标准、测绘规范和地
 
 ## 项目状态
 
-当前仓库按完整项目状态维护，核心能力已形成闭环：
+当前仓库按分层工程成熟度（`CODE_CLOSED` / `DETERMINISTIC_TESTED` / `REAL_E2E_VERIFIED`）维护，核心能力主骨架已实现并闭环受控：
 
-| 能力 | 状态 | 说明 |
+| 能力 | 成熟度状态 | 规范与实现说明 |
 | --- | --- | --- |
-| Agent Runtime | ✅ | Session / Turn / Trace、多步工具调用、暂停与恢复、资源边界 |
-| RAG / Evidence | ✅ | Hybrid Retrieval、Evidence Ledger、Working / Frozen Evidence、Citation |
-| Structured Output | ✅ | 确定性校验、单次协议修复、fail-close |
-| Grounding Reviewer | ✅ | 可选开启，按 Answer Unit 做证据完整性审查 |
-| Publication Boundary | ✅ | Candidate 与最终 Published Answer 显式分离 |
-| Browser GIS Runtime | ✅ | Browser Bridge、Frontend Executor、Tool Receipt、Continuation |
-| 稳定 GIS 引用 | ✅ | `file_ref` / `layer_ref` / `feature_ref` |
-| MapContext | ✅ | 视口、完整递归图层树、用户图层状态、工具能力 |
-| GIS 操作工具 | ✅ | 导入、显隐、样式、定位、要素读取 |
-| PostGIS Agent Tools | ✅ | 空间关系判断、交集 / 并集 / 差集 |
-| 36-task GeoAI Evaluation | ✅ Harness 已实现 | 36 条固定任务 + 场景依赖 + 机器断言 + Playwright 浏览器执行；真实 36/36 需以结果文件为证 |
+| Agent Runtime | `CODE_CLOSED / DETERMINISTIC_TESTED` | Session / Turn / Trace、多步规划、Durable Event Append、OCC锁与服务端断开协同取消已闭环 |
+| RAG / Evidence | `CODE_CLOSED / DETERMINISTIC_TESTED` | Hybrid Retrieval、Evidence Ledger、Working / Frozen Evidence、CitationPer-Unit精确绑定已闭环 |
+| Structured Output | `CODE_CLOSED / DETERMINISTIC_TESTED` | Controller provider-native Schema、Parser校验、单次协议修复、fail-close |
+| Grounding Reviewer | `CODE_CLOSED / DETERMINISTIC_TESTED` | 可选开启，按 Answer Unit 严格绑定证据支持度审查，支持两阶段有限修复 |
+| Publication Boundary | `CODE_CLOSED / DETERMINISTIC_TESTED` | Candidate 与最终 Published Answer 显式隔离，非知识/失败分支直接受控收敛 |
+| Browser GIS Runtime | `CODE_CLOSED / DETERMINISTIC_TESTED` | Browser Bridge、Frontend Executor、Tool Receipt 校验与原子单次消费（2D 具备完整幂等） |
+| 稳定 GIS 引用 | `CODE_CLOSED / DETERMINISTIC_TESTED` | `file_ref` / `layer_ref` / `feature_ref` 租户会话稳定映射与校验 |
+| MapContext | `CODE_CLOSED / DETERMINISTIC_TESTED` | 视口、完整递归图层树、用户图层状态、可用工具能力事实收集与 Admission 守卫 |
+| GIS 操作工具 | `CODE_CLOSED / DETERMINISTIC_TESTED` | 导入、显隐、样式、定位、要素读取等 7 项核心浏览器操作已接入主路径 |
+| PostGIS Agent Tools | `CODE_CLOSED / DETERMINISTIC_TESTED` | 空间关系拓扑分析（Intersects/Within等）与空间分析（Overlay），已消除伪数据 Fail-close |
+| 36-task GeoAI Evaluation | `HARNESS_VERIFIED` | 36 条固定任务基线、依赖注入、断言引擎与 Playwright 自动化 Harness 已完全具备 |
 
 ---
 
@@ -123,7 +123,7 @@ Citation
 - Runtime 当前持有的信息；
 - 最终答案真正使用的信息。
 
-Browser Tool Receipt 与 PostGIS 确定性结果也进入同一 Evidence Ledger，使“知识证据”和“真实 GIS 执行事实”共用一套发布边界。
+Browser Tool Receipt 与 PostGIS 确定性结果也进入同一 Evidence Ledger，使“知识证据”和“真实 GIS 执行事实”共用一套发布边界。注意不同类别的 Evidence 具有严格的 Support Scope：标准文档 Fact 证明业务规范，PostGIS 计算证明几何空间关系，Browser Observation 证明当前视口与图层状态，三者不可混淆跨界支撑。
 
 ### 3. Answer Units + Grounding Reviewer
 
@@ -303,7 +303,9 @@ Controller continues planning
 | `inspect_layer_features` | 分页读取要素 `feature_ref` 与属性 |
 | `get_feature_geometry` | 获取指定 `feature_ref` 的精确 EPSG:4326 GeoJSON |
 
-Browser Tool 通过 `runId + toolCallId` 做幂等与冲突校验，避免网络重试导致同一个地图副作用重复执行。
+Browser Tool 的副作用执行幂等与冲突校验当前按内核分层实现：
+- **2D OpenLayers**：完整支持通过 `runId + toolCallId + signature` 做幂等缓存与重放校验，避免网络重试导致同一个地图动作重复执行；
+- **3D Cesium**：基础执行通道已通，多轮执行上下文与身份幂等对齐正在推进中（parity pending）。
 
 ### PostGIS Agent Tools
 

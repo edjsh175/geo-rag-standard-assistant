@@ -482,6 +482,11 @@ class PostgresRetrievalAdapter:
                 release_unit, charge_unit, draft_unit, application_scope
             FROM policy_chunks
             WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
+              AND NOT EXISTS (
+                  SELECT 1 FROM document_overrides do
+                  WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
+                    AND do.deleted_at IS NOT NULL
+              )
             ORDER BY document_name, id
             LIMIT :limit
             """
@@ -535,7 +540,12 @@ class PostgresRetrievalAdapter:
                         release_unit, charge_unit, draft_unit, application_scope,
                         LEAST(0.95, 0.55 + ({' + '.join(score_parts)})) AS similarity
                     FROM policy_chunks
-                    WHERE {' OR '.join(conditions)}
+                    WHERE ({' OR '.join(conditions)})
+                      AND NOT EXISTS (
+                          SELECT 1 FROM document_overrides do
+                          WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
+                            AND do.deleted_at IS NOT NULL
+                      )
                     ORDER BY document_name, similarity DESC, id
                 )
                 SELECT * FROM matched
@@ -683,13 +693,18 @@ class PostgresRetrievalAdapter:
                     release_unit, charge_unit, draft_unit, application_scope,
                     1 - (embedding <=> CAST(:embedding_str AS vector)) AS similarity
                 FROM policy_chunks
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM document_overrides do
+                    WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
+                      AND do.deleted_at IS NOT NULL
+                )
             """
             params: dict[str, Any] = {
                 "embedding_str": embedding_str,
                 "limit": top_k,
             }
             if exclude_doc_id:
-                sql += " WHERE id != :exclude_doc_id "
+                sql += " AND id != :exclude_doc_id "
                 params["exclude_doc_id"] = exclude_doc_id
             sql += " ORDER BY embedding <=> CAST(:embedding_str AS vector) LIMIT :limit"
             async with db_manager.get_postgres_session() as session:
@@ -796,6 +811,11 @@ class PostgresRetrievalAdapter:
                     release_unit, charge_unit, draft_unit, application_scope
                 FROM policy_chunks
                 WHERE id = ANY(:chunk_ids)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM document_overrides do
+                      WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
+                        AND do.deleted_at IS NOT NULL
+                  )
                 """
             )
             async with db_manager.get_postgres_session() as session:

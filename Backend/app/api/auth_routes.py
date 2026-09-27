@@ -30,6 +30,7 @@ class LoginRequest(BaseModel):
 class AuthUserResponse(BaseModel):
     username: str
     role: str
+    visitor_id: str | None = None
     quota: DemoQuotaStatus | None = None
 
 
@@ -100,7 +101,7 @@ async def demo_login(
         visitor_identity.ip_hash or "",
     )
     return DemoLoginResponse(
-        user=AuthUserResponse(username=visitor_identity.username, role="visitor", quota=quota),
+        user=AuthUserResponse(username=visitor_identity.username, role="visitor", visitor_id=visitor_id, quota=quota),
         quota=quota,
         message="Demo session started.",
         access_token=token,
@@ -122,4 +123,4 @@ async def me(
     quota = None
     if current_user.role == "visitor":
         quota = await quota_service.get_status(current_user.visitor_id or "", current_user.ip_hash or "")
-    return AuthUserResponse(username=current_user.username, role=current_user.role, quota=quota)
+    return AuthUserResponse(username=current_user.username, role=current_user.role, visitor_id=current_user.visitor_id, quota=quota)

@@ -43,9 +43,9 @@ API docs:
 - Swagger: `http://localhost:8000/api/docs`
 - ReDoc: `http://localhost:8000/api/redoc`
 
-MinIO is reserved for future document object storage and download flows. It is not required for the current main path.
+MinIO object storage is required when `DOCUMENT_UPLOAD_ENABLED=True` for uploaded document persistence, file downloads, and asynchronous Celery worker indexing (`index_document_job`). If running in a minimal development setup for read-only standards retrieval (`policy_chunks`), document upload may be disabled (`DOCUMENT_UPLOAD_ENABLED=False`) without running MinIO.
 
-MinIO 当前只为后续文档对象存储和下载流程预留，不是主流程必需依赖。
+MinIO 对象存储在启用上传文档闭环（`DOCUMENT_UPLOAD_ENABLED=True`）时为必需依赖，用于原始文档持久化、下载以及 Celery 异步索引 Worker（`index_document_job`）的数据解析。在仅运行本地只读标准库（`policy_chunks`）检索的最小开发调试环境中，可配置 `DOCUMENT_UPLOAD_ENABLED=False` 暂时不运行 MinIO。
 
 ## Configuration / 环境变量
 

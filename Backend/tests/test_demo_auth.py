@@ -5,7 +5,7 @@ from starlette.responses import Response
 
 import pytest
 
-from app.api.auth_routes import demo_login
+from app.api.auth_routes import demo_login, me
 from app.core import auth
 from app.core.config import settings
 from app.core.security import require_admin_or_system_api_key
@@ -67,6 +67,9 @@ async def test_demo_login_creates_visitor_session(monkeypatch: pytest.MonkeyPatc
     assert identity.role == "visitor"
     assert identity.visitor_id
     assert identity.username == "demo-visitor"
+    assert payload.user.visitor_id == identity.visitor_id
+    refreshed = await me(current_user=identity, quota_service=DemoQuotaStub())
+    assert refreshed.visitor_id == identity.visitor_id
 
 
 @pytest.mark.asyncio

@@ -285,7 +285,12 @@ class EvidenceLedger:
 
     @staticmethod
     def _is_structurally_admissible(candidate: RetrievalCandidate) -> bool:
-        return bool(candidate.chunk_id.strip() and candidate.text.strip())
+        if not (candidate.chunk_id.strip() and candidate.text.strip()):
+            return False
+        meta = candidate.metadata or {}
+        if meta.get("deleted_at") is not None or meta.get("is_deleted") is True:
+            return False
+        return True
 
     @staticmethod
     def _dedupe(values: Iterable[str]) -> list[str]:

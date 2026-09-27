@@ -1,4 +1,6 @@
-from __future__ import annotations
+import pytest
+
+pytest.importorskip("celery")
 
 from app.core.config import settings
 from app.worker.celery_app import celery_app
