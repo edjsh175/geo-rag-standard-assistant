@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 
 export interface DisclosureRowProps {
@@ -21,6 +21,7 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
   defaultExpanded = false,
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const contentId = useId();
   const hasContent = Boolean(children);
 
   const getStatusColor = () => {
@@ -43,6 +44,8 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
       <button
         type="button"
         disabled={!hasContent}
+        aria-expanded={hasContent ? isExpanded : undefined}
+        aria-controls={hasContent ? contentId : undefined}
         onClick={() => setIsExpanded((prev) => !prev)}
         className={`w-full flex items-center gap-2 px-3 py-2 text-left select-none transition-colors ${
           hasContent ? 'hover:bg-white/[0.04] cursor-pointer' : 'cursor-default'
@@ -50,7 +53,7 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
       >
         {hasContent && (
           <span
-            className={`transition-transform duration-150 text-slate-400 ${
+            className={`transition-transform duration-150 motion-reduce:transition-none text-slate-400 ${
               isExpanded ? 'rotate-90' : 'rotate-0'
             }`}
           >
@@ -80,7 +83,7 @@ export const DisclosureRow: React.FC<DisclosureRowProps> = ({
       </button>
 
       {hasContent && isExpanded && (
-        <div className="border-t border-white/5 bg-black/20 p-2.5 text-slate-300 font-mono text-[11px] whitespace-pre-wrap break-all">
+        <div id={contentId} className="border-t border-white/5 bg-black/20 p-2.5 text-slate-300 font-mono text-[11px] whitespace-pre-wrap break-all">
           {children}
         </div>
       )}

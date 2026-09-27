@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import json
 import re
+import warnings
 from types import MappingProxyType
 from typing import Any
 
@@ -14,6 +15,9 @@ from app.services.agent.tools import ToolRegistry, ToolSpec
 
 COMPOSE_ANSWER_ACTION = "compose_answer"
 DIRECT_ANSWER_ACTION = "direct_answer"
+
+LEGACY_CONTROLLER_WIRE_REMOVAL_AFTER = "2026-12-31"
+LEGACY_CONTROLLER_WIRE_PROTOCOL_VERSION = "v1"
 CLARIFY_ACTION = "clarify"
 LIMITATION_ACTION = "limitation"
 TOOL_CALL_ACTION = "tool_call"
@@ -202,10 +206,12 @@ def normalize_legacy_controller_wire(payload: Mapping[str, Any]) -> dict[str, An
     """Normalize legacy wire variants into canonical protocol shape."""
     normalized = dict(payload)
     action = str(normalized.get("action") or "").strip().casefold()
+    legacy_used = False
 
     # Legacy: {"name": "retrieve_kb", "arguments": {...}}
     name = normalized.get("name")
     if not action and name:
+        legacy_used = True
         name_str = str(name).strip()
         if name_str in {COMPOSE_ANSWER_ACTION, DIRECT_ANSWER_ACTION, CLARIFY_ACTION, LIMITATION_ACTION}:
             action = name_str
@@ -218,22 +224,28 @@ def normalize_legacy_controller_wire(payload: Mapping[str, Any]) -> dict[str, An
             normalized.pop("name", None)
 
     tool = str(normalized.get("tool") or normalized.get("tool_name") or "").strip()
+    if "tool_name" in normalized:
+        legacy_used = True
     if action == TOOL_CALL_ACTION and tool:
         normalized["tool"] = tool
         normalized.pop("tool_name", None)
         if tool == COMPOSE_ANSWER_ACTION:
+            legacy_used = True
             normalized["action"] = COMPOSE_ANSWER_ACTION
             normalized.pop("tool", None)
             action = COMPOSE_ANSWER_ACTION
         elif tool == CLARIFY_ACTION:
+            legacy_used = True
             normalized["action"] = CLARIFY_ACTION
             normalized.pop("tool", None)
             action = CLARIFY_ACTION
         elif tool == LIMITATION_ACTION:
+            legacy_used = True
             normalized["action"] = LIMITATION_ACTION
             normalized.pop("tool", None)
             action = LIMITATION_ACTION
         elif tool == DIRECT_ANSWER_ACTION:
+            legacy_used = True
             normalized["action"] = DIRECT_ANSWER_ACTION
             normalized.pop("tool", None)
             action = DIRECT_ANSWER_ACTION
@@ -243,16 +255,31 @@ def normalize_legacy_controller_wire(payload: Mapping[str, Any]) -> dict[str, An
         raw_args = normalized.get("arguments")
         args_dict = dict(raw_args) if isinstance(raw_args, Mapping) else {}
         if "evidence_ids" in args_dict and "selected_evidence_ids" not in args_dict:
+            legacy_used = True
             args_dict["selected_evidence_ids"] = args_dict.pop("evidence_ids")
         if "selected_evidence_ids" not in args_dict and "selected_evidence_ids" in normalized:
+            legacy_used = True
             args_dict["selected_evidence_ids"] = normalized.pop("selected_evidence_ids")
         if "answer_kind" not in args_dict:
+            legacy_used = True
             args_dict["answer_kind"] = "knowledge_answer"
         normalized["arguments"] = args_dict
 
     # Normalize reason
     if "reason" not in normalized and "thought" in normalized:
+        legacy_used = True
         normalized["reason"] = normalized.pop("thought")
+
+    if legacy_used:
+        warnings.warn(
+            (
+                "legacy Controller wire was normalized and is deprecated "
+                f"({LEGACY_CONTROLLER_WIRE_PROTOCOL_VERSION}); remove compatibility "
+                f"after {LEGACY_CONTROLLER_WIRE_REMOVAL_AFTER}"
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     return normalized
 
@@ -268,6 +295,21 @@ def validate_controller_decision_payload(
     normalized = normalize_legacy_controller_wire(payload)
     action = str(normalized.get("action") or "").strip()
     reason = str(normalized.get("reason") or "").strip() or None
+
+    allowed_keys_map = {
+        TOOL_CALL_ACTION: {"action", "tool", "arguments", "reason", "tool_call_id"},
+        COMPOSE_ANSWER_ACTION: {"action", "arguments", "reason", "tool_call_id"},
+        CLARIFY_ACTION: {"action", "arguments", "reason", "tool_call_id"},
+        LIMITATION_ACTION: {"action", "arguments", "reason", "tool_call_id"},
+        DIRECT_ANSWER_ACTION: {"action", "answer", "reason", "arguments", "tool_call_id"},
+    }
+    if action in allowed_keys_map:
+        allowed_keys = allowed_keys_map[action]
+        unexpected = sorted(k for k in normalized.keys() if k not in allowed_keys)
+        if unexpected:
+            raise ControllerOutputError(
+                f"malformed_controller_wire: unexpected top-level property '{unexpected[0]}' for action '{action}'"
+            )
 
     if action == TOOL_CALL_ACTION:
         tool = str(normalized.get("tool") or "").strip()

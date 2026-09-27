@@ -46,15 +46,25 @@ def rrf_fuse(
     for branch_idx, ranked_docs in enumerate(ranked_lists):
         w = effective_weights[branch_idx] if branch_idx < len(effective_weights) else 1.0
         label = effective_labels[branch_idx] if branch_idx < len(effective_labels) else f"branch_{branch_idx}"
+        # RRF assumes each ranked list contributes at most once per fused
+        # entity. Legacy result sets may contain several rows/chunks that fall
+        # back to the same document-level key, so de-duplicate within the
+        # branch before accumulating cross-channel support.
+        seen_keys: set[str] = set()
 
         for rank, doc in enumerate(ranked_docs, start=1):
             key = str(doc.metadata.get("chunk_id") or doc.metadata.get("document_name") or doc.title or doc.id)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             if key not in scores:
                 scores[key] = {
                     "doc": doc,
                     "score": 0.0,
                     "best_rank": rank,
                     "labels": set(),
+                    "vector_similarity": None,
+                    "keyword_score": None,
                 }
             entry = scores[key]
             entry["score"] += w / (rrf_k + rank)
@@ -63,6 +73,14 @@ def rrf_fuse(
                 # Prefer document instance from higher ranking branch
                 entry["doc"] = doc
             entry["labels"].add(label)
+            if label == "vector" and entry["vector_similarity"] is None:
+                entry["vector_similarity"] = (
+                    doc.vector_similarity
+                    if doc.vector_similarity is not None
+                    else doc.similarity
+                )
+            if label == "keyword" and entry["keyword_score"] is None:
+                entry["keyword_score"] = doc.keyword_score
 
     # Sort key: primary descending rrf score, secondary ascending best rank, tertiary stable key
     sorted_items = sorted(
@@ -80,18 +98,24 @@ def rrf_fuse(
         meta["score_kind"] = "rrf"
         meta["final_rank_score"] = rrf_val
 
-        vec_sim = getattr(doc, "vector_similarity", None)
-        if vec_sim is None and "vector" in meta["matched_channels"]:
-            vec_sim = doc.similarity
+        vec_sim = data.get("vector_similarity")
+        if vec_sim is None:
+            vec_sim = getattr(doc, "vector_similarity", None)
+        keyword_score = data.get("keyword_score")
+        if keyword_score is None:
+            keyword_score = getattr(doc, "keyword_score", None)
 
         # Clone doc with updated metadata and canonical score model
         updated_doc = DocumentResult(
             id=doc.id,
             title=doc.title,
             content=doc.content,
-            similarity=float(rrf_val),
+            # `similarity` is a bounded source similarity contract (0..1),
+            # not the fused ranking score. RRF may legitimately exceed 1 for
+            # custom weights and therefore belongs only in rrf/final score.
+            similarity=doc.similarity,
             vector_similarity=vec_sim,
-            keyword_score=getattr(doc, "keyword_score", None),
+            keyword_score=keyword_score,
             rrf_score=rrf_val,
             final_rank_score=rrf_val,
             score_kind="rrf",

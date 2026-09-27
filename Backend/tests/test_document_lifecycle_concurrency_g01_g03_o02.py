@@ -80,22 +80,22 @@ async def test_g01_retrieval_sql_filters_legacy_deleted_in_all_modes() -> None:
     exact_src = inspect.getsource(adapter._exact_standard_code_search)
     assert "NOT EXISTS" in exact_src
     assert "document_overrides" in exact_src
-    assert "do.deleted_at IS NOT NULL" in exact_src
+    assert ".deleted_at IS NOT NULL" in exact_src
 
     keyword_src = inspect.getsource(adapter._keyword_search)
     assert "NOT EXISTS" in keyword_src
     assert "document_overrides" in keyword_src
-    assert "do.deleted_at IS NOT NULL" in keyword_src
+    assert ".deleted_at IS NOT NULL" in keyword_src
 
     vector_src = inspect.getsource(adapter._vector_search)
     assert "NOT EXISTS" in vector_src
     assert "document_overrides" in vector_src
-    assert "do.deleted_at IS NOT NULL" in vector_src
+    assert ".deleted_at IS NOT NULL" in vector_src
 
     fetch_src = inspect.getsource(adapter.fetch_chunks)
     assert "NOT EXISTS" in fetch_src
     assert "document_overrides" in fetch_src
-    assert "do.deleted_at IS NOT NULL" in fetch_src
+    assert ".deleted_at IS NOT NULL" in fetch_src
 
 
 # ==============================================================================

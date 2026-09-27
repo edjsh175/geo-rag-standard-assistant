@@ -77,7 +77,34 @@ def test_rrf_fuse_ranking_and_telemetry():
     assert fused[1].metadata["matched_channels"] == ["exact"]
     assert fused[2].metadata["matched_channels"] == ["keyword"]
     assert "rrf_score" in fused[0].metadata
-    assert fused[0].similarity == fused[0].metadata["rrf_score"]
+    # Fusion score is ranking telemetry, not a cosine/probability similarity.
+    # Preserve the representative document's bounded source similarity.
+    assert fused[0].similarity == doc_b.similarity
+    assert fused[0].final_rank_score == fused[0].metadata["rrf_score"]
+
+
+def test_rrf_fuse_same_channel_duplicate_key_contributes_only_once():
+    first = make_doc("chunk-1", "同一文档", similarity=0.91)
+    duplicate = make_doc("chunk-2", "同一文档", similarity=0.72)
+    # Simulate legacy rows that do not expose a stable chunk id; fusion then
+    # falls back to document_name and both rows resolve to the same key.
+    first.metadata.pop("chunk_id", None)
+    duplicate.metadata.pop("chunk_id", None)
+
+    fused = rrf_fuse(
+        [[first, duplicate]],
+        rrf_k=1,
+        top_k=5,
+        weights=[3.0],
+        channel_labels=["exact"],
+    )
+
+    assert len(fused) == 1
+    # Only the best-ranked occurrence from this channel may contribute:
+    # 3 / (1 + 1) == 1.5. The duplicate must not add another 3 / (1 + 2).
+    assert fused[0].rrf_score == 1.5
+    assert fused[0].final_rank_score == 1.5
+    assert fused[0].similarity == 0.91
 
 
 def test_rrf_fuse_tie_breaking_and_limits():

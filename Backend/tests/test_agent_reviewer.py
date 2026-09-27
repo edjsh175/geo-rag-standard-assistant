@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
@@ -78,6 +79,11 @@ async def test_reviewer_checks_claims_against_frozen_evidence_with_reasoning_off
     assert result.findings[0].status == "SUPPORTED"
     assert client.calls[0].stage == "reviewer"
     assert client.calls[0].request_reasoning is False
+    schema = client.calls[0].response_schema
+    assert schema is not None
+    finding_schema = schema["properties"]["findings"]["items"]["properties"]
+    assert finding_schema["unit_id"]["enum"] == ["u1"]
+    assert finding_schema["citations"]["items"]["enum"] == ["E1"]
 
 
 def test_reviewer_is_not_a_retrieval_or_planning_surface() -> None:
@@ -137,3 +143,90 @@ async def test_reviewer_requires_exactly_one_review_per_answer_unit() -> None:
     assert [finding.unit_id for finding in result.findings] == ["u1", "u2"]
     assert len(client.calls) == 2
     assert [call.model_name for call in client.calls] == ["stable-main", "stable-main"]
+
+
+@pytest.mark.asyncio
+async def test_supported_finding_must_preserve_answer_unit_citation_binding() -> None:
+    snapshot = make_snapshot()
+    second_item = replace(
+        snapshot.items[0],
+        evidence_id="evidence-2",
+        citation_id="E2",
+        chunk_id="chunk-2",
+        content_hash="hash-2",
+    )
+    snapshot = replace(snapshot, items=(snapshot.items[0], second_item))
+    client = FakeModelClient(
+        ModelResponse(
+            content=(
+                '{"verdict":"SUPPORTED","findings":['
+                '{"unit_id":"u1","status":"SUPPORTED","citations":["E2"]}'
+                ']}'
+            )
+        )
+    )
+    reviewer = GroundingReviewer(model_client=client)
+
+    with pytest.raises(ValueError, match="invalid structured output"):
+        await reviewer.review(
+            question="要求？",
+            answer=GeneratedAnswer(
+                kind="knowledge_answer",
+                answer="应按本标准执行",
+                citations=("E1",),
+                units=(
+                    AnswerUnit(
+                        unit_id="u1",
+                        text="应按本标准执行",
+                        citations=("E1",),
+                    ),
+                ),
+            ),
+            snapshot=snapshot,
+            stage_policy=LLMStagePolicy(False, False),
+        )
+
+    assert len(client.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_business_claim_cannot_be_supported_only_by_execution_receipt() -> None:
+    snapshot = make_snapshot()
+    receipt = replace(
+        snapshot.items[0],
+        source="browser_gis",
+        evidence_class="EXECUTION_RECEIPT",
+        support_scope="EXECUTION_CLAIM",
+    )
+    snapshot = replace(snapshot, items=(receipt,))
+    client = FakeModelClient(
+        ModelResponse(
+            content=(
+                '{"verdict":"SUPPORTED","findings":['
+                '{"unit_id":"u1","status":"SUPPORTED","citations":["E1"]}'
+                ']}'
+            )
+        )
+    )
+    reviewer = GroundingReviewer(model_client=client)
+
+    with pytest.raises(ValueError, match="invalid structured output"):
+        await reviewer.review(
+            question="该业务事实成立吗？",
+            answer=GeneratedAnswer(
+                kind="knowledge_answer",
+                answer="该业务事实成立",
+                citations=("E1",),
+                units=(
+                    AnswerUnit(
+                        unit_id="u1",
+                        text="该业务事实成立",
+                        citations=("E1",),
+                    ),
+                ),
+            ),
+            snapshot=snapshot,
+            stage_policy=LLMStagePolicy(False, False),
+        )
+
+    assert len(client.calls) == 2

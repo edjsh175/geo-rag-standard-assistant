@@ -3,7 +3,7 @@ export interface AgentEventPayload {
   tool_call_id?: string;
   arguments?: Record<string, unknown>;
   status?: string;
-  error?: string;
+  error?: string | { code?: string; message?: string; [key: string]: unknown };
   result_summary?: Record<string, unknown>;
   receipt?: Record<string, unknown>;
   snapshot_id?: string;
@@ -39,6 +39,7 @@ export interface AgentToolItem {
   executionSite?: 'backend' | 'browser';
   browserReceipt?: {
     status: string;
+    effectStatus?: string;
     runtimeDimension?: '2d' | '3d';
     stateRevision?: number;
   };
@@ -72,7 +73,11 @@ export interface AgentStageItem {
 
 export interface AgentReviewItem {
   kind: 'review';
-  verdict: 'PASS' | 'REVISE' | 'REJECT';
+  verdict?: string;
+  status?: 'running' | 'completed' | 'failed';
+  reviewId?: string;
+  attempt?: number;
+  findingCount?: number;
   summary: string;
   timestamp: string;
 }
@@ -96,8 +101,9 @@ export interface AgentTurnViewModel {
   sessionId: string;
   turnId: string;
   traceId?: string;
-  status: 'running' | 'published' | 'clarification' | 'limited' | 'failed';
+  status: 'running' | 'published' | 'clarification' | 'limited' | 'failed' | 'cancelled';
   items: AgentProcessItem[];
   startedAt?: string;
   completedAt?: string;
+  interruption?: { kind: 'stopped' | 'connection_error'; message: string };
 }

@@ -113,6 +113,14 @@ class AgentRuntimeStub:
         return SimpleNamespace(event_id="cancel-event-1")
 
 
+class FailingStreamingRuntime(AgentRuntimeStub):
+    async def stream(self, request):
+        self.requests.append(request)
+        if False:  # pragma: no cover - keeps this an async generator
+            yield None
+        raise ValueError("synthetic retrieval failure")
+
+
 @pytest.mark.asyncio
 async def test_generation_false_uses_deterministic_search_without_agent() -> None:
     search = SearchServiceStub()
@@ -199,6 +207,35 @@ async def test_generation_true_defaults_to_agent_runtime_without_intent_router()
     assert response.trace_id == "trace-1"
     assert response.final_mode == "agent"
     assert response.publication_state == "published"
+
+
+@pytest.mark.asyncio
+async def test_agent_stream_failure_returns_terminal_runtime_error_response() -> None:
+    runtime = FailingStreamingRuntime()
+    service = SearchApplicationService(
+        search_service=SearchServiceStub(),
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=runtime,
+        retrieval_port=RetrievalPortStub(),
+    )
+
+    frames = [
+        frame
+        async for frame in service.stream(
+            SearchRequest(query="测试异常终态", use_generation=True, session_id="session-fail"),
+            generation_allowed=True,
+            principal_id="admin:test",
+        )
+    ]
+
+    assert len(frames) == 1
+    response = frames[0].response
+    assert response is not None
+    assert response.session_id == "session-fail"
+    assert response.final_mode == "agent"
+    assert response.publication_state == "runtime_error"
+    assert response.generated_answer == "查询处理失败，请稍后重试。"
 
 
 @pytest.mark.asyncio

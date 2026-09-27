@@ -8,6 +8,8 @@ from app.models.search_models import DocumentResult
 from app.services.agent.answer_generator import (
     AnswerGenerationError,
     AnswerGenerator,
+    AnswerUnit,
+    GeneratedAnswer,
 )
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.model_client import ModelResponse
@@ -94,6 +96,70 @@ async def test_answer_generator_uses_frozen_evidence_and_reasoning_off() -> None
     assert "重庆市滑坡监测应按本标准执行" in client.calls[0].messages[-1]["content"]
     assert '"const": "knowledge_answer"' in client.calls[0].messages[0]["content"]
     assert '"enum": ["E1"]' in client.calls[0].messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_answer_generator_passes_provider_native_response_schema() -> None:
+    snapshot = make_snapshot()
+    client = FakeModelClient(
+        [
+            ModelResponse(
+                content=(
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"应按本标准执行。","citations":["E1"]}'
+                    ']}'
+                )
+            )
+        ]
+    )
+    generator = AnswerGenerator(model_client=client)
+
+    await generator.generate(
+        question="要求？",
+        snapshot=snapshot,
+        stage_policy=LLMStagePolicy(False, False),
+    )
+
+    assert client.calls[0].response_schema == generator._output_schema(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_answer_repair_passes_provider_native_response_schema() -> None:
+    snapshot = make_snapshot()
+    base_answer = GeneratedAnswer(
+        kind="knowledge_answer",
+        answer="原回答",
+        citations=("E1",),
+        units=(AnswerUnit(unit_id="u1", text="原回答", citations=("E1",)),),
+    )
+    client = FakeModelClient(
+        [
+            ModelResponse(
+                content=(
+                    '{"kind":"knowledge_answer","units":['
+                    '{"unit_id":"u1","text":"修复回答","citations":["E1"]}'
+                    ']}'
+                )
+            )
+        ]
+    )
+    generator = AnswerGenerator(model_client=client)
+
+    await generator.generate_repair(
+        question="要求？",
+        snapshot=snapshot,
+        base_answer=base_answer,
+        repair_scope={
+            "contract_version": "answer_repair_scope_v1",
+            "immutable_units": [],
+            "editable_units": [
+                {"unit_id": "u1", "allowed_evidence_ids": ["E1"]}
+            ],
+        },
+        stage_policy=LLMStagePolicy(False, False),
+    )
+
+    assert client.calls[0].response_schema == generator._output_schema(snapshot)
 
 
 @pytest.mark.asyncio

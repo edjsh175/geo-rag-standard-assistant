@@ -51,6 +51,12 @@ import { registerVectorDataset } from './gis/fileReferenceStore';
 import { setActiveBrowserGisRuntime } from './gis/browserBridge';
 import { AgentEventProjector } from './components/agent/eventProjector';
 import type { AgentTurnViewModel } from './components/agent/types';
+import {
+  AgentSessionNotFoundError,
+  readAgentSessionId,
+  restoreAgentSession,
+  saveAgentSessionId,
+} from './services/agentHistory';
 
 type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
 
@@ -221,7 +227,7 @@ const PROVINCE_MAP: Record<string, string> = {
   '820000': '澳门特别行政区',
 };
 
-const resolveFollowUpContext = (
+export const resolveFollowUpContext = (
   _content: string,
   _messages: ChatMessageType[],
   selectedDocument: Document | null
@@ -233,7 +239,7 @@ const resolveFollowUpContext = (
         {
           id: selectedDocument.id,
           title: selectedDocument.metadata.title,
-          rank: 0,
+          rank: 1,
         },
       ],
       resolution_source: 'selected_document',
@@ -250,6 +256,14 @@ const getBootErrorMessage = (error: unknown): string => {
 };
 
 type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
+
+const createWelcomeMessage = (): ChatMessageType => ({
+  id: 'init-1',
+  role: 'assistant',
+  content: '您好！我是 **GeoAI 空间规划智能助手**。我已接入全面的空间规划文档库与地理空间数据库，可以为您提供便捷的专业智能检索服务。\n\n您可以尝试向我提出以下类型的问题：\n- **政策与标准检索**：例如*“请检索关于国土空间规划中城镇开发边界划定的技术标准”*\n- **空间定位协同**：例如*“定位到北京市”*\n- **规划文档查阅**：例如*“总结生态保护红线划定的基本原则”*\n\n请在下方输入框中输入您的指令或疑问，随时开始使用！',
+  timestamp: new Date().toISOString(),
+  metadata: { document_ids: [], citations: [] },
+});
 
 export default function App() {
   const { logout, user, updateQuota } = useAuth();
@@ -487,25 +501,64 @@ export default function App() {
 
   // 聊天相关状态
   const [chatInput, setChatInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessageType[]>([
-    {
-      id: 'init-1',
-      role: 'assistant',
-      content: '您好！我是 **GeoAI 空间规划智能助手**。我已接入全面的空间规划文档库与地理空间数据库，可以为您提供便捷的专业智能检索服务。\n\n您可以尝试向我提出以下类型的问题：\n- **政策与标准检索**：例如*“请检索关于国土空间规划中城镇开发边界划定的技术标准”*\n- **空间定位协同**：例如*“定位到北京市”*\n- **规划文档查阅**：例如*“总结生态保护红线划定的基本原则”*\n\n请在下方输入框中输入您的指令或疑问，随时开始使用！',
-      timestamp: new Date().toISOString(),
-      metadata: {
-        document_ids: [],
-        citations: []
-      }
-    }
-  ]);
+  const [messages, setMessages] = useState<ChatMessageType[]>([createWelcomeMessage()]);
 
   // 聊天加载状态
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [reviewerEnabled, setReviewerEnabled] = useState(false);
   const [activeTurn, setActiveTurn] = useState<AgentTurnViewModel | null>(null);
   const conversationIdRef = useRef<string | undefined>(undefined);
+  const [isHistoryRestoring, setIsHistoryRestoring] = useState(false);
+  const [historyRestoreError, setHistoryRestoreError] = useState(false);
+  const [historyRetryKey, setHistoryRetryKey] = useState(0);
+  const historyRestorePromiseRef = useRef<Promise<boolean> | null>(null);
   // AbortController引用（用于中断请求）
   const abortControllerRef = useRef<AbortController | null>(null);
+  const activeProjectorRef = useRef<AgentEventProjector | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    let current = true;
+    const controller = new AbortController();
+    const savedSessionId = readAgentSessionId(user);
+    setHistoryRestoreError(false);
+    setIsHistoryRestoring(Boolean(savedSessionId));
+    if (!savedSessionId) {
+      conversationIdRef.current = undefined;
+      setMessages([createWelcomeMessage()]);
+      historyRestorePromiseRef.current = Promise.resolve(true);
+      return () => { current = false; };
+    }
+
+    conversationIdRef.current = savedSessionId;
+    const restoreTask = (async () => {
+      try {
+        const restored = await restoreAgentSession(savedSessionId, user, controller.signal);
+        if (!current) return false;
+        conversationIdRef.current = restored.sessionId || savedSessionId;
+        setMessages(restored.messages.length ? restored.messages : [createWelcomeMessage()]);
+        return true;
+      } catch (error) {
+        if (!current || controller.signal.aborted) return false;
+        if (error instanceof AgentSessionNotFoundError) {
+          conversationIdRef.current = undefined;
+          setMessages([createWelcomeMessage()]);
+          return true;
+        }
+        console.warn('恢复聊天历史失败:', error);
+        setHistoryRestoreError(true);
+        return false;
+      } finally {
+        if (current) setIsHistoryRestoring(false);
+      }
+    })();
+    historyRestorePromiseRef.current = restoreTask;
+
+    return () => {
+      current = false;
+      controller.abort();
+    };
+  }, [user?.role, user?.username, user?.visitor_id, historyRetryKey]);
 
   const toggleLayer = (layer: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
@@ -582,20 +635,28 @@ export default function App() {
   // 停止生成函数
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
-      if (activeTurn?.session_id && activeTurn?.turn_id) {
-        void chatService.cancelTurn(activeTurn.session_id, activeTurn.turn_id, 'user_stop');
+      if (activeTurn?.sessionId && activeTurn?.turnId) {
+        void chatService.cancelTurn(activeTurn.sessionId, activeTurn.turnId, 'user_stop')
+          .catch((error) => console.warn('服务端停止请求未确认:', error));
       }
+      const observedTurn = activeProjectorRef.current?.snapshot();
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsChatLoading(false);
       setActiveTurn(null);
+      activeProjectorRef.current = null;
 
       const stopMessage: ChatMessageType = {
         id: `stop-${Date.now()}`,
         role: 'assistant',
-        content: '生成已停止。',
+        content: '已请求停止生成。',
         timestamp: new Date().toISOString(),
-        metadata: {}
+        metadata: {
+          agent_turn: observedTurn?.items.length ? {
+            ...observedTurn,
+            interruption: { kind: 'stopped', message: '已停止接收执行事件，服务端执行状态可刷新查看。' },
+          } : undefined,
+        }
       };
       setMessages(prev => [...prev, stopMessage]);
     }
@@ -604,6 +665,9 @@ export default function App() {
   // 聊天函数（集成AbortController）
   const handleChatSubmit = async (content: string) => {
     if (!content.trim()) return;
+    if (historyRestorePromiseRef.current && !(await historyRestorePromiseRef.current)) return;
+    if (historyRestoreError) return;
+    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) return;
 
     // Browser/UI-observed map state is authoritative. Natural-language text must
     // not mutate map facts before the Controller interprets the request.
@@ -613,11 +677,14 @@ export default function App() {
     // 构建历史记录：后端只接受 user/assistant，系统提示词只能由后端构建。
     const history = messages
       .filter((msg): msg is ChatMessageType & { role: 'user' | 'assistant' } =>
-        msg.role === 'user' || msg.role === 'assistant'
+        (msg.role === 'user' || msg.role === 'assistant') && msg.content.trim().length > 0
       )
       .map(msg => ({
         role: msg.role,
-        content: msg.content
+        // Backend SearchRequest deliberately caps legacy client history at
+        // 4k chars/message. Server-side Agent session history remains the
+        // authoritative long-term context; this field is only a compatibility hint.
+        content: msg.content.slice(0, 4000)
       }));
 
     // 添加用户消息
@@ -637,6 +704,8 @@ export default function App() {
 
     setIsChatLoading(true);
     const projector = new AgentEventProjector();
+    activeProjectorRef.current = projector;
+    let boundTurnId: string | undefined;
     setActiveTurn(projector.snapshot());
 
     try {
@@ -648,19 +717,25 @@ export default function App() {
         abortController.signal,
         followUpContext,
         (agentEvent) => {
+          if (abortController.signal.aborted || abortControllerRef.current !== abortController) return;
+          if (agentEvent.session_id) {
+            conversationIdRef.current = agentEvent.session_id;
+            if (user) saveAgentSessionId(user, agentEvent.session_id);
+          }
+          if (agentEvent.event_type === 'session_started') return;
+          // A superseded browser call may emit an old-turn cancellation before the new user event.
+          if (!boundTurnId && (agentEvent.event_type === 'browser_tool_cancelled' || agentEvent.event_type === 'run_cancelled')) return;
+          boundTurnId ||= agentEvent.turn_id || undefined;
           projector.applyEvent(agentEvent);
           setActiveTurn(projector.snapshot());
-        }
+        },
+        reviewerEnabled,
       );
-      conversationIdRef.current = response.conversation_id;
-      if (response.quota) {
-        updateQuota(response.quota);
-      }
-
       // 检查是否被中止
-      if (abortController.signal.aborted) {
+      if (abortController.signal.aborted || abortControllerRef.current !== abortController) {
         return;
       }
+      if (response.quota) updateQuota(response.quota);
 
       // 转换references为citations
       const citations = (response.references || []).map(ref => ({
@@ -691,6 +766,9 @@ export default function App() {
       }
 
       const finalTurn = projector.snapshot();
+      if (response.transport_error) {
+        finalTurn.interruption = { kind: 'connection_error', message: response.transport_error };
+      }
       const assistantMessage: ChatMessageType = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -723,7 +801,7 @@ export default function App() {
       }
     } catch (error: any) {
       // 检查是否为中止错误
-      if (error.name === 'AbortError') {
+      if (abortController.signal.aborted || abortControllerRef.current !== abortController || error.name === 'AbortError') {
         console.log('请求被用户中止');
         return;
       }
@@ -734,16 +812,22 @@ export default function App() {
         role: 'assistant',
         content: '聊天过程中出现错误，请稍后重试。',
         timestamp: new Date().toISOString(),
-        metadata: {}
+        metadata: {
+          agent_turn: projector.snapshot().items.length ? {
+            ...projector.snapshot(),
+            interruption: { kind: 'connection_error', message: '连接中断，已保留收到的执行过程。' },
+          } : undefined,
+        }
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       // 清除AbortController引用
-      if (!abortController.signal.aborted) {
+      if (abortControllerRef.current === abortController) {
         abortControllerRef.current = null;
+        activeProjectorRef.current = null;
+        setIsChatLoading(false);
+        setActiveTurn(null);
       }
-      setIsChatLoading(false);
-      setActiveTurn(null);
     }
   };
 
@@ -1120,33 +1204,48 @@ export default function App() {
               messages={messages}
               onSendMessage={handleChatSubmit}
               onVectorFilesSelected={handleVectorFilesSelected}
+              reviewerEnabled={reviewerEnabled}
+              onReviewerEnabledChange={setReviewerEnabled}
               isLoading={isChatLoading}
               activeTurn={activeTurn}
               onStopGeneration={handleStopGeneration}
               inputValue={chatInput}
               onInputChange={setChatInput}
               onCitationClick={handleCitationClick}
-              disabled={isSearching}
+              disabled={isSearching || isHistoryRestoring || historyRestoreError}
               headerAction={
-                <motion.button
-                  type="button"
-                  aria-label={chatExpanded ? '收起对话框' : '展开对话框'}
-                  title={chatExpanded ? '收起对话框' : '展开对话框'}
-                  onClick={() => setChatExpanded((value) => !value)}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.94 }}
-                  className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
-                >
-                  {chatExpanded ? (
-                    <Minimize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
-                  ) : (
-                    <Maximize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
+                <div className="flex items-center gap-2">
+                  {historyRestoreError && (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryRetryKey((value) => value + 1)}
+                      className="text-[10px] px-2 py-1 rounded-md bg-surface-variant/60 hover:bg-surface-variant border border-outline text-on-background"
+                    >重试恢复</button>
                   )}
-                </motion.button>
+                  <motion.button
+                    type="button"
+                    aria-label={chatExpanded ? '收起对话框' : '展开对话框'}
+                    title={chatExpanded ? '收起对话框' : '展开对话框'}
+                    onClick={() => setChatExpanded((value) => !value)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.94 }}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
+                  >
+                    {chatExpanded ? (
+                      <Minimize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
+                    ) : (
+                      <Maximize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
+                    )}
+                  </motion.button>
+                </div>
               }
               title="Sentinel GeoAI"
               status={
-                user?.role === 'visitor'
+                isHistoryRestoring
+                  ? '正在恢复会话历史…'
+                  : historyRestoreError
+                    ? '会话恢复失败，请重试'
+                    : user?.role === 'visitor'
                   ? user.quota?.exhausted
                     ? '访客模式 · AI 额度已用完'
                     : `访客模式 · AI 剩余 ${user.quota?.remaining ?? 0}/${user.quota?.daily_limit ?? 10}`

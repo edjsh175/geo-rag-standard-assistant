@@ -57,7 +57,7 @@ class ContextBudgetConfig:
         default_factory=lambda: StageBudget(max_tokens=8000, system_reserve=600, generation_reserve=1500)
     )
     reviewer: StageBudget = field(
-        default_factory=lambda: StageBudget(max_tokens=3000, system_reserve=400, generation_reserve=600)
+        default_factory=lambda: StageBudget(max_tokens=8000, system_reserve=600, generation_reserve=1000)
     )
 
 

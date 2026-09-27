@@ -521,9 +521,9 @@ class PostgresRetrievalAdapter:
             FROM policy_chunks
             WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
               AND NOT EXISTS (
-                  SELECT 1 FROM document_overrides do
-                  WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
-                    AND do.deleted_at IS NOT NULL
+                  SELECT 1 FROM document_overrides dov
+                  WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
+                    AND dov.deleted_at IS NOT NULL
               )
             ORDER BY document_name, id
             LIMIT :limit
@@ -580,9 +580,9 @@ class PostgresRetrievalAdapter:
                     FROM policy_chunks
                     WHERE ({' OR '.join(conditions)})
                       AND NOT EXISTS (
-                          SELECT 1 FROM document_overrides do
-                          WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
-                            AND do.deleted_at IS NOT NULL
+                          SELECT 1 FROM document_overrides dov
+                          WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
+                            AND dov.deleted_at IS NOT NULL
                       )
                     ORDER BY document_name, similarity DESC, id
                 )
@@ -732,9 +732,9 @@ class PostgresRetrievalAdapter:
                     1 - (embedding <=> CAST(:embedding_str AS vector)) AS similarity
                 FROM policy_chunks
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM document_overrides do
-                    WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
-                      AND do.deleted_at IS NOT NULL
+                    SELECT 1 FROM document_overrides dov
+                    WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
+                      AND dov.deleted_at IS NOT NULL
                 )
             """
             params: dict[str, Any] = {
@@ -850,9 +850,9 @@ class PostgresRetrievalAdapter:
                 FROM policy_chunks
                 WHERE id = ANY(:chunk_ids)
                   AND NOT EXISTS (
-                      SELECT 1 FROM document_overrides do
-                      WHERE (do.doc_id = policy_chunks.id::text OR do.doc_id = policy_chunks.standard_code)
-                        AND do.deleted_at IS NOT NULL
+                      SELECT 1 FROM document_overrides dov
+                      WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
+                        AND dov.deleted_at IS NOT NULL
                   )
                 """
             )

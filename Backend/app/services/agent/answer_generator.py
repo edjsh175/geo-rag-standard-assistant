@@ -80,6 +80,7 @@ class AnswerGenerator:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
+                response_schema=request.response_schema,
                 audit_context={
                     **dict(audit_context or {}),
                     "frozen_evidence_snapshot_id": snapshot.snapshot_id,
@@ -140,6 +141,7 @@ class AnswerGenerator:
         execution = stage_policy.for_stage("answer_generation")
         call_id = str(uuid4())
         deadline_at = monotonic() + execution.timeout_seconds
+        response_schema = self._output_schema(snapshot)
 
         async def generate_candidate(attempt):
             remaining = deadline_at - monotonic()
@@ -158,6 +160,7 @@ class AnswerGenerator:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
+                response_schema=response_schema,
                 audit_context={
                     **dict(audit_context or {}),
                     "frozen_evidence_snapshot_id": snapshot.snapshot_id,
@@ -210,6 +213,7 @@ class AnswerGenerator:
                 "answer_generation"
             ).request_reasoning,
             model_name=None,
+            response_schema=output_schema,
         )
 
     @staticmethod

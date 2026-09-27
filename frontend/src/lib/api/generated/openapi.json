@@ -1912,6 +1912,298 @@
           }
         }
       }
+    },
+    "/api/agent/sessions": {
+      "get": {
+        "tags": [
+          "Agent 追踪与监控"
+        ],
+        "summary": "List Sessions",
+        "description": "List sessions owned by the authenticated principal.",
+        "operationId": "list_sessions_api_agent_sessions_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  },
+                  "title": "Response List Sessions Api Agent Sessions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "Agent 追踪与监控"
+        ],
+        "summary": "Get Session Detail",
+        "description": "Retrieve full conversation history, messages, and turns for a session.",
+        "operationId": "get_session_detail_api_agent_sessions__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Session Detail Api Agent Sessions  Session Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agent 追踪与监控"
+        ],
+        "summary": "Delete Session",
+        "description": "Delete a session and clear associated pending executions.",
+        "operationId": "delete_session_api_agent_sessions__session_id__delete",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Delete Session Api Agent Sessions  Session Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/sessions/{session_id}/turns/{turn_id}": {
+      "get": {
+        "tags": [
+          "Agent 追踪与监控"
+        ],
+        "summary": "Get Turn Trace",
+        "description": "Retrieve structured execution trace, ordered events, model calls, and snapshot refs for a turn.",
+        "operationId": "get_turn_trace_api_agent_sessions__session_id__turns__turn_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "turn_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Turn Id"
+            }
+          },
+          {
+            "name": "principal_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional principal_id override; defaults to current admin",
+              "title": "Principal Id"
+            },
+            "description": "Optional principal_id override; defaults to current admin"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Turn Trace Api Agent Sessions  Session Id  Turns  Turn Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/traces/{trace_id}": {
+      "get": {
+        "tags": [
+          "Agent 追踪与监控"
+        ],
+        "summary": "Get Trace By Id",
+        "description": "Retrieve turn execution trace by its unique trace_id.",
+        "operationId": "get_trace_by_id_api_agent_traces__trace_id__get",
+        "parameters": [
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "title": "Response Get Trace By Id Api Agent Traces  Trace Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search/query/cancel": {
+      "post": {
+        "tags": [
+          "智能检索"
+        ],
+        "summary": "Cancel Agent Run",
+        "operationId": "cancel_agent_run_api_search_query_cancel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentCancelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCancelResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1925,6 +2217,17 @@
           "role": {
             "type": "string",
             "title": "Role"
+          },
+          "visitor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Visitor Id"
           },
           "quota": {
             "anyOf": [
@@ -3898,6 +4201,64 @@
         ],
         "title": "BrowserToolReceipt",
         "description": "Browser-authoritative result for one pending GIS tool call."
+      },
+      "AgentCancelRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Session Id"
+          },
+          "turn_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Turn Id"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Reason",
+            "default": "user_requested"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "turn_id"
+        ],
+        "title": "AgentCancelRequest",
+        "description": "Request cancellation of one server-authoritative Agent turn."
+      },
+      "AgentCancelResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "turn_id": {
+            "type": "string",
+            "title": "Turn Id"
+          },
+          "status": {
+            "const": "cancel_requested",
+            "title": "Status",
+            "default": "cancel_requested"
+          },
+          "event_id": {
+            "type": "string",
+            "title": "Event Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "turn_id",
+          "event_id"
+        ],
+        "title": "AgentCancelResponse"
       }
     }
   }

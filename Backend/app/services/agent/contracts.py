@@ -31,9 +31,17 @@ class EvidenceItem:
     source: str
     match_type: str
     content_hash: str
+    evidence_class: str = "KB_FACT"
+    support_scope: str = "BUSINESS_CLAIM"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "metadata", freeze_json(self.metadata))
+        if self.source == "browser_gis" and self.evidence_class == "KB_FACT":
+            object.__setattr__(self, "evidence_class", "EXECUTION_RECEIPT")
+            object.__setattr__(self, "support_scope", "EXECUTION_CLAIM")
+        elif self.source == "postgis" and self.evidence_class == "KB_FACT":
+            object.__setattr__(self, "evidence_class", "SPATIAL_FACT")
+            object.__setattr__(self, "support_scope", "BUSINESS_CLAIM")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import {
   Compass,
   FileCheck,
@@ -16,27 +16,31 @@ export interface AgentProcessProps {
   turn: AgentTurnViewModel;
   className?: string;
   defaultExpanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 export const AgentProcess: React.FC<AgentProcessProps> = ({
   turn,
   className = '',
   defaultExpanded,
+  onExpandedChange,
 }) => {
-  const isRunning = turn.status === 'running';
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded ?? isRunning);
+  const [manualExpanded, setManualExpanded] = useState<boolean | undefined>(defaultExpanded);
+  const isExpanded = manualExpanded ?? (turn.status === 'running' || turn.status === 'failed' || turn.status === 'cancelled' || Boolean(turn.interruption));
+  const contentId = useId();
 
   if (turn.items.length === 0) {
     return null;
   }
 
   const toolCount = turn.items.filter((item) => item.kind === 'tool').length;
-  const reviewItem = turn.items.find((item) => item.kind === 'review');
+  const reviews = turn.items.filter((item) => item.kind === 'review');
+  const reviewItem = reviews[reviews.length - 1];
 
   const renderItem = (item: AgentProcessItem, idx: number) => {
     switch (item.kind) {
       case 'tool':
-        return <ToolRow key={`tool-${item.callId || idx}`} tool={item} />;
+        return <ToolRow key={`tool-${item.callId || idx}`} tool={item} paused={Boolean(turn.interruption)} />;
 
       case 'decision':
         return (
@@ -79,20 +83,28 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
           <DisclosureRow
             key={`stage-${idx}`}
             icon={<Sparkles className="w-3.5 h-3.5 text-purple-400" />}
-            title="生成规划回答"
+            title={item.stageName === 'cancellation' ? '执行停止' : '生成规划回答'}
             summary={item.summary}
-            status="succeeded"
+            status={item.status === 'failed' ? 'failed' : item.status === 'running' ? 'running' : 'succeeded'}
           />
         );
 
       case 'review':
+        const reviewStatus = item.status === 'running'
+          ? 'running'
+          : ['PASS', 'PASSED', 'SUPPORTED'].includes(item.verdict || '')
+            ? 'succeeded'
+            : item.verdict === 'REVISE'
+              ? 'info'
+              : 'failed';
         return (
           <DisclosureRow
             key={`review-${idx}`}
             icon={<ShieldCheck className="w-3.5 h-3.5 text-teal-400" />}
             title="Grounding 审查"
             summary={item.summary}
-            status={item.verdict === 'PASS' ? 'succeeded' : 'failed'}
+            status={reviewStatus}
+            badge={<span className="text-[10px] font-mono text-slate-400">{item.verdict || item.status || 'unknown'}</span>}
           />
         );
 
@@ -115,18 +127,24 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
     >
       <button
         type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        onClick={() => {
+          const next = !(manualExpanded ?? isExpanded);
+          setManualExpanded(next);
+          onExpandedChange?.(next);
+        }}
+        aria-expanded={isExpanded}
+        aria-controls={contentId}
         className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.03] hover:bg-white/[0.05] transition-colors cursor-pointer select-none text-left"
       >
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-primary-container animate-pulse" />
+          <span className={`w-2 h-2 rounded-full bg-primary-container ${turn.status === 'running' && !turn.interruption ? 'animate-pulse motion-reduce:animate-none' : ''}`} />
           <span className="font-semibold text-slate-200 text-xs">
             Agent 执行流程
           </span>
           <span className="text-[11px] text-slate-400">
             · {turn.items.length} 步骤
             {toolCount > 0 && ` (${toolCount} 个工具)`}
-            {reviewItem && ` · 审查: ${(reviewItem as any).verdict}`}
+            {reviewItem && ` · 审查: ${reviewItem.verdict || reviewItem.status || 'unknown'}`}
           </span>
         </div>
 
@@ -143,7 +161,8 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
       </button>
 
       {isExpanded && (
-        <div className="p-2.5 space-y-1.5 border-t border-white/5 bg-black/10">
+        <div id={contentId} className="p-2.5 space-y-1.5 border-t border-white/5 bg-black/10">
+          {turn.interruption && <div role="status" className="rounded border border-amber-700/40 bg-amber-950/30 px-2 py-1.5 text-amber-200">{turn.interruption.kind === 'stopped' ? '生成已停止' : '连接中断'}：{turn.interruption.message}</div>}
           {turn.items.map((item, idx) => renderItem(item, idx))}
         </div>
       )}

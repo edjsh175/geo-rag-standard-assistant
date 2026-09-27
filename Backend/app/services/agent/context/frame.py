@@ -63,6 +63,12 @@ class ContextFrame:
     runtime_capabilities: Mapping[str, Any] = field(default_factory=_empty_mapping)
     source_event_ids: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=_empty_mapping)
+    identity_resolution: Any = None
+
+    @property
+    def identity_state(self) -> Any:
+        """Alias for backward compatibility and semantic identity inspection."""
+        return self.identity_resolution
 
     @classmethod
     def create(
@@ -84,6 +90,7 @@ class ContextFrame:
         runtime_capabilities: Mapping[str, Any] | None = None,
         source_event_ids: list[str] | tuple[str, ...] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        identity_resolution: Any = None,
     ) -> "ContextFrame":
         clean_event_ids = tuple(
             dict.fromkeys(str(v).strip() for v in (source_event_ids or ()) if str(v).strip())
@@ -105,6 +112,7 @@ class ContextFrame:
             runtime_capabilities=_freeze(runtime_capabilities or {}),
             source_event_ids=clean_event_ids,
             metadata=_freeze(metadata or {}),
+            identity_resolution=identity_resolution,
         )
 
     def to_dict(self) -> dict[str, Any]:

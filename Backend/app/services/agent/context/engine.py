@@ -153,6 +153,7 @@ class ContextEngine:
         metadata: Mapping[str, Any] | None = None,
         current_turn_id: str | None = None,
         conversation_memory: ConversationMemoryStateRecord | None = None,
+        identity_resolution: Any = None,
     ) -> ContextFrame:
         """Construct a structured ContextFrame from session facts and runtime inputs."""
         conv_list: list[dict[str, Any]] = []
@@ -249,6 +250,7 @@ class ContextEngine:
             runtime_capabilities=tool_contracts or {},
             source_event_ids=source_event_ids,
             metadata={},
+            identity_resolution=identity_resolution,
         )
 
     def project_for_controller(
@@ -325,7 +327,7 @@ class ContextEngine:
 
         # R-10: Durable Action Surface and Version Identity
         tool_contracts_hash = hashlib.sha256(tool_contracts_text.encode("utf-8")).hexdigest()
-        map_hash = hashlib.sha256(json.dumps(dict(trimming_res.map_context or {}), sort_keys=True).encode("utf-8")).hexdigest()
+        map_hash = hashlib.sha256(json.dumps(_thaw(trimming_res.map_context or {}), sort_keys=True, default=str).encode("utf-8")).hexdigest()
         action_surface_identity = {
             "schema_version": "v3",
             "available_capabilities": list(available_capabilities),

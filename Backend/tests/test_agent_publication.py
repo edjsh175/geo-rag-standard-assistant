@@ -73,6 +73,8 @@ def test_agent_run_result_typed_result_variants() -> None:
     )
     assert isinstance(knowledge.typed_result, KnowledgeAnswerResult)
     assert knowledge.typed_result.citations == ("E1",)
+    assert isinstance(knowledge.to_typed_result(), KnowledgeAnswerResult)
+    assert knowledge.to_typed_result() == knowledge.typed_result
 
     clarification = AgentRunResult(
         session_id="s1", turn_id="t1", trace_id="tr1", publication_state="clarification",
@@ -105,3 +107,53 @@ def test_agent_run_result_typed_result_variants() -> None:
     )
     assert isinstance(no_safe.typed_result, NoSafeAnswer)
     assert no_safe.typed_result.reason == "review_rejected"
+
+
+def test_agent_run_result_uses_typed_publication_result_as_single_source_of_truth() -> None:
+    from app.services.agent.answer_generator import AnswerUnit, GeneratedAnswer
+    from app.services.agent.publication import KnowledgeAnswerResult, NoSafeAnswer
+    from app.services.agent.runtime import AgentRunResult
+
+    answer = GeneratedAnswer(
+        kind="knowledge_answer",
+        answer="grounded answer",
+        citations=("E1",),
+        units=(
+            AnswerUnit(
+                unit_id="u1",
+                text="grounded answer",
+                citations=("E1",),
+            ),
+        ),
+    )
+    knowledge = AgentRunResult(
+        session_id="s1",
+        turn_id="t1",
+        trace_id="tr1",
+        result=KnowledgeAnswerResult(answer=answer),
+        frozen_evidence=None,
+        review=None,
+        events=(),
+    )
+
+    assert knowledge.publication_state == "published"
+    assert knowledge.answer is answer
+    assert knowledge.clarification is None
+    assert knowledge.limitation is None
+    assert knowledge.typed_result is knowledge.result
+
+    blocked = AgentRunResult(
+        session_id="s1",
+        turn_id="t2",
+        trace_id="tr2",
+        result=NoSafeAnswer(
+            reason="review_rejected",
+            message="答案未通过证据审查，未发布。",
+        ),
+        frozen_evidence=None,
+        review=None,
+        events=(),
+    )
+    assert blocked.publication_state == "review_rejected"
+    assert blocked.answer is None
+    assert blocked.limitation == "答案未通过证据审查，未发布。"

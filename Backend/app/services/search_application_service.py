@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -19,6 +20,7 @@ from app.services.rag.contracts import RetrievalCandidate
 
 
 RELAXED_VECTOR_THRESHOLD = 0.35
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,39 +319,63 @@ class SearchApplicationService:
             retrieval_constraints=self._retrieval_constraints(request),
         )
 
-        async for frame in self.agent_runtime.stream(run_request):
-            if frame.event is not None:
-                yield SearchStreamFrame(event=frame.event)
-                continue
+        try:
+            async for frame in self.agent_runtime.stream(run_request):
+                if frame.event is not None:
+                    yield SearchStreamFrame(event=frame.event)
+                    continue
 
-            run_result = frame.result
-            if run_result is None:
-                continue
-            results = await self._results_from_frozen_evidence(run_result.frozen_evidence)
-            published = run_result.published_result
+                run_result = frame.result
+                if run_result is None:
+                    continue
+                results = await self._results_from_frozen_evidence(run_result.frozen_evidence)
+                published = run_result.published_result
+                elapsed = (datetime.now() - started_at).total_seconds()
+                yield SearchStreamFrame(
+                    response=SearchResponse(
+                        query=request.query,
+                        results=results,
+                        total_count=len(results),
+                        search_time=elapsed,
+                        search_mode=request.search_mode,
+                        generated_answer=published.visible_text,
+                        generation_time=elapsed,
+                        session_id=run_result.session_id,
+                        trace_id=run_result.trace_id,
+                        final_mode="agent",
+                        publication_state=(
+                            "clarification_required"
+                            if run_result.publication_state == "clarification"
+                            else run_result.publication_state
+                        ),
+                        map_action=published.map_action,
+                        pending_tool_call_id=run_result.pending_tool_call_id,
+                        continuation_token=run_result.continuation_token,
+                        remaining_steps=getattr(run_result, "remaining_steps", None),
+                        remaining_seconds=getattr(run_result, "remaining_seconds", None),
+                    )
+                )
+        except Exception:
+            # Once an SSE response has started, raising cannot be converted to
+            # an HTTP 500 reliably. Emit a terminal result so clients always
+            # leave their loading state while retaining the server traceback.
+            logger.exception(
+                "Agent stream failed before a terminal result: session_id=%s",
+                session_id,
+            )
             elapsed = (datetime.now() - started_at).total_seconds()
             yield SearchStreamFrame(
                 response=SearchResponse(
                     query=request.query,
-                    results=results,
-                    total_count=len(results),
+                    results=[],
+                    total_count=0,
                     search_time=elapsed,
                     search_mode=request.search_mode,
-                    generated_answer=published.visible_text,
+                    generated_answer="查询处理失败，请稍后重试。",
                     generation_time=elapsed,
-                    session_id=run_result.session_id,
-                    trace_id=run_result.trace_id,
+                    session_id=session_id,
                     final_mode="agent",
-                    publication_state=(
-                        "clarification_required"
-                        if run_result.publication_state == "clarification"
-                        else run_result.publication_state
-                    ),
-                    map_action=published.map_action,
-                    pending_tool_call_id=run_result.pending_tool_call_id,
-                    continuation_token=run_result.continuation_token,
-                    remaining_steps=getattr(run_result, "remaining_steps", None),
-                    remaining_seconds=getattr(run_result, "remaining_seconds", None),
+                    publication_state="runtime_error",
                 )
             )
 

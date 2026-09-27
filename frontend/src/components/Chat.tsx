@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { Bot, Sparkles, Send, Mic, History, X, Download, FileText, Paperclip } from 'lucide-react';
+import { Bot, Sparkles, Send, Mic, History, X, Download, FileText, Paperclip, ShieldCheck } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
@@ -21,6 +21,8 @@ export interface ChatProps {
   onInputChange: (value: string) => void;
   onCitationClick?: (documentId: string) => Promise<void>;
   onVectorFilesSelected?: (files: File[]) => Promise<string>;
+  reviewerEnabled: boolean;
+  onReviewerEnabledChange: (enabled: boolean) => void;
   disabled?: boolean;
   title?: string;
   status?: string;
@@ -39,6 +41,8 @@ const Chat: React.FC<ChatProps> = ({
   onInputChange,
   onCitationClick,
   onVectorFilesSelected,
+  reviewerEnabled,
+  onReviewerEnabledChange,
   disabled = false,
   title = 'Sentinel GeoAI',
   status = '模型就绪 · RAG 已同步',
@@ -49,6 +53,8 @@ const Chat: React.FC<ChatProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const vectorFileInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const processDisclosureRef = useRef(new Map<string, boolean>());
+  const processKey = (turn: AgentTurnViewModel) => `${turn.sessionId}:${turn.turnId}`;
 
   const { scrollToBottom, lockAutoScroll, unlockAutoScroll, isAutoScrollLocked } =
     useAutoScroll(chatContainerRef, { threshold: 50 });
@@ -59,7 +65,7 @@ const Chat: React.FC<ChatProps> = ({
 
   useEffect(() => {
     if (isLoading && !isAutoScrollLocked) scrollToBottom({ behavior: 'smooth' });
-  }, [isLoading, isAutoScrollLocked, scrollToBottom]);
+  }, [isLoading, activeTurn, isAutoScrollLocked, scrollToBottom]);
 
   const displayQuickTags = [
     '#土地整治与利用',
@@ -146,7 +152,10 @@ const Chat: React.FC<ChatProps> = ({
         style={{ padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: '20px' }}
       >
         {messages.map(msg => (
-          <ChatMessage key={msg.id} message={msg} onCitationClick={handleCitationClick} />
+          <ChatMessage key={msg.id} message={msg} onCitationClick={handleCitationClick}
+            processExpanded={msg.metadata?.agent_turn ? processDisclosureRef.current.get(processKey(msg.metadata.agent_turn)) : undefined}
+            onProcessExpandedChange={msg.metadata?.agent_turn ? (expanded) => processDisclosureRef.current.set(processKey(msg.metadata!.agent_turn!), expanded) : undefined}
+          />
         ))}
 
         {isLoading && (
@@ -158,7 +167,10 @@ const Chat: React.FC<ChatProps> = ({
               <Sparkles className="w-3.5 h-3.5" style={{ color: 'rgba(240,112,64,0.7)' }} />
             </div>
             <div className="flex-1 space-y-3">
-              {activeTurn && <AgentProcess turn={activeTurn} defaultExpanded={true} />}
+              {activeTurn && <AgentProcess turn={activeTurn}
+                defaultExpanded={processDisclosureRef.current.get(processKey(activeTurn))}
+                onExpandedChange={(expanded) => processDisclosureRef.current.set(processKey(activeTurn), expanded)}
+              />}
               <div
                 className="rounded-xl rounded-tl-sm p-4 text-sm bg-surface-container/60 border-l-[1.5px] border-primary-container"
               >
@@ -236,6 +248,32 @@ const Chat: React.FC<ChatProps> = ({
           </div>
         </div>
 
+        <div className="mt-2.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <ShieldCheck className="w-3.5 h-3.5 text-on-background/45" />
+            <span className="text-[12px] text-on-background/55">证据审查 Reviewer</span>
+            <span className="text-[10.5px] text-on-background/35">仅审查知识答案</span>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={reviewerEnabled}
+            aria-label="证据审查 Reviewer"
+            onClick={() => onReviewerEnabledChange(!reviewerEnabled)}
+            disabled={disabled || isLoading}
+            className="relative h-5 w-9 shrink-0 rounded-full border border-outline transition-all disabled:opacity-40"
+            style={{ background: reviewerEnabled ? 'rgba(240,112,64,0.32)' : 'rgba(255,255,255,0.06)' }}
+          >
+            <span
+              className="absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all"
+              style={{
+                left: reviewerEnabled ? '18px' : '2px',
+                background: reviewerEnabled ? '#f07040' : 'rgba(255,255,255,0.45)',
+              }}
+            />
+          </button>
+        </div>
+
         {/* Quick Tags */}
         <div className="mt-3 flex gap-2 overflow-x-auto no-scrollbar">
           {displayQuickTags.map(tag => (
@@ -255,9 +293,11 @@ const Chat: React.FC<ChatProps> = ({
 interface ChatMessageProps {
   message: ChatMessageType;
   onCitationClick?: (citation: Citation) => void;
+  processExpanded?: boolean;
+  onProcessExpandedChange?: (expanded: boolean) => void;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick, processExpanded, onProcessExpandedChange }) => {
   const isUser = message.role === 'user';
   return (
     <div className={cn('flex min-w-0 max-w-full', isUser ? 'justify-end' : 'gap-3 items-start')} style={isUser ? { marginLeft: '40px' } : { marginRight: '32px' }}>
@@ -274,7 +314,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick }) =
       <div className="min-w-0 flex-1 space-y-3">
         {/* Agent Process Timeline */}
         {!isUser && message.metadata?.agent_turn && (
-          <AgentProcess turn={message.metadata.agent_turn} defaultExpanded={false} />
+          <AgentProcess turn={message.metadata.agent_turn} defaultExpanded={processExpanded} onExpandedChange={onProcessExpandedChange} />
         )}
 
         {/* Bubble */}

@@ -11,6 +11,11 @@ _SAFE_ERROR_MESSAGES = {
     "TOOL_UNAVAILABLE": "工具当前不可用。",
     "TOOL_TIMEOUT": "工具执行超时。",
     "REVIEW_FAILED": "证据审查执行失败。",
+    "REPAIR_MODEL_FAILED": "答案修复模型执行失败。",
+    "REPAIR_PROTOCOL_INVALID": "答案修复输出未满足结构化协议。",
+    "REPAIR_CONTRACT_VIOLATION": "答案修复结果违反修复契约。",
+    "REVIEW2_FAILED": "第二轮证据审查执行失败。",
+    "REVIEW2_REJECTED": "修复后的答案未通过第二轮证据审查。",
 }
 
 
@@ -69,7 +74,8 @@ _PUBLIC_PAYLOAD_FIELDS = {
     "evidence_frozen": {"snapshot_id", "evidence_ids", "selected_evidence_ids", "selected_count", "citation_count"},
     "answer_generated": {"kind", "citations"},
     "review_started": {"review_id", "attempt"},
-    "review_completed": {"review_id", "attempt", "verdict", "finding_count", "error"},
+    "review_completed": {"review_id", "attempt", "verdict", "finding_count", "reason_code", "error"},
+    "answer_repair_completed": {"outcome", "error"},
     "publication_completed": {"state", "publication_state", "reason_code"},
     "assistant_message": {"text"},
     "run_cancel_requested": {"reason"},
@@ -112,7 +118,21 @@ def public_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[st
                 elif isinstance(value, list):
                     safe_args[key] = value[:50]
                 elif isinstance(value, Mapping):
-                    safe_args[key] = {str(k)[:80]: v for k, v in list(value.items())[:30] if isinstance(v, (str, int, float, bool)) or v is None}
+                    if key == 'style':
+                        safe_args[key] = {
+                            name: _scalar_fields(value[name], fields)
+                            for name, fields in {'stroke': {'color', 'width', 'opacity'}, 'fill': {'color', 'opacity'}}.items()
+                            if isinstance(value.get(name), Mapping)
+                        }
+                        safe_args[key].update(_scalar_fields(value, {'radius'}))
+                    elif key in {'left', 'right'}:
+                        operand = {}
+                        if isinstance(value.get('region'), Mapping):
+                            operand['region'] = _scalar_fields(value['region'], {'adcode', 'region_name'})
+                        if isinstance(value.get('geometry'), Mapping):
+                            # Coordinates can be large; the UI needs the operand kind, not the raw geometry.
+                            operand['geometry'] = _scalar_fields(value['geometry'], {'type'})
+                        safe_args[key] = operand
         output["arguments"] = safe_args
     if event_type == "tool_completed":
         if "error" in output:
@@ -128,5 +148,42 @@ def public_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[st
         if "error" in output:
             output["error"] = safe_error("TOOL_FAILED")
     if event_type == "review_completed" and "error" in output:
-        output["error"] = safe_error("REVIEW_FAILED")
+        raw_error = output["error"]
+        code = (
+            str(raw_error.get("code") or "REVIEW_FAILED")
+            if isinstance(raw_error, Mapping)
+            else "REVIEW_FAILED"
+        )
+        if code not in {"REVIEW_FAILED", "REVIEW2_FAILED"}:
+            code = "REVIEW_FAILED"
+        output["error"] = safe_error(code)
+    if event_type == "answer_repair_completed" and "error" in output:
+        raw_error = output["error"]
+        code = (
+            str(raw_error.get("code") or "REPAIR_MODEL_FAILED")
+            if isinstance(raw_error, Mapping)
+            else "REPAIR_MODEL_FAILED"
+        )
+        if code not in {
+            "REPAIR_MODEL_FAILED",
+            "REPAIR_PROTOCOL_INVALID",
+            "REPAIR_CONTRACT_VIOLATION",
+            "REVIEW2_FAILED",
+            "REVIEW2_REJECTED",
+        }:
+            code = "REPAIR_MODEL_FAILED"
+        output["error"] = safe_error(code)
     return output
+
+
+def is_public_event(event_type: str) -> bool:
+    return event_type in _PUBLIC_PAYLOAD_FIELDS
+
+
+def _scalar_fields(value: Mapping[str, Any], fields: set[str]) -> dict[str, Any]:
+    return {
+        key: (entry[:2000] if isinstance(entry, str) else entry)
+        for key in fields if key in value
+        for entry in [value[key]]
+        if isinstance(entry, (str, int, float, bool)) or entry is None
+    }

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from app.services.agent.context.engine import ContextEngine, extract_previous_turn_runtime_facts
@@ -34,6 +36,27 @@ class FakeModelClient:
     async def complete(self, request):
         self.calls.append(request)
         return self.response
+
+
+def test_legacy_controller_wire_emits_deprecation_warning_only_when_normalized():
+    with pytest.warns(DeprecationWarning, match="legacy Controller wire"):
+        normalized = normalize_legacy_controller_wire(
+            {"name": "retrieve_kb", "arguments": {"query": "规划"}}
+        )
+    assert normalized["action"] == TOOL_CALL_ACTION
+    assert normalized["tool"] == "retrieve_kb"
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        canonical = normalize_legacy_controller_wire(
+            {
+                "action": TOOL_CALL_ACTION,
+                "tool": "retrieve_kb",
+                "arguments": {"query": "规划"},
+            }
+        )
+    assert canonical["action"] == TOOL_CALL_ACTION
+    assert caught == []
 
 
 def test_executable_action_state_dynamic_surface():
@@ -318,6 +341,41 @@ async def test_runtime_executes_direct_answer_action():
     assert "tool_started" not in event_types  # direct_answer does not start a tool
 
 
+@pytest.mark.asyncio
+async def test_direct_answer_never_invokes_reviewer_even_when_enabled():
+    class FailingReviewer:
+        async def review(self, **kwargs):
+            raise AssertionError("direct_answer must bypass reviewer")
+
+    client = FakeModelClient(
+        ModelResponse(content='{"action":"direct_answer","answer":"你好，我可以直接回答这个问题。"}')
+    )
+    controller = MainController(
+        model_client=client,
+        tool_registry=build_default_tool_registry(),
+    )
+    from app.services.agent.session import InMemoryAgentSessionStore
+
+    runtime = AgentRuntime(
+        controller=controller,
+        retrieval_port=None,
+        session_store=InMemoryAgentSessionStore(),
+        answer_generator=None,
+        reviewer=FailingReviewer(),
+    )
+    result = await runtime.run(
+        AgentRunRequest(
+            question="你好",
+            session_id="s-direct-review",
+            principal_id="u1",
+            reviewer_enabled=True,
+        )
+    )
+
+    assert result.publication_state == "published"
+    assert result.answer.kind == "direct_answer"
+
+
 def test_executable_action_state_zero_evidence_blocks_knowledge_answer():
     registry = build_default_tool_registry()
     state = ExecutableActionState.compute(
@@ -480,3 +538,54 @@ async def test_controller_direct_evidence_selection_without_retrieval():
     assert result.frozen_evidence.items[0].evidence_id == ev_item.evidence_id
     # Assert retrieve_kb was NEVER called!
     assert mock_retrieval.calls == 0
+
+
+def test_i06_validator_rejects_unknown_top_level_properties() -> None:
+    """requirement I-06: Deterministic validator must reject unexpected top-level properties (additionalProperties: false)."""
+    from app.services.agent.controller_protocol import ControllerOutputError
+
+    registry = build_default_tool_registry()
+    state = ExecutableActionState.compute(
+        registry=registry,
+        selectable_evidence_ids=("ev-1",),
+    )
+    with pytest.raises(ControllerOutputError, match="unexpected top-level property 'extra_payload'"):
+        validate_controller_decision_payload(
+            {
+                "action": "compose_answer",
+                "arguments": {
+                    "answer_kind": "knowledge_answer",
+                    "selected_evidence_ids": ["ev-1"],
+                },
+                "extra_payload": "hack",
+            },
+            registry=registry,
+            tool_call_id="call-extra-key",
+            state=state,
+        )
+
+
+def test_i05_controller_output_error_single_authority() -> None:
+    """requirement I-05: ControllerOutputError must be single-authority imported from controller_protocol."""
+    import app.services.agent.controller as controller_mod
+    import app.services.agent.controller_protocol as protocol_mod
+
+    assert controller_mod.ControllerOutputError is protocol_mod.ControllerOutputError
+
+
+def test_i01_context_frame_holds_identity_resolution() -> None:
+    """requirement I-01: ContextFrame must hold and expose server-authoritative IdentityResolution."""
+    from app.services.agent.context.frame import ContextFrame
+    from app.services.agent.identity import EntityCandidateRef, IdentityResolution
+
+    identity = IdentityResolution(
+        status="ambiguous",
+        candidate_refs=(
+            EntityCandidateRef(entity_ref="ent-1", display_name="成都市"),
+            EntityCandidateRef(entity_ref="ent-2", display_name="成华区"),
+        ),
+    )
+    frame = ContextFrame.create(identity_resolution=identity)
+    assert frame.identity_resolution is identity
+    assert frame.identity_state is identity
+    assert frame.identity_resolution.requires_confirmation is True

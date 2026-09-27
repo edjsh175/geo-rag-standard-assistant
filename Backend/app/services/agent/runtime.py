@@ -26,6 +26,7 @@ from app.services.agent.contracts import FrozenEvidenceSnapshot, MapAction
 from app.services.agent.events import AgentEvent
 from app.services.agent.event_projection import browser_receipt_summary, safe_error, tool_result_summary
 from app.services.agent.publication import (
+    AgentPublicationResult,
     BrowserToolExecutionRequired,
     ClarificationRequired,
     DirectAnswerResult,
@@ -77,92 +78,213 @@ class AgentRunRequest:
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class AgentRunResult:
     session_id: str
     turn_id: str
     trace_id: str
-    publication_state: str
-    answer: GeneratedAnswer | MapAction | str | None
-    clarification: str | None
-    limitation: str | None
+    result: AgentPublicationResult
     frozen_evidence: FrozenEvidenceSnapshot | None
     review: Any | None
     events: tuple[AgentEvent, ...]
-    pending_tool_call_id: str | None = None
-    continuation_token: str | None = None
     remaining_steps: int | None = None
     remaining_seconds: float | None = None
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        trace_id: str,
+        result: AgentPublicationResult | None = None,
+        frozen_evidence: FrozenEvidenceSnapshot | None,
+        review: Any | None,
+        events: tuple[AgentEvent, ...],
+        remaining_steps: int | None = None,
+        remaining_seconds: float | None = None,
+        # Compatibility-only constructor surface. These values are converted
+        # immediately and are never stored as a second publication authority.
+        publication_state: str | None = None,
+        answer: GeneratedAnswer | MapAction | str | None = None,
+        clarification: str | None = None,
+        limitation: str | None = None,
+        pending_tool_call_id: str | None = None,
+        continuation_token: str | None = None,
+    ) -> None:
+        if result is not None and any(
+            value is not None
+            for value in (
+                publication_state,
+                answer,
+                clarification,
+                limitation,
+                pending_tool_call_id,
+                continuation_token,
+            )
+        ):
+            raise ValueError("AgentRunResult accepts either result or legacy publication fields, not both")
+        effective_result = result or self._result_from_legacy(
+            publication_state=publication_state,
+            answer=answer,
+            clarification=clarification,
+            limitation=limitation,
+            pending_tool_call_id=pending_tool_call_id,
+            continuation_token=continuation_token,
+        )
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "turn_id", turn_id)
+        object.__setattr__(self, "trace_id", trace_id)
+        object.__setattr__(self, "result", effective_result)
+        object.__setattr__(self, "frozen_evidence", frozen_evidence)
+        object.__setattr__(self, "review", review)
+        object.__setattr__(self, "events", events)
+        object.__setattr__(self, "remaining_steps", remaining_steps)
+        object.__setattr__(self, "remaining_seconds", remaining_seconds)
+
+    @staticmethod
+    def _result_from_legacy(
+        *,
+        publication_state: str | None,
+        answer: GeneratedAnswer | MapAction | str | None,
+        clarification: str | None,
+        limitation: str | None,
+        pending_tool_call_id: str | None,
+        continuation_token: str | None,
+    ) -> AgentPublicationResult:
+        state = str(publication_state or "").strip()
+        if not state:
+            raise ValueError("AgentRunResult requires a typed result or publication_state")
+        if state == "tool_execution_required":
+            if not isinstance(answer, MapAction):
+                raise ValueError("tool_execution_required requires MapAction")
+            if not pending_tool_call_id or not continuation_token:
+                raise ValueError("tool_execution_required requires tool_call_id and continuation_token")
+            return BrowserToolExecutionRequired(
+                tool_call_id=pending_tool_call_id,
+                tool_name=answer.type,
+                continuation_token=continuation_token,
+                map_action=answer,
+            )
+        if state in {"clarification", "clarification_required"}:
+            if not str(clarification or "").strip():
+                raise ValueError("clarification result requires clarification text")
+            return ClarificationRequired(question=str(clarification).strip())
+        if state == "limitation":
+            if not str(limitation or "").strip():
+                raise ValueError("limitation result requires limitation text")
+            return SafeLimitation(message=str(limitation).strip())
+        if state in {"published", "grounded"}:
+            if isinstance(answer, GeneratedAnswer):
+                if answer.kind == "direct_answer":
+                    return DirectAnswerResult(answer=answer)
+                if answer.kind == "direct":
+                    return DirectAnswerResult(
+                        answer=GeneratedAnswer(
+                            kind="direct_answer",
+                            answer=answer.answer,
+                            citations=(),
+                            units=(),
+                        )
+                    )
+                if answer.kind == "knowledge_answer":
+                    return KnowledgeAnswerResult(answer=answer)
+                raise ValueError(f"unsupported published answer kind: {answer.kind}")
+            if isinstance(answer, str) and answer.strip():
+                return DirectAnswerResult(
+                    answer=GeneratedAnswer(
+                        kind="direct_answer",
+                        answer=answer.strip(),
+                        citations=(),
+                        units=(),
+                    )
+                )
+            raise ValueError("published result requires an answer")
+        return NoSafeAnswer(
+            reason=state,
+            message=str(limitation or "答案未通过发布契约，未发布。").strip(),
+        )
+
+    @property
+    def publication_state(self) -> str:
+        if isinstance(self.result, (DirectAnswerResult, KnowledgeAnswerResult)):
+            return "published"
+        if isinstance(self.result, ClarificationRequired):
+            return "clarification"
+        if isinstance(self.result, BrowserToolExecutionRequired):
+            return "tool_execution_required"
+        if isinstance(self.result, SafeLimitation):
+            return "limitation"
+        return self.result.reason
+
+    @property
+    def answer(self) -> GeneratedAnswer | MapAction | None:
+        if isinstance(self.result, (DirectAnswerResult, KnowledgeAnswerResult)):
+            return self.result.answer
+        if isinstance(self.result, BrowserToolExecutionRequired):
+            return self.result.map_action
+        return None
+
+    @property
+    def clarification(self) -> str | None:
+        return self.result.question if isinstance(self.result, ClarificationRequired) else None
+
+    @property
+    def limitation(self) -> str | None:
+        if isinstance(self.result, SafeLimitation):
+            return self.result.message
+        if isinstance(self.result, NoSafeAnswer):
+            return self.result.message
+        return None
+
+    @property
+    def pending_tool_call_id(self) -> str | None:
+        return self.result.tool_call_id if isinstance(self.result, BrowserToolExecutionRequired) else None
+
+    @property
+    def continuation_token(self) -> str | None:
+        return self.result.continuation_token if isinstance(self.result, BrowserToolExecutionRequired) else None
+
+    def to_typed_result(
+        self,
+    ) -> AgentPublicationResult:
+        return self.result
 
     @property
     def typed_result(
         self,
-    ) -> (
-        DirectAnswerResult
-        | KnowledgeAnswerResult
-        | ClarificationRequired
-        | BrowserToolExecutionRequired
-        | SafeLimitation
-        | NoSafeAnswer
-    ):
-        if self.publication_state == "tool_execution_required":
-            map_action = (
-                self.answer if isinstance(self.answer, MapAction) else None
-            )
-            return BrowserToolExecutionRequired(
-                tool_call_id=self.pending_tool_call_id or "",
-                tool_name=getattr(map_action, "type", "") or getattr(map_action, "name", "") if map_action else "",
-                continuation_token=self.continuation_token or "",
-                map_action=map_action or MapAction(type="browser_tool", target="map"),
-            )
-        if self.publication_state in {"clarification", "clarification_required"}:
-            return ClarificationRequired(question=self.clarification or "")
-        if self.publication_state == "limitation":
-            return SafeLimitation(message=self.limitation or "")
-        if self.publication_state in {"published", "grounded"} and self.answer is not None:
-            if isinstance(self.answer, GeneratedAnswer):
-                if getattr(self.answer, "kind", "") == "direct_answer":
-                    return DirectAnswerResult(text=self.answer.answer)
-                return KnowledgeAnswerResult(
-                    text=self.answer.answer,
-                    citations=tuple(getattr(self.answer, "citations", ())),
-                )
-            return DirectAnswerResult(text=str(self.answer))
-        return NoSafeAnswer(reason=self.publication_state)
+    ) -> AgentPublicationResult:
+        return self.result
 
     @property
     def published_result(self) -> PublishedResult:
-        if self.publication_state == "tool_execution_required":
-            map_action = self.answer if isinstance(self.answer, MapAction) else None
+        if isinstance(self.result, BrowserToolExecutionRequired):
             return PublishedResult.continuation(
                 publication_state="tool_execution_required",
-                map_action=map_action,
-                pending_tool_call_id=self.pending_tool_call_id,
-                continuation_token=self.continuation_token,
+                map_action=self.result.map_action,
+                pending_tool_call_id=self.result.tool_call_id,
+                continuation_token=self.result.continuation_token,
             )
-        effective_state = "published" if self.publication_state in {"published", "grounded"} else self.publication_state
-        if effective_state == "published" and self.answer is not None:
-            text = self.answer.answer if isinstance(self.answer, GeneratedAnswer) else str(self.answer)
+        if isinstance(self.result, (DirectAnswerResult, KnowledgeAnswerResult)):
             return PublishedResult.publish(
-                text=text,
+                text=self.result.text,
                 publication_state="published",
                 map_action=None,
             )
-        if effective_state in {"clarification", "clarification_required"} and self.clarification:
+        if isinstance(self.result, ClarificationRequired):
             return PublishedResult.publish(
-                text=self.clarification,
+                text=self.result.question,
                 publication_state="clarification_required",
                 map_action=None,
             )
-        if effective_state == "limitation" and self.limitation:
+        if isinstance(self.result, SafeLimitation):
             return PublishedResult.publish(
-                text=self.limitation,
+                text=self.result.message,
                 publication_state="limitation",
                 map_action=None,
             )
         return PublishedResult.safe_fallback(
-            publication_state=self.publication_state,
-            fallback_text=self.limitation or "答案未通过发布契约，未发布。",
+            publication_state=self.result.reason,
+            fallback_text=self.result.message,
         )
 
 
@@ -348,8 +470,7 @@ class AgentRuntime:
                     payload={
                         "output": receipt.get("output"),
                         "error": receipt.get("error"),
-                        "receipt": browser_receipt_summary(receipt),
-                        **({"error": safe_error("TOOL_FAILED")} if receipt_status == "failed" else {}),
+                        "effect": receipt.get("effect") or {},
                         "map_context": receipt.get("map_context") or {},
                     },
                     is_terminal=False,
@@ -857,6 +978,7 @@ class AgentRuntime:
                 metadata=effective_request_context,
                 current_turn_id=turn_id,
                 conversation_memory=session.conversation_memory,
+                identity_resolution=session.identity_resolution,
             )
 
             from app.services.agent.controller_protocol import ExecutableActionState
@@ -868,7 +990,7 @@ class AgentRuntime:
             action_state = ExecutableActionState.compute(
                 registry=registry,
                 map_context=map_ctx if isinstance(map_ctx, Mapping) else None,
-                identity_resolution=session.identity_resolution,
+                identity_resolution=frame.identity_resolution,
                 has_evidence=has_evidence,
                 selectable_evidence_ids=selectable_ids,
                 provider_health=provider_health,
@@ -1332,7 +1454,7 @@ class AgentRuntime:
                             "tool_name": observation.tool_name,
                             "tool_call_id": observation.tool_call_id,
                             "status": observation.status,
-                            "error": safe_error("TOOL_FAILED"),
+                            "error": safe_error("TOOL_TIMEOUT" if str(exc).startswith("TOOL_TIMEOUT:") else "TOOL_FAILED"),
                             "result_summary": {},
                         },
                     ),
@@ -1784,6 +1906,7 @@ class AgentRuntime:
                     event_listener,
                 )
                 repaired_ok = False
+                repair_failure_code: str | None = None
                 if repair_scope.get("editable_units") and hasattr(self.answer_generator, "generate_repair"):
                     try:
                         repair_kwargs = {
@@ -1805,78 +1928,116 @@ class AgentRuntime:
                                 repair_kwargs,
                             )
                         )
-                        validate_answer_repair_draft(answer, answer_v2, repair_scope)
-                        _, snapshot_rev_2 = self.context_engine.project_for_reviewer(
-                            review_frame,
-                            draft_answer=answer_v2.answer,
-                        )
-                        await self._save_snapshot_audited(
-                            snapshot=snapshot_rev_2,
-                            session=session,
-                            request=request,
-                            stage="reviewer_repair",
-                            session_events=session.events,
-                            turn_events=turn_events,
-                            event_listener=event_listener,
-                        )
-                        reviewer_2_kwargs = {
-                            "question": question,
-                            "answer": answer_v2,
-                            "snapshot": snapshot,
-                            "stage_policy": stage_policy,
-                            "model_name": main_model_name,
-                            "audit_context": {
-                                "principal_id": request.principal_id,
-                                "session_id": session.session_id,
-                                "turn_id": turn_id,
-                                "trace_id": trace_id,
-                                "context_snapshot_id": snapshot_rev_2.snapshot_id,
-                            },
-                        }
-                        review_id_2 = f"review-{uuid4().hex}"
-                        await self._append_event(
-                            request.principal_id, session.events, turn_events,
-                            AgentEvent(event_type="review_started", session_id=session.session_id,
-                                       turn_id=turn_id, trace_id=trace_id,
-                                       payload={"review_id": review_id_2, "attempt": 2}),
-                            event_listener,
-                        )
+                    except AnswerGenerationError:
+                        repair_failure_code = "REPAIR_PROTOCOL_INVALID"
+                    except Exception:
+                        repair_failure_code = "REPAIR_MODEL_FAILED"
+
+                    if repair_failure_code is None:
                         try:
-                            review_2 = await self.reviewer.review(
-                            **_supported_kwargs(self.reviewer.review, reviewer_2_kwargs)
-                            )
+                            validate_answer_repair_draft(answer, answer_v2, repair_scope)
                         except Exception:
+                            repair_failure_code = "REPAIR_CONTRACT_VIOLATION"
+
+                    if repair_failure_code is None:
+                        try:
+                            _, snapshot_rev_2 = self.context_engine.project_for_reviewer(
+                                review_frame,
+                                draft_answer=answer_v2.answer,
+                            )
+                            await self._save_snapshot_audited(
+                                snapshot=snapshot_rev_2,
+                                session=session,
+                                request=request,
+                                stage="reviewer_repair",
+                                session_events=session.events,
+                                turn_events=turn_events,
+                                event_listener=event_listener,
+                            )
+                            reviewer_2_kwargs = {
+                                "question": question,
+                                "answer": answer_v2,
+                                "snapshot": snapshot,
+                                "stage_policy": stage_policy,
+                                "model_name": main_model_name,
+                                "audit_context": {
+                                    "principal_id": request.principal_id,
+                                    "session_id": session.session_id,
+                                    "turn_id": turn_id,
+                                    "trace_id": trace_id,
+                                    "context_snapshot_id": snapshot_rev_2.snapshot_id,
+                                },
+                            }
+                            review_id_2 = f"review-{uuid4().hex}"
+                            await self._append_event(
+                                request.principal_id, session.events, turn_events,
+                                AgentEvent(event_type="review_started", session_id=session.session_id,
+                                           turn_id=turn_id, trace_id=trace_id,
+                                           payload={"review_id": review_id_2, "attempt": 2}),
+                                event_listener,
+                            )
+                            try:
+                                review_2 = await self.reviewer.review(
+                                    **_supported_kwargs(self.reviewer.review, reviewer_2_kwargs)
+                                )
+                            except Exception:
+                                await self._append_event(
+                                    request.principal_id, session.events, turn_events,
+                                    AgentEvent(event_type="review_completed", session_id=session.session_id,
+                                               turn_id=turn_id, trace_id=trace_id,
+                                               payload={"review_id": review_id_2, "attempt": 2,
+                                                        "error": safe_error("REVIEW2_FAILED")}),
+                                    event_listener,
+                                )
+                                raise
                             await self._append_event(
                                 request.principal_id, session.events, turn_events,
                                 AgentEvent(event_type="review_completed", session_id=session.session_id,
                                            turn_id=turn_id, trace_id=trace_id,
                                            payload={"review_id": review_id_2, "attempt": 2,
-                                                    "error": safe_error("REVIEW_FAILED")}),
+                                                    "verdict": str(getattr(review_2, "verdict", "") or "UNKNOWN").upper(),
+                                                    "finding_count": len(getattr(review_2, "findings", ()) or ())}),
                                 event_listener,
                             )
-                            raise
-                        await self._append_event(
-                            request.principal_id, session.events, turn_events,
-                            AgentEvent(event_type="review_completed", session_id=session.session_id,
-                                       turn_id=turn_id, trace_id=trace_id,
-                                       payload={"review_id": review_id_2, "attempt": 2,
-                                                "verdict": str(getattr(review_2, "verdict", "") or "UNKNOWN").upper(),
-                                                "finding_count": len(getattr(review_2, "findings", ()) or ())}),
-                            event_listener,
-                        )
-                        if await self._is_cancellation_requested(
-                            request.principal_id,
-                            session.session_id,
-                            turn_id,
-                        ):
-                            return await cancelled_result()
-                        verdict_2 = str(getattr(review_2, "verdict", "")).strip().upper()
-                        if verdict_2 in {"SUPPORTED", "PASS", "PASSED"}:
-                            answer = answer_v2
-                            review = review_2
-                            repaired_ok = True
-                    except Exception:
-                        repaired_ok = False
+                            if await self._is_cancellation_requested(
+                                request.principal_id,
+                                session.session_id,
+                                turn_id,
+                            ):
+                                return await cancelled_result()
+                            verdict_2 = str(getattr(review_2, "verdict", "")).strip().upper()
+                            if verdict_2 in {"SUPPORTED", "PASS", "PASSED"}:
+                                answer = answer_v2
+                                review = review_2
+                                repaired_ok = True
+                            else:
+                                repair_failure_code = "REVIEW2_REJECTED"
+                        except Exception:
+                            if repair_failure_code is None:
+                                repair_failure_code = "REVIEW2_FAILED"
+
+                    await self._append_event(
+                        request.principal_id,
+                        session.events,
+                        turn_events,
+                        AgentEvent(
+                            event_type="answer_repair_completed",
+                            session_id=session.session_id,
+                            turn_id=turn_id,
+                            trace_id=trace_id,
+                            payload=(
+                                {"outcome": "succeeded"}
+                                if repaired_ok
+                                else {
+                                    "outcome": "failed",
+                                    "error": safe_error(
+                                        repair_failure_code or "REPAIR_MODEL_FAILED"
+                                    ),
+                                }
+                            ),
+                        ),
+                        event_listener,
+                    )
 
                 if not repaired_ok:
                     limitation = "答案未通过证据审查，未发布。"
@@ -1932,7 +2093,7 @@ class AgentRuntime:
                 session_id=session.session_id,
                 turn_id=turn_id,
                 trace_id=trace_id,
-                payload={"state": "published"},
+                payload={"state": "published", "citations": list(answer.citations)},
             ),
             event_listener,
         )

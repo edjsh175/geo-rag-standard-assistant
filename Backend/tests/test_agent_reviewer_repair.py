@@ -6,7 +6,11 @@ from datetime import datetime
 import pytest
 
 from app.models.search_models import DocumentResult
-from app.services.agent.answer_generator import AnswerUnit, GeneratedAnswer
+from app.services.agent.answer_generator import (
+    AnswerGenerationError,
+    AnswerUnit,
+    GeneratedAnswer,
+)
 from app.services.agent.contracts import FrozenEvidenceSnapshot
 from app.services.agent.events import AgentEvent
 from app.services.agent.reviewer import (
@@ -286,6 +290,10 @@ async def test_runtime_reviewer_repair_loop_success():
     assert result.answer.answer == "容积率4.0。限高60米。"
     event_types = [ev.event_type for ev in result.events]
     assert "answer_repair_scope_created" in event_types
+    repair_events = [
+        ev for ev in result.events if ev.event_type == "answer_repair_completed"
+    ]
+    assert repair_events[-1].payload["outcome"] == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -359,3 +367,126 @@ async def test_runtime_reviewer_repair_loop_second_failure_fail_closes():
     assert result.publication_state == "review_rejected"
     assert result.answer is None
     assert "未通过证据审查" in (result.limitation or "")
+    repair_events = [
+        ev for ev in result.events if ev.event_type == "answer_repair_completed"
+    ]
+    assert repair_events[-1].payload["error"]["code"] == "REVIEW2_REJECTED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_mode", "expected_code"),
+    [
+        ("protocol", "REPAIR_PROTOCOL_INVALID"),
+        ("model", "REPAIR_MODEL_FAILED"),
+        ("contract", "REPAIR_CONTRACT_VIOLATION"),
+        ("review2", "REVIEW2_FAILED"),
+    ],
+)
+async def test_runtime_repair_failure_stage_is_classified(
+    failure_mode: str,
+    expected_code: str,
+) -> None:
+    snapshot = make_snapshot()
+
+    class FakeController:
+        async def decide(self, **kwargs):
+            return ToolCall(
+                tool_call_id="c1",
+                name="compose_answer",
+                arguments={"selected_evidence_ids": ["ev-1", "ev-2"]},
+            )
+
+    class FailureAnswerGenerator:
+        async def generate(self, **kwargs):
+            return GeneratedAnswer(
+                kind="knowledge_answer",
+                answer="容积率4.0。限高100米。",
+                citations=("E1", "E2"),
+                units=(
+                    AnswerUnit(unit_id="unit-1", text="容积率4.0。", citations=("E1",)),
+                    AnswerUnit(unit_id="unit-2", text="限高100米。", citations=("E2",)),
+                ),
+            )
+
+        async def generate_repair(self, **kwargs):
+            if failure_mode == "protocol":
+                raise AnswerGenerationError("invalid repair protocol")
+            if failure_mode == "model":
+                raise RuntimeError("provider failed")
+            if failure_mode == "contract":
+                return GeneratedAnswer(
+                    kind="knowledge_answer",
+                    answer="容积率4.5。限高60米。",
+                    citations=("E1", "E2"),
+                    units=(
+                        AnswerUnit(unit_id="unit-1", text="容积率4.5。", citations=("E1",)),
+                        AnswerUnit(unit_id="unit-2", text="限高60米。", citations=("E2",)),
+                    ),
+                )
+            return GeneratedAnswer(
+                kind="knowledge_answer",
+                answer="容积率4.0。限高60米。",
+                citations=("E1", "E2"),
+                units=(
+                    AnswerUnit(unit_id="unit-1", text="容积率4.0。", citations=("E1",)),
+                    AnswerUnit(unit_id="unit-2", text="限高60米。", citations=("E2",)),
+                ),
+            )
+
+    class FailureReviewer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def review(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return ReviewResult(
+                    verdict="OVERSTATED",
+                    findings=(
+                        ReviewFinding(unit_id="unit-1", status="SUPPORTED", citations=("E1",)),
+                        ReviewFinding(unit_id="unit-2", status="OVERSTATED", citations=("E2",)),
+                    ),
+                )
+            if failure_mode == "review2":
+                raise RuntimeError("reviewer 2 failed")
+            return ReviewResult(
+                verdict="SUPPORTED",
+                findings=(
+                    ReviewFinding(unit_id="unit-1", status="SUPPORTED", citations=("E1",)),
+                    ReviewFinding(unit_id="unit-2", status="SUPPORTED", citations=("E2",)),
+                ),
+            )
+
+    runtime = AgentRuntime(
+        retrieval_port=None,
+        controller=FakeController(),
+        answer_generator=FailureAnswerGenerator(),
+        reviewer=FailureReviewer(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+    session = runtime.session_store.get_or_create(
+        principal_id="u1",
+        session_id=f"failure-{failure_mode}",
+    )
+    for item in snapshot.items:
+        session.evidence_ledger._items[item.evidence_id] = item
+    session.evidence_ledger._working_by_turn["turn-1"] = [
+        item.evidence_id for item in snapshot.items
+    ]
+
+    result = await runtime.run(
+        AgentRunRequest(
+            question="规划指标要求？",
+            session_id=f"failure-{failure_mode}",
+            principal_id="u1",
+            reviewer_enabled=True,
+        )
+    )
+
+    assert result.publication_state == "review_rejected"
+    repair_events = [
+        ev for ev in result.events if ev.event_type == "answer_repair_completed"
+    ]
+    assert repair_events[-1].payload["outcome"] == "failed"
+    assert repair_events[-1].payload["error"]["code"] == expected_code

@@ -1,6 +1,5 @@
 import { AxiosError } from 'axios';
-import { apiPost, apiPostSse } from '../lib/api/contractClient';
-import { apiClient } from '../lib/api/config';
+import { apiDelete, apiGet, apiPost, apiPostSse } from '../lib/api/contractClient';
 import type { components } from '../lib/api/generated/schema';
 import { executeBrowserTool, getBrowserMapContext } from '../gis/browserBridge';
 import type { BrowserMapAction, BrowserToolReceipt } from '../gis/contracts';
@@ -34,6 +33,7 @@ export interface ChatResponse {
   timestamp: string;
   quota?: DemoQuotaStatus;
   map_action?: MapAction;
+  transport_error?: string;
 }
 
 export const withActiveMapContext = (
@@ -82,6 +82,7 @@ const toChatResponse = (
   timestamp: new Date().toISOString(),
   quota: response.quota ?? undefined,
   map_action: warning ? undefined : response.map_action ?? undefined,
+  transport_error: warning,
 });
 
 const getRequestFailureMessage = (error: unknown): string => {
@@ -187,7 +188,8 @@ export const chatService = {
     history: ChatHistoryMessage[] = [],
     signal?: AbortSignal,
     followUpContext?: FollowUpContext,
-    onAgentEvent?: (event: AgentEventMessage) => void
+    onAgentEvent?: (event: AgentEventMessage) => void,
+    reviewerEnabled = false,
   ): Promise<ChatResponse> {
     if (onAgentEvent) {
       return this.sendMessageStream(
@@ -197,7 +199,8 @@ export const chatService = {
         history,
         followUpContext,
         onAgentEvent,
-        signal
+        signal,
+        reviewerEnabled,
       );
     }
     try {
@@ -209,6 +212,7 @@ export const chatService = {
         session_id: conversationId,
         history,
         follow_up_context: followUpContext,
+        reviewer_enabled: reviewerEnabled,
       });
 
       const searchResponse = await this.runAgentRequest(searchRequest, signal);
@@ -250,29 +254,21 @@ export const chatService = {
    * 获取对话历史
    */
   async getConversationHistory(conversationId: string): Promise<ChatMessage[]> {
-    try {
-      if (!conversationId) return [];
-      const res = await apiClient.get<{
-        messages?: Array<{
-          role: 'user' | 'assistant';
-          content: string;
-          timestamp?: string;
-          references?: DocumentResult[];
-        }>;
-      }>(`/agent/sessions/${encodeURIComponent(conversationId)}`);
-      if (Array.isArray(res.data?.messages)) {
-        return res.data.messages.map((m) => ({
-          role: m.role,
-          content: m.content,
-          references: m.references,
-          timestamp: m.timestamp,
-        }));
-      }
-      return [];
-    } catch (error) {
-      console.warn(`获取对话历史失败 (ID: ${conversationId}):`, error);
-      return [];
-    }
+    if (!conversationId) return [];
+    const detail = await apiGet('/api/agent/sessions/{session_id}', {
+      params: { path: { session_id: conversationId } },
+    }) as { messages?: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+      timestamp?: string;
+      references?: DocumentResult[];
+    }> };
+    return Array.isArray(detail?.messages) ? detail.messages.map((message) => ({
+      role: message.role,
+      content: message.content,
+      references: message.references,
+      timestamp: message.timestamp,
+    })) : [];
   },
 
   /**
@@ -288,7 +284,9 @@ export const chatService = {
   async deleteConversation(conversationId: string): Promise<void> {
     try {
       if (!conversationId) return;
-      await apiClient.delete(`/agent/sessions/${encodeURIComponent(conversationId)}`);
+      await apiDelete('/api/agent/sessions/{session_id}', {
+        params: { path: { session_id: conversationId } },
+      });
     } catch (error) {
       console.error(`删除对话失败 (ID: ${conversationId}):`, error);
     }
@@ -304,52 +302,82 @@ export const chatService = {
     history: ChatHistoryMessage[] = [],
     followUpContext?: FollowUpContext,
     onAgentEvent?: (event: AgentEventMessage) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    reviewerEnabled = false,
   ): Promise<ChatResponse> {
+    let latestSessionId = conversationId;
+    let pendingResponse: SearchResponse | null = null;
     try {
-      let finalResponse: SearchResponse | null = null;
-      await apiPostSse(
-        '/api/search/query/stream',
-        withActiveMapContext({
+      let request = withActiveMapContext({
           query: message,
           search_mode: 'hybrid',
           top_k: 10,
           threshold: 0.6,
           use_rerank: true,
           use_generation: true,
+          reviewer_enabled: reviewerEnabled,
           session_id: conversationId,
           history,
           follow_up_context: followUpContext,
-        }),
-        (eventType, data) => {
+        });
+      const checkAborted = () => {
+        if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+      };
+      // Each browser receipt resumes the same runtime stream, including subsequent handoffs.
+      for (let browserStep = 0; browserStep <= 8; browserStep += 1) {
+        checkAborted();
+        let finalResponse: SearchResponse | null = null;
+        await apiPostSse('/api/search/query/stream', request, (eventType, data) => {
+          if (signal?.aborted) return;
           if (eventType === 'result') {
             finalResponse = JSON.parse(data) as SearchResponse;
+            const sessionId = (finalResponse as SearchResponse).session_id;
+            if (sessionId) {
+              latestSessionId = sessionId;
+              onAgentEvent?.({
+                event_type: 'session_started',
+                session_id: sessionId,
+                turn_id: '',
+                trace_id: (finalResponse as SearchResponse).trace_id || undefined,
+                payload: {},
+              });
+            }
           } else if (eventType === 'chunk' || eventType === 'token') {
             onChunk?.(data);
           } else {
+            let parsed: Record<string, unknown>;
             try {
-              const parsed = JSON.parse(data);
+              parsed = JSON.parse(data);
+            } catch {
+              // Non-JSON text is not an Agent fact and cannot create a process row.
+              onChunk?.(data);
+              return;
+            }
+              if (typeof parsed.session_id === 'string' && parsed.session_id) {
+                latestSessionId = parsed.session_id;
+              }
               const agentEvent: AgentEventMessage = {
                 event_type: eventType,
-                session_id: parsed.session_id || '',
-                turn_id: parsed.turn_id || '',
-                trace_id: parsed.trace_id,
-                payload: parsed.payload || {},
-                created_at: parsed.created_at,
+                session_id: typeof parsed.session_id === 'string' ? parsed.session_id : '',
+                turn_id: typeof parsed.turn_id === 'string' ? parsed.turn_id : '',
+                trace_id: typeof parsed.trace_id === 'string' ? parsed.trace_id : undefined,
+                event_id: typeof parsed.event_id === 'string' ? parsed.event_id : undefined,
+                sequence: typeof parsed.sequence === 'number' ? parsed.sequence : undefined,
+                payload: parsed.payload && typeof parsed.payload === 'object' && !Array.isArray(parsed.payload)
+                  ? parsed.payload as AgentEventMessage['payload'] : {},
+                created_at: typeof parsed.created_at === 'string' ? parsed.created_at : undefined,
               };
               onAgentEvent?.(agentEvent);
-            } catch {
-              onChunk?.(data);
-            }
           }
-        },
-        { signal }
-      );
-
-      if (!finalResponse) throw new Error('stream completed without result event');
-
-      if ((finalResponse as SearchResponse).publication_state === 'tool_execution_required') {
+        }, { signal });
+        checkAborted();
+        if (!finalResponse) throw new Error('stream completed without result event');
         const resp = finalResponse as SearchResponse;
+        if (resp.publication_state !== 'tool_execution_required') return toChatResponse(resp, latestSessionId);
+        pendingResponse = resp;
+        if (browserStep === 8) {
+          throw new BrowserContinuationError(resp, 'gis', 'Browser GIS continuation exceeded the client safety limit.');
+        }
         if (!resp.trace_id || !resp.pending_tool_call_id || !resp.continuation_token || !resp.map_action) {
           throw new BrowserContinuationError(
             resp,
@@ -372,33 +400,30 @@ export const chatService = {
             error
           );
         }
-        finalResponse = await this.runAgentRequest({
-          query: message,
-          search_mode: 'hybrid',
-          top_k: 10,
-          threshold: 0.6,
-          use_rerank: true,
-          use_generation: true,
-          session_id: resp.session_id || conversationId,
+        checkAborted();
+        request = {
+          ...request,
+          session_id: resp.session_id || latestSessionId,
           history: [],
-          follow_up_context: followUpContext,
           map_context: receipt.map_context,
           continuation_token: resp.continuation_token,
           browser_tool_receipt: receipt,
-        }, signal);
+        };
       }
-
-      return toChatResponse(finalResponse, conversationId);
+      throw new Error('stream completed without a final response');
     } catch (error) {
       console.error('流式聊天失败:', error);
+      if (signal?.aborted) throw error;
       if (error instanceof BrowserContinuationError) {
-        return toChatResponse(error.response, conversationId, '地图联动未完成');
+        return toChatResponse(error.response, latestSessionId, '地图联动未完成');
       }
+      if (pendingResponse) return toChatResponse(pendingResponse, latestSessionId, '地图联动续接中断，请刷新查看服务端执行状态。');
       return {
         message: getRequestFailureMessage(error),
-        conversation_id: conversationId || `conv_${Date.now()}`,
+        conversation_id: latestSessionId || `conv_${Date.now()}`,
         references: [],
         timestamp: new Date().toISOString(),
+        transport_error: '连接中断，已保留收到的执行过程。',
       };
     }
   },

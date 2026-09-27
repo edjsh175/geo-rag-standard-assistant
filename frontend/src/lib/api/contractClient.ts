@@ -149,7 +149,8 @@ export async function apiPostSse<P extends PathsWithMethod<'post'>>(
     signal: options?.signal,
   });
   if (!response.ok || !response.body) {
-    throw new Error(`stream request failed: ${response.status}`);
+    const detail = await response.text().catch(() => '');
+    throw new Error(`stream request failed: ${response.status}${detail ? ` ${detail}` : ''}`);
   }
 
   const reader = response.body.getReader();

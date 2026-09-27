@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 from app.services.agent.events import AgentEvent
+from app.services.agent.event_projection import is_public_event, public_event_payload
 from app.services.agent.store import AgentStore, PostgresAgentStore
 
 
@@ -84,12 +85,13 @@ class AgentSessionService:
                 frozen_ev = next((e for e in reversed(turn_evs) if e.event_type == "evidence_frozen"), None)
                 selected_ids = set((frozen_ev.payload.get("evidence_ids") or frozen_ev.payload.get("selected_evidence_ids") or []) if frozen_ev else [])
                 answer_ev = next((e for e in reversed(turn_evs) if e.event_type == "answer_generated"), None)
-                cited_ids = set(answer_ev.payload.get("citations") or []) if answer_ev else set()
+                has_cited_ids = "citations" in payload or (answer_ev is not None and "citations" in answer_ev.payload)
+                cited_ids = set(payload["citations"] or []) if "citations" in payload else set(answer_ev.payload.get("citations") or []) if answer_ev else set()
                 chosen_items = [
                     item for item in evidence_items
                     if item.document_id
                     and item.source not in {"browser_gis", "postgis"}
-                    and ((item.citation_id in cited_ids) if cited_ids else (item.evidence_id in selected_ids))
+                    and ((item.citation_id in cited_ids) if has_cited_ids else (item.evidence_id in selected_ids))
                 ]
                 references = [
                     {
@@ -101,7 +103,7 @@ class AgentSessionService:
                     }
                     for item in chosen_items
                 ]
-                if not answer_ev and not frozen_ev:
+                if not has_cited_ids and not answer_ev and not frozen_ev:
                     legacy_results = payload.get("results")
                     references = legacy_results if isinstance(legacy_results, list) else []
                 messages.append({
@@ -110,7 +112,7 @@ class AgentSessionService:
                     "content": answer_text,
                     "timestamp": pub_ev.created_at.isoformat(),
                     "turn_id": turn_id,
-                    "references": references or payload.get("results") or payload.get("citations") or [],
+                    "references": references,
                     "map_action": payload.get("map_action"),
                     "metadata": {
                         "publication_state": publication_state,
@@ -148,10 +150,10 @@ class AgentSessionService:
                         "event_id": e.event_id,
                         "event_type": e.event_type,
                         "sequence": e.sequence,
-                        "payload": dict(e.payload),
+                        "payload": public_event_payload(e.event_type, e.payload),
                         "created_at": e.created_at.isoformat(),
                     }
-                    for e in turn_evs
+                    for e in turn_evs if is_public_event(e.event_type)
                 ],
             })
 

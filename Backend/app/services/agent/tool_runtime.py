@@ -148,14 +148,6 @@ class ToolRuntime:
                 tool_call_id=call.tool_call_id,
                 context=self.execution_context,
             )
-            timeout_seconds = self.policy.effective_timeout_seconds(
-                spec=spec,
-                runtime_remaining_seconds=(
-                    self.resource_fuse.remaining_seconds
-                    if self.resource_fuse is not None
-                    else None
-                ),
-            )
         except (KeyError, ToolPolicyViolation) as exc:
             raise ToolExecutionError(str(exc)) from exc
 
@@ -188,8 +180,8 @@ class ToolRuntime:
                 spec=self.registry.get(call.name),
                 runtime_remaining_seconds=(self.resource_fuse.remaining_seconds if self.resource_fuse else None),
             )
-        except (KeyError, ToolPolicyViolation):
-            raise ToolExecutionError("tool is unavailable or not authorized") from None
+        except (KeyError, ToolPolicyViolation) as exc:
+            raise ToolExecutionError(str(exc)) from exc
 
         if self.resource_fuse is not None:
             self.resource_fuse.consume_step(tool_name=call.name)

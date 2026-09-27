@@ -26,12 +26,9 @@ from app.services.agent.structured_candidate import (
     execute_structured_candidate,
     extract_json_object,
 )
+from app.services.agent.controller_protocol import ControllerOutputError
 from app.services.agent.tool_runtime import ToolObservation
 from app.services.agent.tools import ToolRegistry
-
-
-class ControllerOutputError(ValueError):
-    """Raised when the Controller fails its structured decision contract."""
 
 
 class MainController:

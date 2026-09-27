@@ -47,7 +47,12 @@ class GroundingReviewer:
         audit_context: Mapping[str, Any] | None = None,
     ) -> ReviewResult:
         evidence_text = "\n\n".join(
-            f"[{item.citation_id}] {item.text}" for item in snapshot.items
+            (
+                f"[{item.citation_id}] "
+                f"evidence_class={item.evidence_class}; support_scope={item.support_scope}\n"
+                f"{item.text}"
+            )
+            for item in snapshot.items
         )
         messages = (
                 {
@@ -71,6 +76,12 @@ class GroundingReviewer:
         execution = stage_policy.for_stage("reviewer")
         call_id = str(uuid4())
         deadline_at = monotonic() + execution.timeout_seconds
+        expected_unit_ids = tuple(unit.unit_id for unit in answer.units)
+        allowed_citations = tuple(item.citation_id for item in snapshot.items)
+        response_schema = self._output_schema(
+            expected_unit_ids=expected_unit_ids,
+            allowed_citations=allowed_citations,
+        )
 
         async def generate_candidate(attempt):
             remaining = deadline_at - monotonic()
@@ -89,6 +100,7 @@ class GroundingReviewer:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
+                response_schema=response_schema,
                 audit_context={
                     **dict(audit_context or {}),
                     "frozen_evidence_snapshot_id": snapshot.snapshot_id,
@@ -96,7 +108,6 @@ class GroundingReviewer:
             )
             return (await self.model_client.complete(request)).content
 
-        expected_unit_ids = tuple(unit.unit_id for unit in answer.units)
         try:
             return await execute_structured_candidate(
                 generate=generate_candidate,
@@ -104,10 +115,58 @@ class GroundingReviewer:
                     content,
                     snapshot=snapshot,
                     expected_unit_ids=expected_unit_ids,
+                    answer=answer,
                 ),
             )
         except StructuredCandidateProtocolError as exc:
             raise ValueError("reviewer returned invalid structured output") from exc
+
+    @staticmethod
+    def _output_schema(
+        *,
+        expected_unit_ids: tuple[str, ...],
+        allowed_citations: tuple[str, ...],
+    ) -> dict[str, Any]:
+        finding_count = len(expected_unit_ids)
+        return {
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["SUPPORTED", "UNSUPPORTED", "OVERSTATED"],
+                },
+                "findings": {
+                    "type": "array",
+                    "minItems": finding_count,
+                    "maxItems": finding_count,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "unit_id": {
+                                "type": "string",
+                                "enum": list(expected_unit_ids),
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["SUPPORTED", "UNSUPPORTED", "OVERSTATED"],
+                            },
+                            "citations": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": list(allowed_citations),
+                                },
+                                "uniqueItems": True,
+                            },
+                        },
+                        "required": ["unit_id", "status", "citations"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["verdict", "findings"],
+            "additionalProperties": False,
+        }
 
     @staticmethod
     def _parse(
@@ -115,6 +174,7 @@ class GroundingReviewer:
         *,
         snapshot: FrozenEvidenceSnapshot,
         expected_unit_ids: tuple[str, ...],
+        answer: GeneratedAnswer,
     ) -> ReviewResult:
         payload = extract_json_object(content)
 
@@ -126,7 +186,9 @@ class GroundingReviewer:
         if normalized_verdict not in {"SUPPORTED", "UNSUPPORTED", "OVERSTATED"}:
             raise ValueError("reviewer returned invalid verdict")
 
-        allowed = {item.citation_id for item in snapshot.items}
+        evidence_by_citation = {item.citation_id: item for item in snapshot.items}
+        allowed = set(evidence_by_citation)
+        answer_units = {unit.unit_id: unit for unit in answer.units}
         findings: list[ReviewFinding] = []
         seen_unit_ids: set[str] = set()
         for raw in raw_findings:
@@ -150,6 +212,24 @@ class GroundingReviewer:
                 raise ValueError("reviewer returned invalid finding status")
             if normalized_status == "SUPPORTED" and not citations:
                 raise ValueError("supported review finding requires citations")
+            if normalized_status == "SUPPORTED":
+                answer_unit = answer_units[unit_id]
+                if set(citations) != set(answer_unit.citations):
+                    raise ValueError(
+                        "supported review finding must preserve answer unit citation binding"
+                    )
+                if (
+                    answer.kind == "knowledge_answer"
+                    and citations
+                    and all(
+                        evidence_by_citation[citation].evidence_class
+                        == "EXECUTION_RECEIPT"
+                        for citation in citations
+                    )
+                ):
+                    raise ValueError(
+                        "execution receipts cannot solely support a business knowledge claim"
+                    )
             seen_unit_ids.add(unit_id)
             findings.append(
                 ReviewFinding(

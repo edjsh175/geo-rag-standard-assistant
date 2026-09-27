@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeAlias
 
+from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.contracts import MapAction
 
 
@@ -27,6 +29,8 @@ _BLOCKED_STATES = {
     "review_failed",
     "review_rejected",
     "insufficient_evidence",
+    "review_budget_exceeded",
+    "cancelled",
 }
 
 
@@ -106,17 +110,36 @@ class PublishedResult:
 
 @dataclass(frozen=True, slots=True)
 class DirectAnswerResult:
-    text: str
+    answer: GeneratedAnswer
     user_visible: bool = True
     logical_turn_completed: bool = True
+
+    def __post_init__(self) -> None:
+        if self.answer.kind != "direct_answer" or not self.answer.answer.strip():
+            raise PublicationStateError("DirectAnswerResult requires a direct_answer draft")
+
+    @property
+    def text(self) -> str:
+        return self.answer.answer
 
 
 @dataclass(frozen=True, slots=True)
 class KnowledgeAnswerResult:
-    text: str
-    citations: tuple[str, ...]
+    answer: GeneratedAnswer
     user_visible: bool = True
     logical_turn_completed: bool = True
+
+    def __post_init__(self) -> None:
+        if self.answer.kind != "knowledge_answer" or not self.answer.answer.strip():
+            raise PublicationStateError("KnowledgeAnswerResult requires a knowledge_answer draft")
+
+    @property
+    def text(self) -> str:
+        return self.answer.answer
+
+    @property
+    def citations(self) -> tuple[str, ...]:
+        return self.answer.citations
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +169,17 @@ class SafeLimitation:
 @dataclass(frozen=True, slots=True)
 class NoSafeAnswer:
     reason: str
+    message: str
     user_visible: bool = True
     logical_turn_completed: bool = True
+
+
+AgentPublicationResult: TypeAlias = (
+    DirectAnswerResult
+    | KnowledgeAnswerResult
+    | ClarificationRequired
+    | BrowserToolExecutionRequired
+    | SafeLimitation
+    | NoSafeAnswer
+)
 

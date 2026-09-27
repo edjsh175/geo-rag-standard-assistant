@@ -230,14 +230,19 @@ async def test_s06_trace_service_aggregates_turn_and_trace_by_id():
 
 def test_s08_agent_run_result_and_search_response_budget_fields():
     """Verify remaining_steps and remaining_seconds exist and serialize cleanly on AgentRunResult and SearchResponse."""
+    from app.services.agent.contracts import MapAction
+    from app.services.agent.publication import BrowserToolExecutionRequired
+
     result = AgentRunResult(
         session_id="sess-b",
         turn_id="turn-1",
         trace_id="tr-1",
-        publication_state="tool_execution_required",
-        answer=None,
-        clarification=None,
-        limitation=None,
+        result=BrowserToolExecutionRequired(
+            tool_call_id="call-b",
+            tool_name="locate_map",
+            continuation_token="token-b",
+            map_action=MapAction(type="locate_map", target="map"),
+        ),
         frozen_evidence=None,
         review=None,
         events=(),
