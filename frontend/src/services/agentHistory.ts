@@ -1,5 +1,5 @@
 import { AxiosError } from 'axios';
-import { apiDelete, apiGet } from '../lib/api/contractClient';
+import { apiDelete, apiGet, apiPost } from '../lib/api/contractClient';
 import type { AuthUser } from './authService';
 import type { ChatMessage as AppChatMessage, Citation } from '../types';
 import { AgentEventProjector } from '../components/agent/eventProjector';
@@ -13,6 +13,14 @@ export interface AgentSessionDetail {
   session_id?: string;
   messages?: RawRecord[];
   turns?: Array<RawRecord & { turn_id?: string; trace_id?: string; events?: RawRecord[] }>;
+}
+
+export interface AgentSessionSummary {
+  session_id: string;
+  title: string;
+  status: string;
+  turn_count: number;
+  updated_at?: string | null;
 }
 
 const asRecord = (value: unknown): RawRecord =>
@@ -209,6 +217,40 @@ export async function fetchAgentSessionDetail(sessionId: string, signal?: AbortS
   }) as AgentSessionDetail;
 }
 
+export async function listAgentSessions(signal?: AbortSignal): Promise<AgentSessionSummary[]> {
+  const result = await apiGet('/api/agent/sessions', {
+    config: { signal },
+  });
+  if (!Array.isArray(result)) return [];
+  return result.flatMap((value) => {
+    const item = asRecord(value);
+    const sessionId = asString(item.session_id);
+    if (!sessionId) return [];
+    return [{
+      session_id: sessionId,
+      title: asString(item.title) || '新建对话',
+      status: asString(item.status) || 'active',
+      turn_count: typeof item.turn_count === 'number' ? item.turn_count : 0,
+      updated_at: asString(item.updated_at) || null,
+    }];
+  });
+}
+
+export async function createAgentSession(signal?: AbortSignal): Promise<AgentSessionSummary> {
+  const result = asRecord(await apiPost('/api/agent/sessions', undefined, {
+    config: { signal },
+  }));
+  const sessionId = asString(result.session_id);
+  if (!sessionId) throw new Error('Server did not return a session_id.');
+  return {
+    session_id: sessionId,
+    title: asString(result.title) || '新建对话',
+    status: asString(result.status) || 'active',
+    turn_count: typeof result.turn_count === 'number' ? result.turn_count : 0,
+    updated_at: asString(result.updated_at) || null,
+  };
+}
+
 async function fetchAdminTurnEvents(sessionId: string, turn: RawRecord & { turn_id?: string; trace_id?: string }, signal?: AbortSignal): Promise<AgentEventMessage[]> {
   const turnId = asString(turn.turn_id);
   if (!turnId) return [];
@@ -259,11 +301,7 @@ export async function restoreAgentSession(sessionId: string, user: Identity, sig
 }
 
 export async function deleteAgentSession(sessionId: string): Promise<void> {
-  try {
-    await apiDelete('/api/agent/sessions/{session_id}', {
-      params: { path: { session_id: sessionId } },
-    });
-  } catch (error) {
-    console.warn(`删除对话失败 (ID: ${sessionId}):`, error);
-  }
+  await apiDelete('/api/agent/sessions/{session_id}', {
+    params: { path: { session_id: sessionId } },
+  });
 }

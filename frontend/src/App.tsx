@@ -53,9 +53,14 @@ import { AgentEventProjector } from './components/agent/eventProjector';
 import type { AgentTurnViewModel } from './components/agent/types';
 import {
   AgentSessionNotFoundError,
+  clearAgentSessionId,
+  createAgentSession,
+  deleteAgentSession,
+  listAgentSessions,
   readAgentSessionId,
   restoreAgentSession,
   saveAgentSessionId,
+  type AgentSessionSummary,
 } from './services/agentHistory';
 
 type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
@@ -508,6 +513,8 @@ export default function App() {
   const [reviewerEnabled, setReviewerEnabled] = useState(false);
   const [activeTurn, setActiveTurn] = useState<AgentTurnViewModel | null>(null);
   const conversationIdRef = useRef<string | undefined>(undefined);
+  const [activeSessionId, setActiveSessionId] = useState<string | undefined>(undefined);
+  const [agentSessions, setAgentSessions] = useState<AgentSessionSummary[]>([]);
   const [isHistoryRestoring, setIsHistoryRestoring] = useState(false);
   const [historyRestoreError, setHistoryRestoreError] = useState(false);
   const [historyRetryKey, setHistoryRetryKey] = useState(0);
@@ -520,28 +527,39 @@ export default function App() {
     if (!user) return;
     let current = true;
     const controller = new AbortController();
-    const savedSessionId = readAgentSessionId(user);
     setHistoryRestoreError(false);
-    setIsHistoryRestoring(Boolean(savedSessionId));
-    if (!savedSessionId) {
-      conversationIdRef.current = undefined;
-      setMessages([createWelcomeMessage()]);
-      historyRestorePromiseRef.current = Promise.resolve(true);
-      return () => { current = false; };
-    }
-
-    conversationIdRef.current = savedSessionId;
+    setIsHistoryRestoring(true);
     const restoreTask = (async () => {
       try {
-        const restored = await restoreAgentSession(savedSessionId, user, controller.signal);
+        const sessions = await listAgentSessions(controller.signal);
         if (!current) return false;
-        conversationIdRef.current = restored.sessionId || savedSessionId;
+        setAgentSessions(sessions);
+        const savedSessionId = readAgentSessionId(user);
+        const sessionId = savedSessionId && sessions.some((item) => item.session_id === savedSessionId)
+          ? savedSessionId
+          : sessions[0]?.session_id;
+        if (!sessionId) {
+          conversationIdRef.current = undefined;
+          setActiveSessionId(undefined);
+          clearAgentSessionId(user);
+          setMessages([createWelcomeMessage()]);
+          return true;
+        }
+
+        conversationIdRef.current = sessionId;
+        setActiveSessionId(sessionId);
+        saveAgentSessionId(user, sessionId);
+        const restored = await restoreAgentSession(sessionId, user, controller.signal);
+        if (!current) return false;
+        conversationIdRef.current = restored.sessionId || sessionId;
+        setActiveSessionId(restored.sessionId || sessionId);
         setMessages(restored.messages.length ? restored.messages : [createWelcomeMessage()]);
         return true;
       } catch (error) {
         if (!current || controller.signal.aborted) return false;
         if (error instanceof AgentSessionNotFoundError) {
           conversationIdRef.current = undefined;
+          setActiveSessionId(undefined);
           setMessages([createWelcomeMessage()]);
           return true;
         }
@@ -559,6 +577,68 @@ export default function App() {
       controller.abort();
     };
   }, [user?.role, user?.username, user?.visitor_id, historyRetryKey]);
+
+  const refreshAgentSessions = useCallback(async () => {
+    const sessions = await listAgentSessions();
+    setAgentSessions(sessions);
+  }, []);
+
+  const selectAgentSession = useCallback(async (sessionId: string) => {
+    if (!user || sessionId === conversationIdRef.current) return;
+    setHistoryRestoreError(false);
+    setIsHistoryRestoring(true);
+    const task = (async () => {
+      try {
+        const restored = await restoreAgentSession(sessionId, user);
+        conversationIdRef.current = restored.sessionId || sessionId;
+        setActiveSessionId(restored.sessionId || sessionId);
+        saveAgentSessionId(user, restored.sessionId || sessionId);
+        setMessages(restored.messages.length ? restored.messages : [createWelcomeMessage()]);
+        return true;
+      } catch (error) {
+        if (error instanceof AgentSessionNotFoundError) {
+          await refreshAgentSessions();
+        }
+        console.warn('切换会话失败:', error);
+        setHistoryRestoreError(true);
+        return false;
+      } finally {
+        setIsHistoryRestoring(false);
+      }
+    })();
+    historyRestorePromiseRef.current = task;
+    await task;
+  }, [refreshAgentSessions, user]);
+
+  const handleCreateAgentSession = useCallback(async () => {
+    if (!user) return;
+    const created = await createAgentSession();
+    conversationIdRef.current = created.session_id;
+    setActiveSessionId(created.session_id);
+    saveAgentSessionId(user, created.session_id);
+    setAgentSessions((current) => [created, ...current.filter((item) => item.session_id !== created.session_id)]);
+    setMessages([createWelcomeMessage()]);
+    setActiveTurn(null);
+    setHistoryRestoreError(false);
+  }, [user]);
+
+  const handleDeleteAgentSession = useCallback(async (sessionId: string) => {
+    if (!user) return;
+    await deleteAgentSession(sessionId);
+    const remaining = agentSessions.filter((item) => item.session_id !== sessionId);
+    setAgentSessions(remaining);
+    if (sessionId !== conversationIdRef.current) return;
+
+    conversationIdRef.current = undefined;
+    setActiveSessionId(undefined);
+    clearAgentSessionId(user);
+    if (remaining.length > 0) {
+      await selectAgentSession(remaining[0].session_id);
+    } else {
+      setMessages([createWelcomeMessage()]);
+      setHistoryRestoreError(false);
+    }
+  }, [agentSessions, selectAgentSession, user]);
 
   const toggleLayer = (layer: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
@@ -720,6 +800,7 @@ export default function App() {
           if (abortController.signal.aborted || abortControllerRef.current !== abortController) return;
           if (agentEvent.session_id) {
             conversationIdRef.current = agentEvent.session_id;
+            setActiveSessionId(agentEvent.session_id);
             if (user) saveAgentSessionId(user, agentEvent.session_id);
           }
           if (agentEvent.event_type === 'session_started') return;
@@ -786,6 +867,7 @@ export default function App() {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
+      void refreshAgentSessions().catch((error) => console.warn('刷新会话列表失败:', error));
 
       // 如果有相关文档，更新搜索结果
       if (documents.length > 0) {
@@ -1206,6 +1288,13 @@ export default function App() {
               onVectorFilesSelected={handleVectorFilesSelected}
               reviewerEnabled={reviewerEnabled}
               onReviewerEnabledChange={setReviewerEnabled}
+              sessions={agentSessions}
+              activeSessionId={activeSessionId}
+              sessionLoading={isHistoryRestoring}
+              onRefreshSessions={refreshAgentSessions}
+              onCreateSession={handleCreateAgentSession}
+              onSelectSession={selectAgentSession}
+              onDeleteSession={handleDeleteAgentSession}
               isLoading={isChatLoading}
               activeTurn={activeTurn}
               onStopGeneration={handleStopGeneration}

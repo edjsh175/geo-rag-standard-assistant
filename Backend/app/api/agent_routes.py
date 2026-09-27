@@ -44,6 +44,16 @@ async def list_sessions(
     return await session_service.list_sessions(principal_id=principal, limit=limit)
 
 
+@router.post("/sessions", status_code=status.HTTP_201_CREATED)
+async def create_session(
+    current_user: UserIdentity = Depends(require_authenticated_user),
+    session_service: AgentSessionService = Depends(get_agent_session_service),
+) -> dict[str, Any]:
+    """Create a new empty server-owned Agent session."""
+    principal = _extract_principal(current_user)
+    return await session_service.create_session(principal_id=principal)
+
+
 @router.get("/sessions/{session_id}")
 async def get_session_detail(
     session_id: str,

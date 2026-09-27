@@ -105,6 +105,45 @@ async def test_session_service_delete_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_service_can_create_empty_server_owned_session() -> None:
+    store = InMemoryAgentStore()
+    service = AgentSessionService(session_store=store)
+
+    created = await service.create_session(principal_id="admin:alice")
+
+    assert created["session_id"]
+    assert created["status"] == "active"
+    assert created["turn_count"] == 0
+    assert created["title"] == "新建对话"
+    assert await service.get_session_detail(
+        principal_id="admin:alice",
+        session_id=created["session_id"],
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_session_list_uses_first_user_message_as_title() -> None:
+    store = InMemoryAgentStore()
+    service = AgentSessionService(session_store=store)
+    session = await store.get_or_create_session("admin:alice", "sess-title")
+    await store.save_session(session)
+    await store.append_event(
+        "admin:alice",
+        AgentEvent(
+            event_type="user_message",
+            session_id="sess-title",
+            turn_id="turn-1",
+            trace_id="trace-1",
+            payload={"text": "DB32_T 3869-2020 土地整治项目测量技术规范.zip介绍一下"},
+        ),
+    )
+
+    sessions = await service.list_sessions(principal_id="admin:alice")
+
+    assert sessions[0]["title"] == "DB32_T 3869-2020 土地整治项目测量技术规范.zip介绍一下"
+
+
+@pytest.mark.asyncio
 async def test_agent_routes_session_endpoints_e2e() -> None:
     store = InMemoryAgentStore()
     service = AgentSessionService(session_store=store)
@@ -134,12 +173,18 @@ async def test_agent_routes_session_endpoints_e2e() -> None:
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # POST /api/agent/sessions
+        create_resp = await client.post("/api/agent/sessions")
+        assert create_resp.status_code == 201
+        created = create_resp.json()
+        assert created["session_id"]
+        assert created["title"] == "新建对话"
+
         # GET /api/agent/sessions
         resp = await client.get("/api/agent/sessions")
         assert resp.status_code == 200
         sess_list = resp.json()
-        assert len(sess_list) == 1
-        assert sess_list[0]["session_id"] == session_id
+        assert {item["session_id"] for item in sess_list} == {session_id, created["session_id"]}
 
         # GET /api/agent/sessions/{session_id}
         resp = await client.get(f"/api/agent/sessions/{session_id}")

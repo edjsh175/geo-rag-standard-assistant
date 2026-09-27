@@ -1,10 +1,13 @@
 import { strict as assert } from 'node:assert';
 import { AxiosError } from 'axios';
 import { test, vi } from 'vitest';
-import { apiGet, apiPostSse } from '../src/lib/api/contractClient';
+import { apiDelete, apiGet, apiPost, apiPostSse } from '../src/lib/api/contractClient';
 import { chatService } from '../src/services/chatService';
 import {
   buildRestoredConversation,
+  createAgentSession,
+  deleteAgentSession,
+  listAgentSessions,
   AgentSessionNotFoundError,
   getAgentSessionStorageKey,
   readAgentSessionId,
@@ -63,6 +66,34 @@ test('session storage keys are scoped to the authenticated principal', () => {
   assert.equal(getAgentSessionStorageKey({ role: 'admin', username: 'alice', visitor_id: null }), 'geoai.agent.session.v1:admin:alice');
   assert.equal(getAgentSessionStorageKey({ role: 'visitor', username: 'demo-visitor', visitor_id: 'visitor-7' }), 'geoai.agent.session.v1:visitor:visitor-7');
   assert.equal(getAgentSessionStorageKey({ role: 'visitor', username: 'demo-visitor', visitor_id: null }), null);
+});
+
+test('session management uses the server session lifecycle endpoints', async () => {
+  const get = vi.mocked(apiGet);
+  const post = vi.mocked(apiPost);
+  const remove = vi.mocked(apiDelete);
+  get.mockReset();
+  post.mockReset();
+  remove.mockReset();
+  get.mockResolvedValueOnce([
+    { session_id: 'session-a', title: '土地整治', status: 'active', turn_count: 2, updated_at: '2026-09-27T08:00:00Z' },
+  ] as never);
+  post.mockResolvedValueOnce({
+    session_id: 'session-b', title: '新建对话', status: 'active', turn_count: 0,
+  } as never);
+  remove.mockResolvedValueOnce({ session_id: 'session-a', deleted: true } as never);
+
+  const sessions = await listAgentSessions();
+  const created = await createAgentSession();
+  await deleteAgentSession('session-a');
+
+  assert.deepEqual(sessions, [{
+    session_id: 'session-a', title: '土地整治', status: 'active', turn_count: 2, updated_at: '2026-09-27T08:00:00Z',
+  }]);
+  assert.equal(created.session_id, 'session-b');
+  assert.equal(get.mock.calls[0][0], '/api/agent/sessions');
+  assert.equal(post.mock.calls[0][0], '/api/agent/sessions');
+  assert.equal(remove.mock.calls[0][0], '/api/agent/sessions/{session_id}');
 });
 
 test('visitor restoration only reads session detail and its embedded turn events', async () => {

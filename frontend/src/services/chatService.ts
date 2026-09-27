@@ -10,7 +10,10 @@ export type DocumentResult = components['schemas']['DocumentResult'];
 export type FollowUpContext = components['schemas']['FollowUpContext'];
 export type SearchResponse = components['schemas']['SearchResponse'];
 export type DemoQuotaStatus = components['schemas']['DemoQuotaStatus'];
-export type MapAction = components['schemas']['MapAction'];
+export type MapAction = BrowserMapAction & {
+  adcode?: string | null;
+  name?: string | null;
+};
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -81,7 +84,7 @@ const toChatResponse = (
   references: response.results || [],
   timestamp: new Date().toISOString(),
   quota: response.quota ?? undefined,
-  map_action: warning ? undefined : response.map_action ?? undefined,
+  map_action: warning ? undefined : response.map_action as unknown as MapAction | undefined,
   transport_error: warning,
 });
 
@@ -150,7 +153,7 @@ export const chatService = {
         receipt = await executeBrowserTool(
           response.trace_id,
           response.pending_tool_call_id,
-          response.map_action as BrowserMapAction,
+          response.map_action as unknown as BrowserMapAction,
         );
       } catch (error) {
         throw new BrowserContinuationError(
@@ -390,7 +393,7 @@ export const chatService = {
           receipt = await executeBrowserTool(
             resp.trace_id,
             resp.pending_tool_call_id,
-            resp.map_action as BrowserMapAction,
+            resp.map_action as unknown as BrowserMapAction,
           );
         } catch (error) {
           throw new BrowserContinuationError(

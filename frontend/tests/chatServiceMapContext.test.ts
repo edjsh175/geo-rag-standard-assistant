@@ -107,6 +107,11 @@ test('chat exposes a reviewer switch that reflects the current preference', () =
       onInputChange: () => {},
       reviewerEnabled: true,
       onReviewerEnabledChange: () => {},
+      sessions: [],
+      onRefreshSessions: async () => {},
+      onCreateSession: async () => {},
+      onSelectSession: async () => {},
+      onDeleteSession: async () => {},
     }),
   );
 

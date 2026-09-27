@@ -6,6 +6,7 @@ anchored directly on the durable AgentStore.
 from __future__ import annotations
 
 from typing import Any, Mapping
+from uuid import uuid4
 from app.services.agent.events import AgentEvent
 from app.services.agent.event_projection import is_public_event, public_event_payload
 from app.services.agent.store import AgentStore, PostgresAgentStore
@@ -24,7 +25,34 @@ class AgentSessionService:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """List active sessions owned by the principal."""
-        return await self.session_store.list_sessions(principal_id, limit=limit)
+        sessions = await self.session_store.list_sessions(principal_id, limit=limit)
+        enriched: list[dict[str, Any]] = []
+        for summary in sessions:
+            session_id = str(summary.get("session_id") or "")
+            events = await self.session_store.list_events(principal_id, session_id)
+            first_user = next((event for event in events if event.event_type == "user_message"), None)
+            title = str(first_user.payload.get("text") or "").strip() if first_user else ""
+            enriched.append({
+                **summary,
+                "title": title[:80] or "新建对话",
+            })
+        return enriched
+
+    async def create_session(
+        self,
+        *,
+        principal_id: str,
+    ) -> dict[str, Any]:
+        """Create an empty durable session owned by the authenticated principal."""
+        session_id = f"session_{uuid4().hex}"
+        session = await self.session_store.get_or_create_session(principal_id, session_id)
+        await self.session_store.save_session(session)
+        return {
+            "session_id": session_id,
+            "status": "active",
+            "turn_count": 0,
+            "title": "新建对话",
+        }
 
     async def get_session_detail(
         self,

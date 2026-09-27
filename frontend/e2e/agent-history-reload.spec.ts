@@ -117,6 +117,17 @@ test('reload restores the published Agent process and never replays GIS actions'
     contentType: 'application/json',
     body: JSON.stringify({ type: 'FeatureCollection', features: [] }),
   }));
+  await page.route('**/api/agent/sessions', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{
+      session_id: SESSION_ID,
+      title: '历史过程回归',
+      status: 'active',
+      turn_count: 1,
+      updated_at: '2026-09-27T01:00:01Z',
+    }]),
+  }));
   await page.route('**/api/agent/sessions/session-history-reload', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',

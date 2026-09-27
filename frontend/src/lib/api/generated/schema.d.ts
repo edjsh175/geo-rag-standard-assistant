@@ -757,7 +757,11 @@ export interface paths {
          */
         get: operations["list_sessions_api_agent_sessions_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Session
+         * @description Create a new empty server-owned Agent session.
+         */
+        post: operations["create_session_api_agent_sessions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3165,6 +3169,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_session_api_agent_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, unknown>;
                 };
             };
         };

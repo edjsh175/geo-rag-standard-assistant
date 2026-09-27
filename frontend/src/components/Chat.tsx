@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { Bot, Sparkles, Send, Mic, History, X, Download, FileText, Paperclip, ShieldCheck } from 'lucide-react';
+import { Bot, Sparkles, Send, Mic, X, Download, FileText, Paperclip, ShieldCheck } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
@@ -10,6 +10,8 @@ import LoadingIndicator from './LoadingIndicator';
 import { useAutoScroll } from '../hooks/useAutoScroll';
 import { AgentProcess } from './agent/AgentProcess';
 import { AgentTurnViewModel } from './agent/types';
+import { SessionManager } from './SessionManager';
+import type { AgentSessionSummary } from '../services/agentHistory';
 
 export interface ChatProps {
   messages: ChatMessageType[];
@@ -23,6 +25,13 @@ export interface ChatProps {
   onVectorFilesSelected?: (files: File[]) => Promise<string>;
   reviewerEnabled: boolean;
   onReviewerEnabledChange: (enabled: boolean) => void;
+  sessions: AgentSessionSummary[];
+  activeSessionId?: string;
+  sessionLoading?: boolean;
+  onRefreshSessions: () => Promise<void>;
+  onCreateSession: () => Promise<void>;
+  onSelectSession: (sessionId: string) => Promise<void>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
   disabled?: boolean;
   title?: string;
   status?: string;
@@ -43,6 +52,13 @@ const Chat: React.FC<ChatProps> = ({
   onVectorFilesSelected,
   reviewerEnabled,
   onReviewerEnabledChange,
+  sessions,
+  activeSessionId,
+  sessionLoading = false,
+  onRefreshSessions,
+  onCreateSession,
+  onSelectSession,
+  onDeleteSession,
   disabled = false,
   title = 'Sentinel GeoAI',
   status = '模型就绪 · RAG 已同步',
@@ -136,11 +152,16 @@ const Chat: React.FC<ChatProps> = ({
         </div>
         <div className="flex items-center gap-2">
           {headerAction}
-          <button
-            className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
-          >
-            <History className="w-3.5 h-3.5 opacity-60 text-on-background" />
-          </button>
+          <SessionManager
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            disabled={isLoading || sessionLoading}
+            loading={sessionLoading}
+            onRefresh={onRefreshSessions}
+            onCreate={onCreateSession}
+            onSelect={onSelectSession}
+            onDelete={onDeleteSession}
+          />
         </div>
       </div>
 
