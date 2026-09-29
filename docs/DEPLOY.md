@@ -60,7 +60,7 @@ systemctl enable --now redis-server
 ```bash
 mkdir -p /srv/geoai
 cd /srv/geoai
-git clone https://github.com/edjsh175/geo-rag-planning-assistant.git app
+git clone https://github.com/edjsh175/geo-rag-standard-assistant.git app
 cd app
 git checkout main
 ```

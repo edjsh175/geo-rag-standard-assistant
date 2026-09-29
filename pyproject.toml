@@ -59,9 +59,9 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/edjsh175/geo-rag-planning-assistant"
-Repository = "https://github.com/edjsh175/geo-rag-planning-assistant.git"
-Issues = "https://github.com/edjsh175/geo-rag-planning-assistant/issues"
+Homepage = "https://github.com/edjsh175/geo-rag-standard-assistant"
+Repository = "https://github.com/edjsh175/geo-rag-standard-assistant.git"
+Issues = "https://github.com/edjsh175/geo-rag-standard-assistant/issues"
 
 [project.scripts]
 build-vector-db = "scripts.build_vector_db:main"
