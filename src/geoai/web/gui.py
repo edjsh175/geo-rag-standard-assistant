@@ -1,5 +1,6 @@
-# gui_main.py - 国标爬虫GUI主入口
-# 新增tkinter GUI界面，保留原有所有功能不变
+"""
+标准知识库桌面管理工具模块。
+"""
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -87,7 +88,7 @@ class ConfigFrame:
             ("端口", "db_port", str(self.config_data.get("db_port", 3306))),
             ("用户名", "db_user", self.config_data.get("db_user", "root")),
             ("密码", "db_password", self.config_data.get("db_password", "root")),
-            ("数据库名", "db_database", self.config_data.get("db_database", "disaster_knowledge"))
+            ("数据库名", "db_database", self.config_data.get("db_database", "geoai_knowledge"))
         ]
 
         for i, (label_text, var_name, default_value) in enumerate(db_fields):

@@ -38,7 +38,7 @@ http://SERVER_PUBLIC_IP
 
 - PostgreSQL + pgvector：必需，用于 `policy_chunks` 向量检索数据。
 - PostGIS：必需，用于 `spatial_regions` 空间查询数据。
-- MySQL：必需，使用 `disaster_knowledge.geoai_metadata` 存储标准元数据。
+- MySQL：必需，使用 `geoai_knowledge.geoai_metadata` 存储标准元数据。
 - Redis：必需，用于访客配额；启用文档上传索引闭环时也作为 Celery broker/result backend。
 - MinIO：启用文档上传、下载、索引闭环时必需，用于保存原始上传文件。只做标准库检索演示时可暂不启用。
 
@@ -139,13 +139,13 @@ sudo -u postgres psql -d geoai_db -f Backend/migrations/20260927_spatial_regions
 sudo -u postgres psql -d geoai_db -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO geoai; GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO geoai;"
 ```
 
-创建 MySQL 元数据数据库。按当前服务器截图口径，数据库名为 `disaster_knowledge`，元数据表名为 `geoai_metadata`。
+创建 MySQL 元数据数据库。数据库名为 `geoai_knowledge`，元数据表名为 `geoai_metadata`。
 
 ```bash
 mysql -uroot -p <<'SQL'
-CREATE DATABASE IF NOT EXISTS disaster_knowledge CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS geoai_knowledge CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS 'geoai_mysql'@'localhost' IDENTIFIED BY 'replace_with_strong_password';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON disaster_knowledge.* TO 'geoai_mysql'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON geoai_knowledge.* TO 'geoai_mysql'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 ```
@@ -153,7 +153,7 @@ SQL
 导入项目使用的标准元数据：
 
 ```bash
-mysql -uroot -p disaster_knowledge < /path/to/geoai_metadata.sql
+mysql -uroot -p geoai_knowledge < /path/to/geoai_metadata.sql
 ```
 
 导入后的 `geoai_metadata` 表至少应包含这些字段：`standard_code`、`release_date`、`implement_date`、`draft_unit`、`keyword`、`chinese_name`、`english_name`、`standard_status`、`release_unit`、`charge_unit`、`replace_standard`、`application_scope`。
@@ -171,7 +171,7 @@ SYSTEM_API_KEY=replace_with_strong_random_value
 SECRET_KEY=replace_with_strong_random_value
 
 DATABASE_URL=postgresql+asyncpg://geoai:replace_with_strong_password@127.0.0.1:5432/geoai_db
-MYSQL_URL=mysql+aiomysql://geoai_mysql:replace_with_strong_password@127.0.0.1:3306/disaster_knowledge
+MYSQL_URL=mysql+aiomysql://geoai_mysql:replace_with_strong_password@127.0.0.1:3306/geoai_knowledge
 REDIS_URL=redis://127.0.0.1:6379/0
 
 PUBLIC_API_BASE_URL=http://SERVER_PUBLIC_IP
@@ -337,7 +337,7 @@ systemctl reload nginx
 curl -i http://127.0.0.1:8000/health
 curl -i http://SERVER_PUBLIC_IP/health
 curl -i http://SERVER_PUBLIC_IP/api/search/suggest
-mysql -ugeoai_mysql -p disaster_knowledge -e "SELECT COUNT(*) FROM geoai_metadata;"
+mysql -ugeoai_mysql -p geoai_knowledge -e "SELECT COUNT(*) FROM geoai_metadata;"
 sudo -u postgres psql -d geoai_db -c "SELECT COUNT(*) FROM policy_chunks;"
 ```
 
@@ -356,7 +356,7 @@ http://SERVER_PUBLIC_IP
 - `SECRET_KEY` 已替换为强随机值
 - 安全组只开放 `22`、`80`，如启用 HTTPS 再开放 `443`
 - PostgreSQL、MySQL、Redis 只监听 localhost 或私有网络
-- MySQL 已导入 `disaster_knowledge.geoai_metadata`
+- MySQL 已导入 `geoai_knowledge.geoai_metadata`
 - PostgreSQL 已导入并填充 `policy_chunks`
 - 如果演示包含空间检索，PostgreSQL 已导入并填充 `spatial_regions`
 - 如启用文档上传索引闭环，MinIO 已内网部署，`geoai-document-worker` 已运行

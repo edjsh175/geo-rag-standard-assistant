@@ -1,5 +1,6 @@
-# search_module.py - 搜索功能模块
-# 完整迁移search_v1.1.py中的业务逻辑及条件分支
+"""
+规划标准与测绘规范数据检索采集模块。
+"""
 
 import os
 import re

@@ -1,5 +1,6 @@
-# grab_module.py - 抓取功能模块
-# 完整迁移grab_v1.py中的业务逻辑及条件分支
+"""
+标准规范文档抽取与结构化解析模块。
+"""
 
 import os
 import time
@@ -631,7 +632,7 @@ class BatchCrawler:
                 with open(IMG_PATH, 'rb') as f:
                     captcha_res = self.cjy.PostPic(f.read(), CAPTCHA_CODE_TYPE)
                 
-                # 原脚本分支保留：超级鹰验证码识别失败的重试与异常处理分支
+                # 验证码识别异常处理与重试分支
                 if captcha_res.get('err_no') != 0:
                     err_str = captcha_res.get('err_str', '未知错误')
                     meta['ps'] = f"验证码识别失败: {err_str}"

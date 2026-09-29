@@ -41,7 +41,7 @@ services:
     image: mysql:8.0
     container_name: geoai-mysql
     environment:
-      MYSQL_DATABASE: ${GEOAI_MYSQL_DATABASE:-disaster_knowledge}
+      MYSQL_DATABASE: ${GEOAI_MYSQL_DATABASE:-geoai_knowledge}
       MYSQL_ROOT_PASSWORD: ${GEOAI_MYSQL_ROOT_PASSWORD:-change_me_mysql}
     ports:
       - "3306:3306"
@@ -63,7 +63,7 @@ services:
     container_name: geoai-backend
     environment:
       DATABASE_URL: ${GEOAI_DATABASE_URL:-postgresql+asyncpg://postgres:change_me_postgres@postgis:5432/geoai_db}
-      MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/disaster_knowledge}
+      MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/geoai_knowledge}
       GEOSERVER_URL: ${GEOAI_GEOSERVER_URL:-http://geoserver:8080/geoserver}
       REDIS_URL: ${GEOAI_REDIS_URL:-redis://:change_me_redis@redis:6379/0}
       MINIO_URL: ${GEOAI_MINIO_URL:-minio:9000}
@@ -127,7 +127,7 @@ services:
     container_name: geoai-document-worker
     environment:
       DATABASE_URL: ${GEOAI_DATABASE_URL:-postgresql+asyncpg://postgres:change_me_postgres@postgis:5432/geoai_db}
-      MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/disaster_knowledge}
+      MYSQL_URL: ${GEOAI_MYSQL_URL:-mysql+aiomysql://root:change_me_mysql@mysql:3306/geoai_knowledge}
       REDIS_URL: ${GEOAI_REDIS_URL:-redis://:change_me_redis@redis:6379/0}
       MINIO_URL: ${GEOAI_MINIO_URL:-minio:9000}
       MINIO_ACCESS_KEY: ${GEOAI_MINIO_ACCESS_KEY:-minioadmin}

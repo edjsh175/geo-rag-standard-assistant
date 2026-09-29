@@ -62,7 +62,7 @@ MYSQL_CONFIG = {
     "port": int(os.getenv("MYSQL_PORT", "3306")),
     "user": os.getenv("MYSQL_USER", "root"),
     "password": os.getenv("MYSQL_PASSWORD", ""),
-    "database": os.getenv("MYSQL_DATABASE", "disaster_knowledge"),
+    "database": os.getenv("MYSQL_DATABASE", "geoai_knowledge"),
     "charset": "utf8mb4",
 }
 

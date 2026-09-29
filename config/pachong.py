@@ -28,7 +28,7 @@ def get_base_dir():
 def get_appdata_config_path():
     """获取用户配置文件的路径（AppData目录）"""
     if hasattr(sys, '_MEIPASS'):  # 打包环境
-        appdata_dir = os.path.join(os.environ.get('APPDATA', ''), '国标爬虫系统')
+        appdata_dir = os.path.join(os.environ.get('APPDATA', ''), 'GeoAI_DataCollector')
         os.makedirs(appdata_dir, exist_ok=True)
         return os.path.join(appdata_dir, 'config_user.json')
     else:
@@ -46,7 +46,7 @@ def load_config():
         "db_port": 3306,
         "db_user": "root",
         "db_password": "",
-        "db_database": "disaster_knowledge",
+        "db_database": "geoai_knowledge",
         # 超级鹰配置
         "chaojiying_user": "",
         "chaojiying_pass": "",
@@ -136,7 +136,7 @@ DB_CONFIG = {
     'port': int(user_config.get("db_port", 3306)),
     'user': user_config.get("db_user", "root"),
     'password': user_config.get("db_password", ""),
-    'database': user_config.get("db_database", "disaster_knowledge")
+    'database': user_config.get("db_database", "geoai_knowledge")
 }
 
 # ================= 超级鹰配置 =================
@@ -249,7 +249,7 @@ def update_config(new_config):
         'port': int(user_config.get("db_port", 3306)),
         'user': user_config.get("db_user", "root"),
         'password': user_config.get("db_password", ""),
-        'database': user_config.get("db_database", "disaster_knowledge")
+        'database': user_config.get("db_database", "geoai_knowledge")
     })
 
     # 重新计算超级鹰配置
