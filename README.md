@@ -814,12 +814,8 @@ python scripts/preflight_geoai_agent_e2e.py
 
 主要设计与实施文档：
 
-- `docs/superpowers/specs/2026-09-20-georag-backend-rag-agent-adaptation-design.md`
-- `docs/superpowers/plans/2026-09-20-georag-backend-rag-agent-adaptation.md`
-- `docs/superpowers/specs/2026-09-22-georag-reference-rag-contract-delta.md`
 - `docs/superpowers/specs/2026-09-23-georag-gis-observation-spatial-eval-design.md`
 - `docs/superpowers/plans/2026-09-23-georag-gis-observation-spatial-eval.md`
-- `docs/requirement.md`
 - `docs/DEPLOY.md`
 
 ---

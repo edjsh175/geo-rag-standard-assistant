@@ -1,6 +1,6 @@
 # Agent 全流程可观测实施计划
 
-**Goal:** 按既有 observability requirement 补齐真实 Runtime 事件 → 流式 Projector → DisclosureRow/ToolRow/AgentProcess → 历史回放的完整链路。
+**Goal:** 补齐真实 Runtime 事件 → 流式 Projector → DisclosureRow/ToolRow/AgentProcess → 历史回放的完整链路。
 
 **Architecture:** 初始请求和 Browser Receipt 续接均复用 `/api/search/query/stream` 及同一 Runtime。工具输入由 ToolRuntime canonicalization 提供，输出和 Reviewer/Receipt 仅投影有限公开事实；前端只配对和展示，不决定执行或发布。会话历史复用上一轮的服务端重载能力。
 
@@ -19,7 +19,7 @@
 
 - [ ] 在 `frontend/tests/agentEventProjector.test.ts` 写重复、乱序、多 Turn、Reviewer、Browser failure 和 terminal 稳定性的 red 用例。
 - [ ] `frontend/src/components/agent/eventProjector.ts` 按 ID 去重、工具 O(1) 配对、快照不共享可变对象；使用实际状态而不默认 PASS/published。
-- [ ] 同目录新增 Generic fallback 与 P0 keyed renderers，覆盖十个 requirement P0 Tool，显示关键输入与有限结果、Receipt、error。
+- [ ] 同目录新增 Generic fallback 与 P0 keyed renderers，覆盖十个 P0 Tool，显示关键输入与有限结果、Receipt、error。
 - [ ] DisclosureRow/AgentProcess 补 ARIA、reduced-motion、展开后才格式化且有长度上限、running 展开/成功折叠/失败展开/手动优先。
 - [ ] Reviewer 按真实 review ID/attempt 展示 running → verdict，关闭时无假行。
 
@@ -35,6 +35,6 @@
 - [ ] 跑完整前端单测、lint/build 和必要后端回归。
 - [ ] 浏览器验证流式 GIS handoff → receipt → resume → answer → review → publication；UI 键盘/折叠/未知工具/失败及历史恢复。
 - [ ] 独立代码审查并修复必要问题。
-- [ ] 更新 requirement：区分代码/确定性测试、模拟浏览器测试与真正连接 LLM/GIS 的验收证据；不能用其中一项替代另一项。
+- [ ] 更新验收记录：区分代码/确定性测试、模拟浏览器测试与真正连接 LLM/GIS 的验收证据；不能用其中一项替代另一项。
 
 当前本机后端与数据库服务未监听，Docker daemon 未运行。真实 LLM/GIS 全链路需要可用验收环境；代码及确定性测试先独立完成。已有 auth/config/docker 与 Master Ledger 修改由其他任务负责，本次不覆盖、不提交、不部署。

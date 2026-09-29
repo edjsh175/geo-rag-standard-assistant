@@ -1,6 +1,6 @@
 # Agent Process 历史恢复实施计划
 
-**Goal:** 实施既有 observability requirement 的刷新恢复增量，以服务端持久化事件还原当前会话的 Process。
+**Goal:** 实施会话刷新恢复改进，以服务端持久化事件还原当前会话的 Process。
 
 **Architecture:** localStorage 仅保存按认证身份隔离的 session ID。刷新后先获取会话消息及 turn 引用；管理员读取 S-06 turn/trace 详情，访客使用授权 session detail 内的事件。历史事件补齐 envelope、排序、去重，再复用 AgentEventProjector；恢复不执行 Browser GIS。
 
@@ -32,7 +32,7 @@
 - [x] 跑新增测试与现有 projector / chatService / authority tests。
 - [x] 跑 `npm run lint` 和 `npm run build`，将既有失败与本次失败区分。
 - [x] 独立审查恢复权限、请求竞态、跨 turn 身份隔离。
-- [x] 更新专项 requirement 的本次实施记录；不改动用户正在修改的 Master Ledger。
+- [x] 更新专项实施记录；不改动用户正在修改的 Master Ledger。
 
 用户已明确授权开始实施，使用当前 checkout。保留已有 Backend/document concurrency 和 Master Ledger 未提交改动。本次不提交、推送或部署。
 
