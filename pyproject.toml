@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "geo-rag-planning-assistant"
+name = "geo-rag-standard-assistant"
 version = "0.1.0"
 description = "GeoRAG assistant for spatial planning and surveying standards: semantic search, LLM Q&A, and 2D/3D map visualization."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "GeoRAG Planning Assistant Contributors"},
+    {name = "edjsh175", email = "2923766417@qq.com"},
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

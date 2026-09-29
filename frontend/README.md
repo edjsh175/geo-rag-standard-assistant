@@ -1,8 +1,8 @@
-# GeoRAG Planning Assistant Frontend / GeoRAG 前端
+# GeoRAG Standard Assistant Frontend / GeoRAG 前端
 
 ## Overview / 概述
 
-The frontend is a React + Vite application for GeoRAG Planning Assistant. It provides the chat retrieval workspace, document citation interactions, and 2D/3D map visualization.
+The frontend is a React + Vite application for GeoRAG Standard Assistant. It provides the chat retrieval workspace, document citation interactions, and 2D/3D map visualization.
 
 GeoRAG 前端基于 React + Vite，提供智能检索聊天工作台、文档引用交互、以及二维/三维地图可视化界面。
 

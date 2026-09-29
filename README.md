@@ -1,4 +1,4 @@
-# GeoRAG Planning Assistant
+# GeoRAG Standard Assistant
 
 > 面向国土空间规划、测绘标准、自然资源资料理解与 WebGIS 操作场景的 **GeoAI Agent / RAG 应用**。
 >
@@ -15,7 +15,7 @@
 
 ## 项目概览
 
-GeoRAG Planning Assistant 最初是一个面向规划标准、测绘规范和地理信息政策资料的 RAG 检索系统。在保留原有检索、文档管理、PostGIS、OpenLayers、Cesium 与公开演示能力的基础上，项目完成了后端 Agent 化与浏览器 GIS Runtime 升级。
+GeoRAG Standard Assistant 最初是一个面向规划标准、测绘规范和地理信息政策资料的 RAG 检索系统。在保留原有检索、文档管理、PostGIS、OpenLayers、Cesium 与公开演示能力的基础上，项目完成了后端 Agent 化与浏览器 GIS Runtime 升级。
 
 现在系统可以围绕同一个用户目标连续完成：
 
@@ -637,6 +637,9 @@ geo-rag-standard-assistant/
 │     │  └─ openlayersAdapter.ts
 │     └─ components/
 │
+├─ src/geoai/                # 离线数据工程工具集 (Offline Ingestion & Tools)
+│  ├─ data/                 # 国家标准定向检索、元数据抽取与正文清洗
+│  └─ spatial/              # 行政区划几何与空间要素入库导入器
 ├─ evals/
 │  └─ geoai_agent_36_tasks.json
 ├─ scripts/

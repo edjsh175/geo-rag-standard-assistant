@@ -1,8 +1,8 @@
-# GeoRAG Planning Assistant Backend / GeoRAG 后端服务
+# GeoRAG Standard Assistant Backend / GeoRAG 后端服务
 
 ## Overview / 概述
 
-The backend is a FastAPI service for GeoRAG Planning Assistant. It provides retrieval, spatial, document, authentication, and system APIs for the planning standards assistant.
+The backend is a FastAPI service for GeoRAG Standard Assistant. It provides retrieval, spatial, document, authentication, and system APIs for the planning standards assistant.
 
 GeoRAG 后端基于 FastAPI，为国土空间规划与测绘标准智能助手提供检索、空间、文档、认证和系统管理接口。
 
