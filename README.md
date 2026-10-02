@@ -24,17 +24,17 @@ GeoRAG Standard Assistant 最初是一个面向规划标准、测绘规范和地
   ↓
 证据选择与引用
   ↓
-导入 GeoJSON / SHP
+导入 GeoJSON / SHP 或执行 GeoSQL 空间查询
   ↓
 读取真实地图状态
   ↓
-控制图层显隐 / 样式
+控制图层显隐 / 样式 / 渲染分析结果图层 (render_geojson_layer)
   ↓
 定位地图 / 图层
   ↓
 读取要素属性与精确几何
   ↓
-执行 PostGIS 空间关系 / 叠加分析
+执行 PostGIS 空间关系 / 叠加分析 / 测地缓冲区 (create_buffer)
   ↓
 根据 Tool Receipt 继续决策
   ↓
@@ -50,6 +50,7 @@ GeoRAG Standard Assistant 最初是一个面向规划标准、测绘规范和地
 | 能力 | 成熟度状态 | 规范与实现说明 |
 | --- | --- | --- |
 | Agent Runtime | `CODE_CLOSED / DETERMINISTIC_TESTED` | Session / Turn / Trace、多步规划、Durable Event Append、OCC锁与服务端断开协同取消已闭环 |
+| LangGraph 编排骨架 | `CODE_CLOSED / DETERMINISTIC_TESTED` | StateGraph 编排骨架、Turn 生命周期管理、单一权威数据源 Store 与跨会话上下文加载 |
 | RAG / Evidence | `CODE_CLOSED / DETERMINISTIC_TESTED` | Hybrid Retrieval、Evidence Ledger、Working / Frozen Evidence、CitationPer-Unit精确绑定已闭环 |
 | Structured Output | `CODE_CLOSED / DETERMINISTIC_TESTED` | Controller provider-native Schema、Parser校验、单次协议修复、fail-close |
 | Grounding Reviewer | `CODE_CLOSED / DETERMINISTIC_TESTED` | 可选开启，按 Answer Unit 严格绑定证据支持度审查，支持两阶段有限修复 |
@@ -57,8 +58,9 @@ GeoRAG Standard Assistant 最初是一个面向规划标准、测绘规范和地
 | Browser GIS Runtime | `CODE_CLOSED / DETERMINISTIC_TESTED` | Browser Bridge、Frontend Executor、Tool Receipt 校验与原子单次消费（2D 具备完整幂等） |
 | 稳定 GIS 引用 | `CODE_CLOSED / DETERMINISTIC_TESTED` | `file_ref` / `layer_ref` / `feature_ref` 租户会话稳定映射与校验 |
 | MapContext | `CODE_CLOSED / DETERMINISTIC_TESTED` | 视口、完整递归图层树、用户图层状态、可用工具能力事实收集与 Admission 守卫 |
-| GIS 操作工具 | `CODE_CLOSED / DETERMINISTIC_TESTED` | 导入、显隐、样式、定位、要素读取等 7 项核心浏览器操作已接入主路径 |
-| PostGIS Agent Tools | `CODE_CLOSED / DETERMINISTIC_TESTED` | 空间关系拓扑分析（Intersects/Within等）与空间分析（Overlay），已消除伪数据 Fail-close |
+| GIS 操作工具 | `CODE_CLOSED / DETERMINISTIC_TESTED` | 导入、渲染、显隐、样式、定位、要素读取等 8 项核心浏览器操作已接入主路径 |
+| PostGIS Agent Tools | `CODE_CLOSED / DETERMINISTIC_TESTED` | 空间关系拓扑（Intersects/Within等）、空间叠加（Overlay）与测地缓冲区（Buffer），已消除伪数据 Fail-close |
+| GeoSQL 空间查询 | `CODE_CLOSED / DETERMINISTIC_TESTED` | Catalog 白名单、参数化执行与严格 AST 校验，杜绝注入并保证查询结果实体化进入 Evidence |
 | 36-task GeoAI Evaluation | `HARNESS_VERIFIED` | 36 条固定任务基线、依赖注入、断言引擎与 Playwright 自动化 Harness 已完全具备 |
 
 ---
@@ -296,6 +298,7 @@ Controller continues planning
 | Tool | 作用 |
 | --- | --- |
 | `import_vector_dataset` | 导入 GeoJSON / SHP 等本地矢量数据 |
+| `render_geojson_layer` | 渲染分析/计算生成的 GeoJSON 为用户图层，分配稳定 `layer_ref` 并可选配置样式 |
 | `set_layer_visibility` | 修改用户图层显隐 |
 | `set_vector_style` | 修改边线、填充、点样式等 |
 | `fit_vector_layer` | 缩放至目标图层范围 |
@@ -326,6 +329,9 @@ spatial_overlay
 ├─ intersection
 ├─ union
 └─ difference
+
+create_buffer
+└─ 基于米级测地距离生成精确多边形缓冲区 (ST_Buffer)
 ```
 
 空间操作数可以来自：
@@ -336,6 +342,15 @@ spatial_overlay
 - Browser GIS Tool 返回的真实 feature geometry。
 
 PostGIS Result 会作为 Observation 进入 Evidence Ledger，随后可以被冻结并作为最终自然语言结论的 Citation 来源。
+
+### GeoSQL v1 空间查询能力
+
+为兼顾大模型自然语言意图理解与数据库物理安全性，项目实现了受控的结构化空间查询工具 `query_geospatial_data`：
+
+- **白名单 Catalog 约束**：仅允许访问受审定的空间表（如 `spatial_regions`）与白名单几何/属性字段；
+- **确定性 PostGIS 模板**：针对 `intersects` / `contains` / `within` / `buffer` 等空间操作仅使用参数化模板编译执行，禁止拼接裸 SQL；
+- **AST 与权限守卫**：解析并强校验查询过滤条件（比较运算、布尔逻辑与有界 LIMIT），消除注入风险；
+- **Evidence 挂载**：查询返回的要素与统计指标直接转化为结构化 Observation 挂载到 Evidence Ledger，供后续决策与地图渲染工具闭环消费。
 
 ---
 
@@ -563,12 +578,11 @@ python scripts/evaluate_geoai_agent_results.py path/to/results.json
 ### Backend
 
 - Python 3.12+
-- FastAPI
-- Pydantic v2
+- FastAPI 0.119+
+- Pydantic v2 (2.13+)
+- LangGraph 1.2+ / LangChain-Core
 - SQLAlchemy Async
-- PostgreSQL
-- pgvector
-- PostGIS
+- PostgreSQL + pgvector + PostGIS
 - MySQL
 - Redis
 - OpenAI-compatible LLM API
@@ -587,15 +601,16 @@ python scripts/evaluate_geoai_agent_results.py path/to/results.json
 ### Agent / RAG
 
 - Agent Runtime / Controller Loop
-- Tool Calling
-- Browser Continuation
-- Evidence Ledger
-- Frozen Evidence
-- Structured Output
+- LangGraph StateGraph Orchestration
+- Unified Tool Calling & Protocol Adaptation
+- Browser Continuation (Pause / Resume)
+- Evidence Ledger (Working / Frozen Evidence)
+- GeoSQL Spatial Query Engine
+- Structured Output & Protocol Repair
 - Grounding Reviewer
 - Publication Boundary
 - Hybrid Retrieval
-- Spatial Tooling
+- Spatial Tooling & Map Rendering Loop
 
 ---
 
@@ -612,6 +627,9 @@ geo-rag-standard-assistant/
 │     ├─ models/
 │     └─ services/
 │        ├─ agent/
+│        │  ├─ graph/                  # LangGraph 编排状态机与规划迁移
+│        │  ├─ orchestration/          # Turn 周期、会话加载、工具调度与发布边界
+│        │  ├─ langchain_tooling.py     # 统一 Tool Calling schema 转换适配
 │        │  ├─ runtime.py
 │        │  ├─ controller.py
 │        │  ├─ tool_runtime.py
@@ -622,6 +640,7 @@ geo-rag-standard-assistant/
 │        │  ├─ publication.py
 │        │  ├─ structured_candidate.py
 │        │  └─ model_client.py
+│        ├─ geosql/                    # GeoSQL 安全空间查询引擎 (Catalog/Compiler/Executor)
 │        ├─ rag/
 │        └─ spatial_service.py
 │
@@ -817,6 +836,7 @@ python scripts/preflight_geoai_agent_e2e.py
 
 主要设计与实施文档：
 
+- `docs/superpowers/specs/2026-09-30-geoai-agent-framework-reuse-gis-loop-geosql-architecture-convergence-prd.md`
 - `docs/superpowers/specs/2026-09-23-georag-gis-observation-spatial-eval-design.md`
 - `docs/superpowers/plans/2026-09-23-georag-gis-observation-spatial-eval.md`
 - `docs/DEPLOY.md`
