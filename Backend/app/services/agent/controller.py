@@ -20,6 +20,11 @@ from app.services.agent.controller_protocol import (
     validate_controller_decision_payload,
 )
 from app.services.agent.model_client import ModelRequest, StageModelClient
+from app.services.agent.langchain_tooling import (
+    build_langchain_tools,
+    controller_decision_from_tool_call,
+    openai_tool_schemas,
+)
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.structured_candidate import (
     StructuredCandidateProtocolError,
@@ -131,7 +136,6 @@ class MainController:
                 spec_desc.append(f"  When to use: {spec.use_when}")
             if getattr(spec, "avoid_when", None):
                 spec_desc.append(f"  Avoid when: {spec.avoid_when}")
-            spec_desc.append(f"  input_schema={json.dumps(spec.input_schema, ensure_ascii=False, sort_keys=True)}")
             tools_text_parts.append("\n".join(spec_desc))
         tools_text = "\n".join(tools_text_parts) if tools_text_parts else "No external tools available."
 
@@ -148,9 +152,13 @@ class MainController:
                 )
         control_text = "\n".join(control_actions_text_parts) if control_actions_text_parts else "None."
 
-        capability_schemas = {spec.name: spec.input_schema for spec in active_specs}
+        langchain_tools = build_langchain_tools(
+            self.tool_registry,
+            action_state.available_capabilities,
+        )
+        tool_schemas = openai_tool_schemas(langchain_tools)
         decision_schema = build_controller_decision_schema(
-            capability_schemas=capability_schemas,
+            capability_schemas={},
             allowed_control_actions=list(action_state.available_control_actions),
             allowed_answer_kinds=list(action_state.allowed_answer_kinds),
         )
@@ -188,8 +196,7 @@ class MainController:
             f"1. Control Actions:\n{control_text}\n\n"
             f"2. Executable Capabilities (Tools):\n{tools_text}\n\n"
             "Rules:\n"
-            "- To call a capability: {\"action\":\"tool_call\",\"tool\":\"...\",\"arguments\":{...}}\n"
-            "  (Legacy {\"name\":\"...\",\"arguments\":{...}} is also accepted).\n"
+            "- To call a capability, use the model's native tool-calling channel. Do not encode tool calls as JSON text.\n"
             "- When the user prompt asks to '尝试' (attempt) an action with a specific file_ref, layer_ref, feature_ref, coordinates, or adcode (such as '尝试导入 file_ref=\"...\"', '尝试读取 feature_ref=\"...\"', '调用地图定位到经度 999...', '查询不存在的行政区 adcode=999999...'), you MUST issue the tool_call first (e.g. import_vector_dataset, get_feature_geometry, locate_map, query_spatial_relation) with those exact arguments, and do NOT preemptively answer without invoking the tool.\n"
             "- For feature observation ('列出图层前 20 个要素属性', '翻页读取下一批要素', '从图层树定位用户图层再读取要素'): use inspect_layer_features with layer_ref from user_layers, and appropriate offset/limit (e.g. offset=0 for first 20, offset=20 for next batch).\n"
             "- To read feature geometry ('读取指定 feature_ref 的精确几何', '重复读取同一要素'): call get_feature_geometry with a feature_ref from previous inspect_layer_features observation or user_layers[0].feature_refs[0].\n"
@@ -267,6 +274,7 @@ class MainController:
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
                 response_schema=decision_schema,
+                tools=tool_schemas,
                 audit_context={
                     **dict(audit_context or {}),
                     "action_surface": {
@@ -281,13 +289,13 @@ class MainController:
                     },
                 } if audit_context is not None else None,
             )
-            return (await self.model_client.complete(request)).content
+            return await self.model_client.complete(request)
 
         try:
             return await execute_structured_candidate(
                 generate=generate_candidate,
-                validate=lambda content: self._parse_decision(
-                    content,
+                validate=lambda response: self._parse_model_response(
+                    response,
                     state=action_state,
                     tool_call_id=call_id,
                 ),
@@ -296,6 +304,35 @@ class MainController:
             raise ControllerOutputError(
                 f"controller must return a structured tool call: {exc}"
             ) from exc
+
+    def _parse_model_response(
+        self,
+        response,
+        *,
+        state: ExecutableActionState,
+        tool_call_id: str,
+    ) -> ControllerDecision:
+        tool_calls = tuple(getattr(response, "tool_calls", ()) or ())
+        if tool_calls:
+            if len(tool_calls) != 1:
+                raise ControllerOutputError(
+                    "controller must emit exactly one tool call per planning step"
+                )
+            return controller_decision_from_tool_call(
+                tool_calls[0],
+                state=state,
+                registry=self.tool_registry,
+            )
+        decision = self._parse_decision(
+            getattr(response, "content", None),
+            state=state,
+            tool_call_id=tool_call_id,
+        )
+        if decision.action == TOOL_CALL_ACTION:
+            raise ControllerOutputError(
+                "controller tool calls must use the native tool-calling channel"
+            )
+        return decision
 
     def _parse_decision(
         self,

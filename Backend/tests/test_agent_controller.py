@@ -73,10 +73,15 @@ async def test_controller_actual_model_request_receives_authority_class_sections
 async def test_controller_returns_structured_tool_call_and_uses_controller_reasoning_policy() -> None:
     client = FakeModelClient(
         ModelResponse(
-            content=(
-                '{"tool_call_id":"call-1","name":"retrieve_kb",'
-                '"arguments":{"query":"重庆滑坡监测","top_k":5}}'
-            )
+            content=None,
+            tool_calls=(
+                {
+                    "name": "retrieve_kb",
+                    "args": {"query": "重庆滑坡监测"},
+                    "id": "call-1",
+                    "type": "tool_call",
+                },
+            ),
         )
     )
     controller = MainController(
@@ -92,14 +97,76 @@ async def test_controller_returns_structured_tool_call_and_uses_controller_reaso
         stage_policy=LLMStagePolicy(True, True),
     )
 
-    assert decision.name == "retrieve_kb"
+    assert decision.action == "tool_call"
+    assert decision.tool == "retrieve_kb"
     assert decision.arguments["query"] == "重庆滑坡监测"
     assert client.calls[0].stage == "controller"
     assert client.calls[0].request_reasoning is True
     system_prompt = client.calls[0].messages[0]["content"]
-    assert '"query"' in system_prompt
-    assert '"type"' in system_prompt
     assert "compose_answer" in system_prompt
+    assert "input_schema=" not in system_prompt
+    tool_schema_text = str(client.calls[0].tools)
+    assert "retrieve_kb" in tool_schema_text
+    assert "query" in tool_schema_text
+
+
+@pytest.mark.asyncio
+async def test_controller_prefers_native_model_tool_call_channel() -> None:
+    client = FakeModelClient(
+        ModelResponse(
+            content=None,
+            tool_calls=(
+                {
+                    "name": "retrieve_kb",
+                    "args": {"query": "重庆滑坡监测"},
+                    "id": "call-native-controller",
+                    "type": "tool_call",
+                },
+            ),
+        )
+    )
+    controller = MainController(
+        model_client=client,
+        tool_registry=build_default_tool_registry(),
+    )
+
+    decision = await controller.decide(
+        question="重庆滑坡监测有什么要求？",
+        context_summary="当前尚无证据",
+        working_evidence=(),
+        observations=(),
+        stage_policy=LLMStagePolicy(False, True),
+    )
+
+    assert decision.action == "tool_call"
+    assert decision.tool == "retrieve_kb"
+    assert decision.arguments == {"query": "重庆滑坡监测"}
+    assert decision.tool_call_id == "call-native-controller"
+    assert client.calls[0].tools
+    assert client.calls[0].response_schema is not None
+    assert "retrieve_kb" not in str(client.calls[0].response_schema)
+
+
+@pytest.mark.asyncio
+async def test_controller_rejects_text_encoded_tool_call() -> None:
+    client = FakeModelClient(
+        ModelResponse(
+            content='{"action":"tool_call","tool":"retrieve_kb","arguments":{"query":"重庆滑坡监测"}}'
+        )
+    )
+    controller = MainController(
+        model_client=client,
+        tool_registry=build_default_tool_registry(),
+    )
+
+    with pytest.raises(ValueError, match="native tool-calling channel"):
+        await controller.decide(
+            question="重庆滑坡监测有什么要求？",
+            context_summary="",
+            working_evidence=(),
+            observations=(),
+            stage_policy=LLMStagePolicy(False, True),
+        )
 
 
 @pytest.mark.asyncio
@@ -107,8 +174,9 @@ async def test_controller_receives_working_evidence_catalog_for_semantic_decisio
     client = FakeModelClient(
         ModelResponse(
             content=(
-                '{"tool_call_id":"compose-1","name":"compose_answer",'
-                '"arguments":{"evidence_ids":["ev-1"]}}'
+                '{"action":"compose_answer",'
+                '"arguments":{"answer_kind":"knowledge_answer",'
+                '"selected_evidence_ids":["ev-1"]}}'
             )
         )
     )

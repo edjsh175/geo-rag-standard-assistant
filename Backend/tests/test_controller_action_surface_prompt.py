@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.services.agent.controller import MainController
@@ -18,6 +20,19 @@ class CapturingModelClient:
 
     async def complete(self, request):
         self.requests.append(request)
+        payload = json.loads(self.response)
+        if payload.get("action") == "tool_call":
+            return ModelResponse(
+                content=None,
+                tool_calls=(
+                    {
+                        "name": payload["tool"],
+                        "args": payload["arguments"],
+                        "id": "capture-tool-call",
+                        "type": "tool_call",
+                    },
+                ),
+            )
         return ModelResponse(content=self.response)
 
 

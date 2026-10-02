@@ -28,13 +28,13 @@ from app.core.llm_config import llm_config
 from app.services.agent.answer_generator import AnswerGenerator
 from app.services.agent.conversation_memory import ConversationMemorySummarizer
 from app.services.agent.controller import MainController
+from app.services.agent.dependencies import get_agent_store
 from app.services.agent.events import AgentEvent
 from app.services.agent.event_projection import public_event_payload
 from app.services.agent.model_client import LLMConfigStageModelClient, ModelCallAudit
 from app.services.agent.provider_health import ProviderHealthService
 from app.services.agent.reviewer import GroundingReviewer
 from app.services.agent.runtime import AgentRuntime
-from app.services.agent.store import PostgresAgentStore
 from app.services.agent.tools import build_default_tool_registry
 from app.services.demo_quota_service import DemoQuotaDecision, DemoQuotaService, get_demo_quota_service
 from app.services.document_contract_service import DocumentContractService
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 public_router = APIRouter()
 router = APIRouter()
 
-_agent_session_store = PostgresAgentStore()
+_agent_session_store = get_agent_store()
 _provider_health_service = ProviderHealthService()
 
 

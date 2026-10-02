@@ -7,16 +7,17 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 from uuid import uuid4
+from app.services.agent.dependencies import get_agent_store
 from app.services.agent.events import AgentEvent
 from app.services.agent.event_projection import is_public_event, public_event_payload
-from app.services.agent.store import AgentStore, PostgresAgentStore
+from app.services.agent.store import AgentStore
 
 
 class AgentSessionService:
     """Manages durable sessions and reconstructs authoritative conversation histories."""
 
     def __init__(self, session_store: AgentStore | None = None) -> None:
-        self.session_store = session_store or PostgresAgentStore()
+        self.session_store = session_store or get_agent_store()
 
     async def list_sessions(
         self,

@@ -14,6 +14,7 @@ from app.services.agent.tool_policy import (
     ToolPolicyViolation,
 )
 from app.services.agent.tools import ToolRegistry, build_default_tool_registry
+from app.services.geosql import GeoQueryCompiler, GeoQueryExecutor, GeoQueryPlan
 from app.models.search_models import MetadataFilter, SpatialFilter
 from app.services.rag.contracts import RetrievalPort, RetrievalQuery
 
@@ -123,6 +124,8 @@ class ToolRuntime:
         resource_fuse: ResourceFuse | None = None,
         retrieval_constraints: RetrievalRequestConstraints | None = None,
         spatial_service: Any | None = None,
+        geosql_compiler: Any | None = None,
+        geosql_executor: Any | None = None,
         execution_context: ToolExecutionContext | None = None,
         policy: ToolPolicy | None = None,
     ) -> None:
@@ -132,6 +135,8 @@ class ToolRuntime:
         self.resource_fuse = resource_fuse
         self.retrieval_constraints = retrieval_constraints or RetrievalRequestConstraints()
         self.spatial_service = spatial_service
+        self.geosql_compiler = geosql_compiler or GeoQueryCompiler()
+        self.geosql_executor = geosql_executor or GeoQueryExecutor()
         self.execution_context = execution_context or ToolExecutionContext()
         self.policy = policy or ToolPolicy()
 
@@ -228,10 +233,13 @@ class ToolRuntime:
             "locate_map",
             "inspect_layer_features",
             "get_feature_geometry",
+            "render_geojson_layer",
         }:
             observation = self._browser_action(call=call)
-        elif call.name in {"query_spatial_relation", "spatial_overlay"}:
+        elif call.name in {"query_spatial_relation", "spatial_overlay", "create_buffer"}:
             observation = await self._spatial_operation(turn_id=turn_id, call=call)
+        elif call.name == "query_geospatial_data":
+            observation = await self._geosql_operation(turn_id=turn_id, call=call)
         else:  # pragma: no cover - registry.get() already rejects this branch.
             raise KeyError(f"unknown tool: {call.name}")
         return observation
@@ -305,12 +313,18 @@ class ToolRuntime:
                     right=call.arguments["right"],
                     relation=str(call.arguments["relation"]),
                 )
-            else:
+            elif call.name == "spatial_overlay":
                 result = await self.spatial_service.overlay(
                     left=call.arguments["left"],
                     right=call.arguments["right"],
                     operation=str(call.arguments["operation"]),
                 )
+            else:
+                geometry = await self.spatial_service.create_buffer(
+                    center=list(call.arguments["center"]),
+                    distance=float(call.arguments["distance_m"]),
+                )
+                result = {"operation": "buffer", "geometry": geometry}
         except Exception as exc:
             return ToolObservation(
                 tool_call_id=call.tool_call_id,
@@ -323,6 +337,55 @@ class ToolRuntime:
             source="postgis",
             observation_key=call.tool_call_id,
             title=f"PostGIS {call.name}",
+            payload=result,
+        )
+        return ToolObservation(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            status="ok",
+            payload={"result": result, "evidence_id": evidence.evidence_id},
+        )
+
+    async def _geosql_operation(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        try:
+            plan = GeoQueryPlan.model_validate(dict(call.arguments))
+            compiled = self.geosql_compiler.compile(plan)
+            rows = await self.geosql_executor.execute(compiled)
+        except Exception as exc:
+            return ToolObservation(
+                tool_call_id=call.tool_call_id,
+                tool_name=call.name,
+                status="failed",
+                payload={"error": str(exc)},
+            )
+
+        geometries = []
+        row_facts = []
+        for raw_row in rows:
+            row = dict(raw_row)
+            geometry = row.pop("geometry", None)
+            if isinstance(geometry, Mapping):
+                geometries.append(dict(geometry))
+            row_facts.append(row)
+
+        result: dict[str, Any] = {
+            "operation": plan.operation,
+            "target_table": plan.target_table,
+            "row_count": len(rows),
+            "rows": row_facts,
+        }
+        if geometries:
+            result["geojson"] = (
+                geometries[0]
+                if len(geometries) == 1
+                else {"type": "GeometryCollection", "geometries": geometries}
+            )
+
+        evidence = self.evidence_ledger.add_observation(
+            turn_id=turn_id,
+            source="postgis",
+            observation_key=call.tool_call_id,
+            title=f"GeoSQL {plan.operation} on {plan.target_table}",
             payload=result,
         )
         return ToolObservation(

@@ -81,7 +81,7 @@ class RetrieveThenComposeController:
         return ToolCall(
             tool_call_id="compose-1",
             name="compose_answer",
-            arguments={"evidence_ids": evidence_ids},
+            arguments={"selected_evidence_ids": evidence_ids},
         )
 
 
@@ -96,7 +96,7 @@ class ReuseThenComposeController:
         return ToolCall(
             tool_call_id="compose-2",
             name="compose_answer",
-            arguments={"evidence_ids": observations[-1].payload["evidence_ids"]},
+            arguments={"selected_evidence_ids": observations[-1].payload["evidence_ids"]},
         )
 
 
@@ -157,7 +157,7 @@ class BrowserThenComposeController:
         return ToolCall(
             tool_call_id="compose-browser-1",
             name="compose_answer",
-            arguments={"evidence_ids": [observations[-1].payload["evidence_id"]]},
+            arguments={"selected_evidence_ids": [observations[-1].payload["evidence_id"]]},
         )
 
 
@@ -187,12 +187,12 @@ class BudgetRetryController:
             return ToolCall(
                 tool_call_id="budget-compose-retry",
                 name="compose_answer",
-                arguments={"evidence_ids": [latest.payload["selected_evidence_ids"][0]]},
+                arguments={"selected_evidence_ids": [latest.payload["selected_evidence_ids"][0]]},
             )
         return ToolCall(
             tool_call_id="budget-compose-all",
             name="compose_answer",
-            arguments={"evidence_ids": list(latest.payload["evidence_ids"])},
+            arguments={"selected_evidence_ids": list(latest.payload["evidence_ids"])},
         )
 
 
@@ -469,7 +469,7 @@ async def test_runtime_resolves_main_model_once_and_preserves_identity_across_st
             return ToolCall(
                 tool_call_id="compose-identity",
                 name="compose_answer",
-                arguments={"evidence_ids": observations[-1].payload["evidence_ids"]},
+                arguments={"selected_evidence_ids": observations[-1].payload["evidence_ids"]},
             )
 
     class IdentityAnswerGenerator:

@@ -62,6 +62,38 @@ export const createUserVectorCapabilities = (
       records.set(layerRef, record);
       return summary(record);
     },
+    renderGeojsonLayer(input: { geojson: Record<string, unknown>; name?: string; style?: VectorStylePatch }) {
+      const raw = structuredClone(input.geojson);
+      const type = String(raw.type ?? '');
+      const features = type === 'FeatureCollection'
+        ? Array.isArray(raw.features) ? raw.features as Array<Record<string, unknown>> : []
+        : type === 'Feature'
+          ? [raw]
+          : [{ type: 'Feature', geometry: raw, properties: {} }];
+      const layerRef = `ul_${crypto.randomUUID()}`;
+      const style = input.style ? mergeVectorStyle(defaultVectorStyle(), input.style) : defaultVectorStyle();
+      const name = input.name?.trim() || 'Spatial result';
+      const created = createUserVectorLayer(map, features, { layerRef, name, style });
+      const featureStates = created.features.map((feature) => {
+        const featureState: FeatureState = { feature_ref: `uf_${crypto.randomUUID()}`, layer_ref: layerRef, feature };
+        feature.set('gisFeatureRef', featureState.feature_ref, true);
+        featureIndex.set(featureState.feature_ref, featureState);
+        return featureState;
+      });
+      const record: RecordState = {
+        layer_ref: layerRef,
+        name,
+        geometry_types: created.geometryTypes,
+        feature_count: created.featureCount,
+        feature_refs: featureStates.slice(0, 10).map((item) => item.feature_ref),
+        visible: true,
+        style,
+        layer: created.layer,
+        features: featureStates,
+      };
+      records.set(layerRef, record);
+      return summary(record);
+    },
     inspectFeatures(input: { layer_ref: string; offset: number; limit: number }) {
       const record = get(input.layer_ref);
       const offset = Math.max(0, Math.trunc(input.offset));

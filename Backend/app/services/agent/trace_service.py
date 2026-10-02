@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from app.services.agent.dependencies import get_agent_store
 from app.services.agent.events import AgentEvent
-from app.services.agent.store import AgentStore, PostgresAgentStore
+from app.services.agent.store import AgentStore
 
 
 class AgentTraceService:
     """Provides structured, admin-audited read access to execution traces."""
 
     def __init__(self, session_store: AgentStore | None = None) -> None:
-        self.session_store = session_store or PostgresAgentStore()
+        self.session_store = session_store or get_agent_store()
 
     async def get_turn_trace(
         self,

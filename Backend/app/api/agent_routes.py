@@ -7,12 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.auth import AdminIdentity, UserIdentity
 from app.core.security import require_authenticated_admin, require_authenticated_user
+from app.services.agent.dependencies import get_agent_store
 from app.services.agent.session_service import AgentSessionService
-from app.services.agent.store import PostgresAgentStore
 from app.services.agent.trace_service import AgentTraceService
 
 router = APIRouter()
-_store = PostgresAgentStore()
+_store = get_agent_store()
 _trace_service = AgentTraceService(_store)
 _session_service = AgentSessionService(_store)
 

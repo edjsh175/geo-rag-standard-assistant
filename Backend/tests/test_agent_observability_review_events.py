@@ -15,7 +15,7 @@ from app.services.agent.tool_runtime import ToolCall
 async def test_review_repair_emits_two_distinct_correlated_lifecycles() -> None:
     class Controller:
         async def decide(self, **kwargs):
-            return ToolCall("compose-1", "compose_answer", {"evidence_ids": ["ev-1", "ev-2"]})
+            return ToolCall("compose-1", "compose_answer", {"selected_evidence_ids": ["ev-1", "ev-2"]})
 
     class Answerer:
         async def generate(self, **kwargs):

@@ -49,7 +49,7 @@ class DummyController:
         ev_ids = [e["evidence_id"] for e in working_evidence if "evidence_id" in e]
         return ToolCall(
             name="compose_answer",
-            arguments={"evidence_ids": ev_ids},
+            arguments={"selected_evidence_ids": ev_ids},
             tool_call_id="call-compose-2",
         )
 

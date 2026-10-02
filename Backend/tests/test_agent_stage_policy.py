@@ -353,3 +353,75 @@ async def test_adapter_sends_the_resolved_model_identity_to_provider() -> None:
     )
 
     assert llm.calls[0]["model"] == "resolved-main"
+
+
+@pytest.mark.asyncio
+async def test_model_client_uses_native_tool_call_channel_when_tools_are_bound() -> None:
+    from langchain_core.messages import AIMessage
+
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+    class FakeBoundModel:
+        async def ainvoke(self, messages):
+            factory.invocations.append(messages)
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "retrieve_kb",
+                    "args": {"query": "重庆滑坡监测"},
+                    "id": "call-native-1",
+                    "type": "tool_call",
+                }],
+            )
+
+    class FakeChatModel:
+        def __init__(self, **kwargs):
+            factory.model_kwargs.append(kwargs)
+
+        def bind_tools(self, tools, **kwargs):
+            factory.bind_calls.append((tools, kwargs))
+            return FakeBoundModel()
+
+    class FakeFactory:
+        def __init__(self):
+            self.model_kwargs = []
+            self.bind_calls = []
+            self.invocations = []
+
+        def __call__(self, **kwargs):
+            return FakeChatModel(**kwargs)
+
+    llm = FakeLLMConfig()
+    factory = FakeFactory()
+    client = LLMConfigStageModelClient(llm, chat_model_factory=factory)
+    tools = (
+        {
+            "type": "function",
+            "function": {
+                "name": "retrieve_kb",
+                "description": "search knowledge base",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        },
+    )
+
+    response = await client.complete(
+        ModelRequest(
+            stage="controller",
+            messages=({"role": "user", "content": "问题"},),
+            tools=tools,
+        )
+    )
+
+    assert response.content is None
+    assert response.tool_calls[0]["name"] == "retrieve_kb"
+    assert response.tool_calls[0]["args"] == {"query": "重庆滑坡监测"}
+    assert factory.bind_calls[0][0] == list(tools)
+    assert factory.bind_calls[0][1]["tool_choice"] == "auto"
+    assert factory.bind_calls[0][1]["parallel_tool_calls"] is False
+    assert factory.invocations[0] == [{"role": "user", "content": "问题"}]

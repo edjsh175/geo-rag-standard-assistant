@@ -13,6 +13,7 @@ from app.models.search_models import (
 )
 from app.api.search_routes import cancel_agent_run
 from app.services.agent.publication import PublishedResult
+from app.services.agent.context import ContextEngine
 from app.services.search_application_service import SearchApplicationService
 
 
@@ -84,10 +85,26 @@ class AgentRuntimeStub:
     def __init__(self) -> None:
         self.requests = []
         self.cancellation_requests = []
+        self.linear_publication_calls = []
+        self.context_engine = ContextEngine()
+        self.reviewer = None
         self.answer_generator = SimpleNamespace(generate=self._generate)
+        self.answer_publication_pipeline = SimpleNamespace(run=self._run_linear_publication)
 
     async def _generate(self, **kwargs):
         return SimpleNamespace(answer="linear answer", map_action=None)
+
+    async def _run_linear_publication(self, **kwargs):
+        self.linear_publication_calls.append(kwargs)
+        answer = await self._generate(**kwargs)
+        if kwargs.get("reviewer_enabled"):
+            if self.reviewer is None:
+                return SimpleNamespace(answer=answer, review=None, terminal_state="review_failed", message="review failed")
+            review = await self.reviewer.review(question=kwargs["question"], answer=answer, snapshot=kwargs["snapshot"])
+            verdict = str(getattr(review, "verdict", "")).strip().upper()
+            if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
+                return SimpleNamespace(answer=answer, review=review, terminal_state="review_rejected", message="答案未通过证据审查，未发布。")
+        return SimpleNamespace(answer=answer, review=None, terminal_state=None, message=None)
 
     async def run(self, request):
         self.requests.append(request)

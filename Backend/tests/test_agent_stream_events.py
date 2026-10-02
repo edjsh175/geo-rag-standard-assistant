@@ -63,7 +63,7 @@ class ControllerStub:
         return ToolCall(
             tool_call_id="compose-1",
             name="compose_answer",
-            arguments={"evidence_ids": observations[-1].payload["evidence_ids"]},
+            arguments={"selected_evidence_ids": observations[-1].payload["evidence_ids"]},
         )
 
 
@@ -270,7 +270,7 @@ async def test_browser_stream_resume_keeps_one_tool_call_id_and_safe_receipt_sum
             if not self.continuation:
                 return ToolCall("browser-call-1", "locate_map", {"longitude": 104.06, "latitude": 30.67, "zoom": 12})
             evidence = kwargs["observations"][-1].payload["evidence_id"]
-            return ToolCall("compose-after-browser", "compose_answer", {"evidence_ids": [evidence]})
+            return ToolCall("compose-after-browser", "compose_answer", {"selected_evidence_ids": [evidence]})
 
     store = InMemoryAgentSessionStore()
     first = AgentRuntime(

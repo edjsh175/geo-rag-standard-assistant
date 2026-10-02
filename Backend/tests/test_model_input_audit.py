@@ -31,11 +31,25 @@ async def test_controller_provider_messages_match_persisted_model_input_audit_ha
             self.calls.append(kwargs)
             return '{"action":"direct_answer","answer":"ok"}'
 
+    class FakeBoundModel:
+        async def ainvoke(self, messages):
+            from langchain_core.messages import AIMessage
+            llm.calls.append({"messages": messages})
+            return AIMessage(content='{"action":"direct_answer","answer":"ok"}')
+
+    class FakeChatModel:
+        def __init__(self, **kwargs):
+            pass
+
+        def bind_tools(self, tools, **kwargs):
+            return FakeBoundModel()
+
     store = InMemoryAgentStore()
     llm = FakeLLMConfig()
     client = LLMConfigStageModelClient(
         llm,
         audit_sink=store.save_model_input_audit,
+        chat_model_factory=FakeChatModel,
     )
     registry = build_default_tool_registry()
     controller = MainController(model_client=client, tool_registry=registry)

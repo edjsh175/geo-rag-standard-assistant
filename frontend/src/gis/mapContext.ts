@@ -14,7 +14,7 @@ export const createMapContextReader = (map: Map, readUserLayers: () => UserVecto
     const availableFiles = listVectorDatasets();
     // import_vector_dataset is always listed so the controller can attempt it with any
     // file_ref (including missing ones); the executor returns a failure receipt in that case.
-    const supportedTools = ['locate_map', 'set_layer_visibility', 'import_vector_dataset'];
+    const supportedTools = ['locate_map', 'set_layer_visibility', 'import_vector_dataset', 'render_geojson_layer'];
     if (userLayers.length > 0) {
       supportedTools.push('set_vector_style', 'fit_vector_layer', 'inspect_layer_features');
     }

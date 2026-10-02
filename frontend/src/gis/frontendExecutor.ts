@@ -55,6 +55,10 @@ export const createFrontendExecutor = ({
         switch (action.type) {
           case 'import_vector_dataset':
             return capabilities.importVectorDataset({ file_ref: String(payload.file_ref ?? ''), name: typeof payload.name === 'string' ? payload.name : undefined });
+          case 'render_geojson_layer':
+            if (!payload.geojson) throw new GisExecutionError('INVALID_TOOL_CALL', '缺少 geojson');
+            if (typeof payload.geojson !== 'object') throw new GisExecutionError('INVALID_TOOL_CALL', 'geojson 类型无效');
+            return capabilities.renderGeojsonLayer({ geojson: payload.geojson as any, name: typeof payload.name === 'string' ? payload.name : undefined, style: payload.style ? payload.style as never : undefined });
           case 'set_layer_visibility':
           {
             const layerRef = String(payload.layer_ref ?? '');

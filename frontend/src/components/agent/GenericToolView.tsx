@@ -32,6 +32,9 @@ const views: Record<string, { title: string; input: string[]; output: string[] }
   get_feature_geometry: { title: '提取要素空间几何', input: ['feature_ref'], output: ['feature_count'] },
   query_spatial_relation: { title: 'PostGIS 空间关系查询', input: ['left', 'right', 'relation'], output: ['result_ids', 'result_count', 'evidence_ids'] },
   spatial_overlay: { title: 'PostGIS 空间拓扑叠加', input: ['left', 'right', 'operation'], output: ['result_ids', 'result_count', 'evidence_ids'] },
+  create_buffer: { title: 'PostGIS 缓冲区分析', input: ['center', 'distance_m'], output: ['evidence_id'] },
+  render_geojson_layer: { title: '渲染 GeoJSON 图层', input: ['geojson', 'name', 'style'], output: ['layer_ref', 'feature_count'] },
+  query_geospatial_data: { title: 'GeoSQL 空间查询', input: ['operation', 'target_table', 'select_fields', 'filters', 'spatial', 'limit'], output: ['evidence_id'] },
 };
 
 const fields = (value: Record<string, unknown> | undefined, names: string[]) => names

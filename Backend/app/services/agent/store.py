@@ -33,6 +33,15 @@ from app.models.search_models import MetadataFilter, SpatialFilter
 logger = logging.getLogger(__name__)
 
 
+class AgentStoreUnavailableError(RuntimeError):
+    """Raised when the production durable Agent store is unavailable.
+
+    Production must fail closed instead of silently switching to process-local
+    memory, otherwise sessions, traces, pending executions, and evidence can
+    diverge across API entry points or disappear after restart.
+    """
+
+
 def _json_dumps(val: Any) -> str:
     return json.dumps(val, ensure_ascii=False, default=str, sort_keys=True)
 
@@ -705,11 +714,20 @@ class PostgresAgentStore(AgentStore):
 
     def __init__(self, manager=None, fallback: AgentStore | None = None) -> None:
         self._manager = manager or db_manager
-        self._fallback = fallback or InMemoryAgentStore()
+        # A fallback must be injected explicitly (tests only).  Production
+        # callers use the PostgreSQL store as the single durable truth source.
+        self._fallback = fallback
 
     @property
     def _is_postgres_available(self) -> bool:
         return bool(self._manager and getattr(self._manager, "postgres_sessionmaker", None))
+
+    def _fallback_store(self) -> AgentStore:
+        if self._fallback is not None:
+            return self._fallback
+        raise AgentStoreUnavailableError(
+            "PostgreSQL AgentStore is unavailable; refusing process-local fallback"
+        )
 
     async def get_or_create_session(
         self,
@@ -717,7 +735,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> AgentSession:
         if not self._is_postgres_available:
-            return await self._fallback.get_or_create_session(principal_id, session_id)
+            return await self._fallback_store().get_or_create_session(principal_id, session_id)
 
         principal = principal_id.strip()
         normalized_sess = session_id.strip()
@@ -791,7 +809,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> AgentSession | None:
         if not self._is_postgres_available:
-            return await self._fallback.get_session(principal_id, session_id)
+            return await self._fallback_store().get_session(principal_id, session_id)
 
         principal = principal_id.strip()
         normalized_sess = session_id.strip()
@@ -839,7 +857,7 @@ class PostgresAgentStore(AgentStore):
 
     async def save_session(self, session: AgentSession) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_session(session)
+            return await self._fallback_store().save_session(session)
 
         principal = session.principal_id.strip()
         normalized_sess = session.session_id.strip()
@@ -896,7 +914,7 @@ class PostgresAgentStore(AgentStore):
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         if not self._is_postgres_available:
-            return await self._fallback.list_sessions(principal_id, limit)
+            return await self._fallback_store().list_sessions(principal_id, limit)
 
         async with self._manager.get_postgres_session() as db_session:
             sql = text(
@@ -929,7 +947,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> bool:
         if not self._is_postgres_available:
-            return await self._fallback.delete_session(principal_id, session_id)
+            return await self._fallback_store().delete_session(principal_id, session_id)
 
         async with self._manager.get_postgres_session() as db_session:
             sql = text(
@@ -965,7 +983,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> str:
         if not self._is_postgres_available:
-            return await self._fallback.allocate_turn_id(principal_id, session_id)
+            return await self._fallback_store().allocate_turn_id(principal_id, session_id)
 
         principal = principal_id.strip()
         normalized_sess = session_id.strip()
@@ -1025,7 +1043,7 @@ class PostgresAgentStore(AgentStore):
         event: AgentEvent,
     ) -> AgentEvent:
         if not self._is_postgres_available:
-            return await self._fallback.append_event(principal_id, event)
+            return await self._fallback_store().append_event(principal_id, event)
 
         principal = principal_id.strip()
         session_id = event.session_id.strip()
@@ -1148,7 +1166,7 @@ class PostgresAgentStore(AgentStore):
         from_sequence: int = 0,
     ) -> list[AgentEvent]:
         if not self._is_postgres_available:
-            return await self._fallback.list_events(principal_id, session_id, from_sequence)
+            return await self._fallback_store().list_events(principal_id, session_id, from_sequence)
 
         async with self._manager.get_postgres_session() as db_session:
             sql = text(
@@ -1192,7 +1210,7 @@ class PostgresAgentStore(AgentStore):
         items: Sequence[EvidenceItem],
     ) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_evidence_items(principal_id, session_id, items)
+            return await self._fallback_store().save_evidence_items(principal_id, session_id, items)
 
         if not items:
             return
@@ -1247,7 +1265,7 @@ class PostgresAgentStore(AgentStore):
         active_only: bool = True,
     ) -> list[EvidenceItem]:
         if not self._is_postgres_available:
-            return await self._fallback.list_evidence_items(principal_id, session_id, active_only)
+            return await self._fallback_store().list_evidence_items(principal_id, session_id, active_only)
 
         condition = "AND is_active = TRUE" if active_only else ""
         async with self._manager.get_postgres_session() as db_session:
@@ -1294,7 +1312,7 @@ class PostgresAgentStore(AgentStore):
         working_by_turn: Mapping[str, Sequence[str]],
     ) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_evidence_activations(
+            return await self._fallback_store().save_evidence_activations(
                 principal_id,
                 session_id,
                 working_by_turn,
@@ -1334,7 +1352,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> dict[str, tuple[str, ...]]:
         if not self._is_postgres_available:
-            return await self._fallback.list_evidence_activations(principal_id, session_id)
+            return await self._fallback_store().list_evidence_activations(principal_id, session_id)
 
         async with self._manager.get_postgres_session() as db_session:
             result = await db_session.execute(
@@ -1360,7 +1378,7 @@ class PostgresAgentStore(AgentStore):
 
     async def save_snapshot(self, record: ContextSnapshotRecord) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_snapshot(record)
+            return await self._fallback_store().save_snapshot(record)
 
         async with self._manager.get_postgres_session() as db_session:
             sql = text(
@@ -1399,7 +1417,7 @@ class PostgresAgentStore(AgentStore):
         stage: str | None = None,
     ) -> ContextSnapshotRecord | None:
         if not self._is_postgres_available:
-            return await self._fallback.get_latest_snapshot(principal_id, session_id, stage)
+            return await self._fallback_store().get_latest_snapshot(principal_id, session_id, stage)
 
         condition = "AND stage = :stage" if stage else ""
         params: dict[str, Any] = {
@@ -1441,7 +1459,7 @@ class PostgresAgentStore(AgentStore):
 
     async def save_model_input_audit(self, record: ModelInputAuditRecord) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_model_input_audit(record)
+            return await self._fallback_store().save_model_input_audit(record)
 
         async with self._manager.get_postgres_session() as db_session:
             result = await db_session.execute(
@@ -1527,7 +1545,7 @@ class PostgresAgentStore(AgentStore):
         turn_id: str | None = None,
     ) -> list[ModelInputAuditRecord]:
         if not self._is_postgres_available:
-            return await self._fallback.list_model_input_audits(
+            return await self._fallback_store().list_model_input_audits(
                 principal_id,
                 session_id,
                 turn_id,
@@ -1595,7 +1613,7 @@ class PostgresAgentStore(AgentStore):
         record: ConversationMemoryStateRecord,
     ) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_conversation_memory(record)
+            return await self._fallback_store().save_conversation_memory(record)
 
         async with self._manager.get_postgres_session() as db_session:
             result = await db_session.execute(
@@ -1677,7 +1695,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> ConversationMemoryStateRecord | None:
         if not self._is_postgres_available:
-            return await self._fallback.get_latest_conversation_memory(
+            return await self._fallback_store().get_latest_conversation_memory(
                 principal_id,
                 session_id,
             )
@@ -1736,7 +1754,7 @@ class PostgresAgentStore(AgentStore):
         ttl_seconds: float = 3600.0,
     ) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.save_pending_execution(principal_id, pending, ttl_seconds)
+            return await self._fallback_store().save_pending_execution(principal_id, pending, ttl_seconds)
 
         principal = principal_id.strip()
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
@@ -1797,7 +1815,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> PendingBrowserExecution | None:
         if not self._is_postgres_available:
-            return await self._fallback.get_pending_execution(principal_id, session_id)
+            return await self._fallback_store().get_pending_execution(principal_id, session_id)
 
         async with self._manager.get_postgres_session() as db_session:
             sql = text(
@@ -1863,7 +1881,7 @@ class PostgresAgentStore(AgentStore):
         token: str,
     ) -> PendingBrowserExecution | None:
         if not self._is_postgres_available:
-            return await self._fallback.claim_pending_execution(
+            return await self._fallback_store().claim_pending_execution(
                 principal_id,
                 session_id,
                 token,
@@ -1902,7 +1920,7 @@ class PostgresAgentStore(AgentStore):
         session_id: str,
     ) -> None:
         if not self._is_postgres_available:
-            return await self._fallback.clear_pending_execution(principal_id, session_id)
+            return await self._fallback_store().clear_pending_execution(principal_id, session_id)
 
         async with self._manager.get_postgres_session() as db_session:
             sql = text(

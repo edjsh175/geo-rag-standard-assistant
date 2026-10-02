@@ -10,6 +10,8 @@ import json
 from time import monotonic
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
+from langchain_openai import ChatOpenAI
+
 from app.models.agent_context import ModelInputAuditRecord
 
 
@@ -156,6 +158,7 @@ class ModelRequest:
     attempt: int = 1
     timeout_seconds: float | None = None
     response_schema: Mapping[str, Any] | None = None
+    tools: tuple[Mapping[str, Any], ...] = ()
     audit_context: Mapping[str, Any] | None = None
 
 
@@ -174,6 +177,7 @@ class ModelCallAudit:
 class ModelResponse:
     content: str | None
     reasoning_content: str | None = None
+    tool_calls: tuple[Mapping[str, Any], ...] = ()
 
 
 class StageModelClient(Protocol):
@@ -201,11 +205,57 @@ class LLMConfigStageModelClient:
         *,
         audit_sink: Callable[[ModelInputAuditRecord], Awaitable[None]] | None = None,
         call_audit_sink: Callable[[ModelCallAudit, Mapping[str, Any] | None], Awaitable[None]] | None = None,
+        chat_model_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.llm_config = llm_config
         self.audit_sink = audit_sink
         self.call_audit_sink = call_audit_sink
+        self.chat_model_factory = chat_model_factory or ChatOpenAI
         self.audit_log: deque[ModelCallAudit] = deque(maxlen=1000)
+
+    def _build_bound_chat_model(
+        self,
+        *,
+        model_name: str | None,
+        temperature: float,
+        timeout_seconds: float | None,
+        tools: tuple[Mapping[str, Any], ...],
+        response_format: Mapping[str, Any] | None,
+    ):
+        """Build one request-scoped LangChain chat model and bind current tools.
+
+        LangChain owns generic tool binding/message translation. GeoAI still
+        owns action availability, argument validation, auditing and execution.
+        """
+        from app.core.config import settings
+
+        provider = str(getattr(settings, "LLM_PROVIDER", "") or "").lower()
+        if provider == "deepseek":
+            api_key = settings.DEEPSEEK_API_KEY
+            base_url = "https://api.deepseek.com"
+        elif provider == "openai":
+            api_key = settings.OPENAI_API_KEY
+            base_url = settings.OPENAI_BASE_URL
+        else:
+            raise ValueError(f"当前 LLM 提供商不支持 LangChain bind_tools: {provider}")
+        if not api_key:
+            raise RuntimeError(f"{provider} API Key 未配置")
+
+        model = self.chat_model_factory(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            timeout=timeout_seconds,
+            max_retries=0,
+        )
+        bind_kwargs: dict[str, Any] = {
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
+        }
+        if response_format is not None:
+            bind_kwargs["response_format"] = dict(response_format)
+        return model.bind_tools([dict(tool) for tool in tools], **bind_kwargs)
 
     @property
     def supports_reasoning(self) -> bool:
@@ -255,31 +305,63 @@ class LLMConfigStageModelClient:
                 structured_output = {}
 
             try:
-                content = await self.llm_config.chat_completion(
-                    messages=[dict(message) for message in effective_request.messages],
-                    model=effective_model_name,
-                    temperature=effective_request.temperature,
-                    request_reasoning=effective_request.request_reasoning,
-                    timeout_seconds=effective_request.timeout_seconds,
-                    **structured_output,
-                )
-            except Exception as exc:
-                if (
-                    structured_output.get("response_format", {}).get("type") == "json_schema"
-                    and _is_structured_output_capability_rejection(exc)
-                ):
+                if effective_request.tools:
+                    bound_model = self._build_bound_chat_model(
+                        model_name=effective_model_name,
+                        temperature=effective_request.temperature,
+                        timeout_seconds=effective_request.timeout_seconds,
+                        tools=effective_request.tools,
+                        response_format=structured_output.get("response_format"),
+                    )
+                    message = await bound_model.ainvoke(
+                        [dict(item) for item in effective_request.messages]
+                    )
+                    raw_content = getattr(message, "content", None)
+                    content = raw_content if isinstance(raw_content, str) and raw_content else None
+                    tool_calls = tuple(getattr(message, "tool_calls", None) or ())
+                else:
                     content = await self.llm_config.chat_completion(
                         messages=[dict(message) for message in effective_request.messages],
                         model=effective_model_name,
                         temperature=effective_request.temperature,
                         request_reasoning=effective_request.request_reasoning,
                         timeout_seconds=effective_request.timeout_seconds,
-                        response_format={"type": "json_object"},
+                        **structured_output,
                     )
+                    tool_calls = ()
+            except Exception as exc:
+                if (
+                    structured_output.get("response_format", {}).get("type") == "json_schema"
+                    and _is_structured_output_capability_rejection(exc)
+                ):
+                    if effective_request.tools:
+                        bound_model = self._build_bound_chat_model(
+                            model_name=effective_model_name,
+                            temperature=effective_request.temperature,
+                            timeout_seconds=effective_request.timeout_seconds,
+                            tools=effective_request.tools,
+                            response_format={"type": "json_object"},
+                        )
+                        message = await bound_model.ainvoke(
+                            [dict(item) for item in effective_request.messages]
+                        )
+                        raw_content = getattr(message, "content", None)
+                        content = raw_content if isinstance(raw_content, str) and raw_content else None
+                        tool_calls = tuple(getattr(message, "tool_calls", None) or ())
+                    else:
+                        content = await self.llm_config.chat_completion(
+                            messages=[dict(message) for message in effective_request.messages],
+                            model=effective_model_name,
+                            temperature=effective_request.temperature,
+                            request_reasoning=effective_request.request_reasoning,
+                            timeout_seconds=effective_request.timeout_seconds,
+                            response_format={"type": "json_object"},
+                        )
+                        tool_calls = ()
                 else:
                     raise
             outcome = "success"
-            return ModelResponse(content=content)
+            return ModelResponse(content=content, tool_calls=tool_calls)
         finally:
             audit_entry = ModelCallAudit(
                 call_id=request.call_id,

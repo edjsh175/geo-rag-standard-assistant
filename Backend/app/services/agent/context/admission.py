@@ -19,6 +19,7 @@ VALID_WEBGIS_TOOLS = {
     "fit_vector_layer",
     "inspect_layer_features",
     "get_feature_geometry",
+    "render_geojson_layer",
 }
 VALID_LAYER_KINDS = {"base", "annotation", "business", "user_vector", "group", "unknown"}
 ADCODE_PATTERN = re.compile(r"^\d{2,6}$")

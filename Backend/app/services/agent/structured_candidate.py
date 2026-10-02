@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Generic, TypeVar
 
 
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 def extract_json_object(content: str | None) -> dict[str, Any]:
@@ -60,8 +61,8 @@ class StructuredCandidateProtocolError(ValueError):
 
 async def execute_structured_candidate(
     *,
-    generate: Callable[[StructuredCandidateAttempt], Awaitable[str | None]],
-    validate: Callable[[str | None], T],
+    generate: Callable[[StructuredCandidateAttempt], Awaitable[U]],
+    validate: Callable[[U], T],
 ) -> T:
     attempts = (
         StructuredCandidateAttempt(1, False, None, None),

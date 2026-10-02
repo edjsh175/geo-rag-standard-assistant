@@ -10,7 +10,7 @@ const titles: Record<string, string> = {
   retrieve_kb: '检索知识库', search_evidence_memory: '检索历史证据', reuse_evidence: '激活历史证据',
   locate_map: '地图视角定位', import_vector_dataset: '导入矢量数据集', set_layer_visibility: '图层显隐控制',
   set_vector_style: '更新矢量样式', fit_vector_layer: '缩放至图层范围', inspect_layer_features: '要素属性探查',
-  get_feature_geometry: '提取要素空间几何', query_spatial_relation: 'PostGIS 空间关系查询', spatial_overlay: 'PostGIS 空间拓扑叠加',
+  get_feature_geometry: '提取要素空间几何', query_spatial_relation: 'PostGIS 空间关系查询', spatial_overlay: 'PostGIS 空间拓扑叠加', create_buffer: 'PostGIS 缓冲区分析', render_geojson_layer: '渲染 GeoJSON 图层', query_geospatial_data: 'GeoSQL 空间查询',
 };
 
 export const ToolRow: React.FC<ToolRowProps> = ({ tool, paused = false }) => {

@@ -145,3 +145,32 @@ test('browser bridge fails closed when browser execution exceeds backend timeout
     unregister();
   }
 });
+
+
+test("browser receipt carries updated map context after render_geojson_layer", async () => {
+  let revision = 1;
+  let rendered = false;
+  const unregister = registerBrowserGisRuntime('2d', {
+    snapshot: () => ({
+      ...context('2d', ['render_geojson_layer']),
+      revision,
+      user_layers: rendered ? [{
+        layer_ref: 'ul_result', name: 'result', geometry_types: ['Polygon'], feature_count: 1,
+        feature_refs: ['uf_result'], visible: true,
+        style: { stroke: { color: '#000000', width: 1, opacity: 1 }, fill: { color: '#ffffff', opacity: 0.3 }, radius: 5 },
+      }] : [],
+    }),
+    execute: async () => { rendered = true; revision = 2; return { layer_ref: 'ul_result' }; },
+  });
+  try {
+    setActiveBrowserGisRuntime('2d');
+    const receipt = await executeBrowserTool('run-render', 'call-render', {
+      type: 'render_geojson_layer', target: 'browser_map',
+      payload: { geojson: { type: 'Point', coordinates: [104, 30] }, name: 'result' },
+    });
+    assert.equal(receipt.status, 'succeeded');
+    assert.equal(receipt.output?.layer_ref, 'ul_result');
+    assert.equal(receipt.effect.state_revision, 2);
+    assert.equal(receipt.map_context.user_layers[0].layer_ref, 'ul_result');
+  } finally { unregister(); }
+});

@@ -105,7 +105,7 @@ disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["Backend/tests"]
-pythonpath = ["Backend"]
+pythonpath = [".", "Backend"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

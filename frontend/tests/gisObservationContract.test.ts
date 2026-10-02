@@ -72,3 +72,26 @@ test('feature refs remain stable across inspect and geometry reads', async () =>
   assert.ok(Math.abs(lon - 104) < 1e-9);
   assert.ok(Math.abs(lat - 30) < 1e-9);
 });
+
+
+test('renderGeojsonLayer reuses the user vector authority and returns a stable layer_ref', () => {
+  const view = new View({ center: [0, 0], zoom: 5, projection: 'EPSG:3857' });
+  const layers: unknown[] = [];
+  const fakeMap = {
+    getView: () => view,
+    addLayer: (layer: unknown) => layers.push(layer),
+    removeLayer: () => undefined,
+  } as never;
+  const capabilities = createUserVectorCapabilities(fakeMap, () => [0, 0, 0, 0]);
+
+  const rendered = capabilities.renderGeojsonLayer({
+    geojson: { type: 'Polygon', coordinates: [[[104, 30], [104.1, 30], [104.1, 30.1], [104, 30]]] },
+    name: '分析结果',
+  });
+
+  assert.match(rendered.layer_ref, /^ul_/);
+  assert.equal(rendered.name, '分析结果');
+  assert.equal(rendered.feature_count, 1);
+  assert.equal(capabilities.list()[0].layer_ref, rendered.layer_ref);
+  assert.equal(layers.length, 1);
+});

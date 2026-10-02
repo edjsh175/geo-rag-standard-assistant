@@ -58,3 +58,22 @@ async def test_public_session_history_filters_stored_audit_fields_and_preserves_
         turn_id='turn-1', trace_id='trace-1'))
     detail = await service.get_session_detail(principal_id=principal, session_id=session_id)
     assert next(message for message in detail['messages'] if message['role'] == 'assistant')['references'] == []
+
+
+def test_geosql_public_tool_projection_redacts_raw_geometry_coordinates() -> None:
+    payload = public_event_payload("tool_started", {
+        "tool_name": "query_geospatial_data",
+        "arguments": {
+            "operation": "nearest",
+            "target_table": "spatial_regions",
+            "select_fields": ["adcode", "geometry"],
+            "filters": [{"field": "region_name", "operator": "contains", "value": "Chengdu", "secret": "hidden"}],
+            "spatial": {"geometry": {"type": "Point", "coordinates": [104, 30]}, "distance_m": 1000},
+            "limit": 5,
+        },
+    })
+    args = payload["arguments"]
+    assert args["spatial"] == {"distance_m": 1000, "geometry": {"type": "Point"}}
+    assert args["filters"] == [{"field": "region_name", "operator": "contains", "value": "Chengdu"}]
+    assert "coordinates" not in str(payload)
+    assert "hidden" not in str(payload)

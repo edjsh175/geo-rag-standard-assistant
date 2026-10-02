@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 
 from app.services.agent.context.engine import ContextEngine, extract_previous_turn_runtime_facts
@@ -17,7 +15,6 @@ from app.services.agent.controller_protocol import (
     ControllerDecision,
     ExecutableActionState,
     build_controller_decision_schema,
-    normalize_legacy_controller_wire,
     validate_controller_decision_payload,
 )
 from app.services.agent.events import AgentEvent
@@ -38,25 +35,17 @@ class FakeModelClient:
         return self.response
 
 
-def test_legacy_controller_wire_emits_deprecation_warning_only_when_normalized():
-    with pytest.warns(DeprecationWarning, match="legacy Controller wire"):
-        normalized = normalize_legacy_controller_wire(
-            {"name": "retrieve_kb", "arguments": {"query": "规划"}}
-        )
-    assert normalized["action"] == TOOL_CALL_ACTION
-    assert normalized["tool"] == "retrieve_kb"
+def test_legacy_controller_wire_is_rejected_instead_of_normalized():
+    registry = build_default_tool_registry()
+    state = ExecutableActionState.compute(registry=registry)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        canonical = normalize_legacy_controller_wire(
-            {
-                "action": TOOL_CALL_ACTION,
-                "tool": "retrieve_kb",
-                "arguments": {"query": "规划"},
-            }
+    with pytest.raises(ValueError, match="unknown action"):
+        validate_controller_decision_payload(
+            {"name": "retrieve_kb", "arguments": {"query": "规划"}},
+            state=state,
+            registry=registry,
+            tool_call_id="legacy-call",
         )
-    assert canonical["action"] == TOOL_CALL_ACTION
-    assert caught == []
 
 
 def test_executable_action_state_dynamic_surface():
@@ -191,7 +180,6 @@ def test_validate_direct_answer_payload():
     )
     assert decision.action == DIRECT_ANSWER_ACTION
     assert decision.answer == "这是关于刚才操作步骤的说明。"
-    assert decision.name == DIRECT_ANSWER_ACTION
     assert decision.arguments == {}
 
     # Reject empty answer
@@ -236,7 +224,6 @@ def test_validate_compose_answer_payload():
     )
     assert decision.action == COMPOSE_ANSWER_ACTION
     assert decision.arguments["selected_evidence_ids"] == ["ev-1", "ev-2"]
-    assert decision.arguments["evidence_ids"] == ["ev-1", "ev-2"]
 
     # Reject knowledge_answer without selected_evidence_ids
     with pytest.raises(ValueError, match="selected_evidence_ids must be a non-empty array"):
@@ -455,6 +442,7 @@ def test_dynamic_tool_surface_provider_health():
     )
     assert "query_spatial_relation" not in state_postgis_down.available_capabilities
     assert "spatial_overlay" not in state_postgis_down.available_capabilities
+    assert "query_geospatial_data" not in state_postgis_down.available_capabilities
 
 
 @pytest.mark.asyncio
@@ -589,3 +577,15 @@ def test_i01_context_frame_holds_identity_resolution() -> None:
     assert frame.identity_resolution is identity
     assert frame.identity_state is identity
     assert frame.identity_resolution.requires_confirmation is True
+
+
+def test_render_geojson_layer_is_exposed_only_when_active_browser_runtime_declares_it() -> None:
+    registry = build_default_tool_registry()
+    no_map = executable_tool_names(registry, None, {})
+    map_3d = executable_tool_names(registry, {"ready": True, "supported_tools": ["locate_map"]}, {})
+    map_2d = executable_tool_names(registry, {"ready": True, "supported_tools": ["locate_map", "render_geojson_layer"]}, {})
+
+    assert "render_geojson_layer" not in no_map
+    assert "render_geojson_layer" not in map_3d
+    assert "render_geojson_layer" in map_2d
+    assert "create_buffer" in no_map

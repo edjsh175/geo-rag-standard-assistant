@@ -103,6 +103,9 @@ def public_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[st
             "get_feature_geometry": {"feature_ref"},
             "query_spatial_relation": {"left", "right", "relation"},
             "spatial_overlay": {"left", "right", "operation"},
+            "create_buffer": {"center", "distance_m"},
+            "render_geojson_layer": {"geojson", "name", "style"},
+            "query_geospatial_data": {"operation", "target_table", "select_fields", "filters", "spatial", "limit"},
         }
         allowed_args = tool_argument_fields.get(tool_name, set())
         safe_args: dict[str, Any] = {}
@@ -116,7 +119,14 @@ def public_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[st
                 elif isinstance(value, (str, int, float, bool)) or value is None:
                     safe_args[key] = value
                 elif isinstance(value, list):
-                    safe_args[key] = value[:50]
+                    if key == "filters":
+                        safe_args[key] = [
+                            _scalar_fields(item, {"field", "operator", "value"})
+                            for item in value[:20]
+                            if isinstance(item, Mapping)
+                        ]
+                    else:
+                        safe_args[key] = value[:50]
                 elif isinstance(value, Mapping):
                     if key == 'style':
                         safe_args[key] = {
@@ -125,6 +135,13 @@ def public_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[st
                             if isinstance(value.get(name), Mapping)
                         }
                         safe_args[key].update(_scalar_fields(value, {'radius'}))
+                    elif key == 'geojson':
+                        safe_args[key] = _scalar_fields(value, {'type'})
+                    elif key == 'spatial':
+                        spatial = _scalar_fields(value, {'distance_m'})
+                        if isinstance(value.get('geometry'), Mapping):
+                            spatial['geometry'] = _scalar_fields(value['geometry'], {'type'})
+                        safe_args[key] = spatial
                     elif key in {'left', 'right'}:
                         operand = {}
                         if isinstance(value.get('region'), Mapping):

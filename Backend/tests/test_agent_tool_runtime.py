@@ -71,7 +71,10 @@ class FakeSpatialService:
         return {"operation": "relation", "relation": relation, "result": True, "left": left, "right": right}
 
     async def overlay(self, *, left, right, operation):
-        return {"operation": operation, "geometry": {"type": "Polygon", "coordinates": []}}
+        return {"operation": operation, "geometry": {"type": "Polygon", "coordinates": [[[104.0, 30.0], [104.1, 30.0], [104.1, 30.1], [104.0, 30.0]]]}}
+
+    async def create_buffer(self, center, distance):
+        return {"type": "Polygon", "coordinates": [[[104.0, 30.0], [104.1, 30.0], [104.1, 30.1], [104.0, 30.0]]]}
 
 
 class SlowSpatialService(FakeSpatialService):
@@ -132,6 +135,9 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
         "get_feature_geometry",
         "query_spatial_relation",
         "spatial_overlay",
+        "create_buffer",
+        "render_geojson_layer",
+        "query_geospatial_data",
     }
     assert "compose_answer" not in registry.names()
     assert "clarify" not in registry.names()
@@ -544,3 +550,159 @@ def test_resource_fuse_counts_all_steps_without_retrieval_specific_budget() -> N
 
     assert not hasattr(fuse, "retrieve_attempts")
     assert not hasattr(fuse, "max_retrievals")
+
+
+@pytest.mark.asyncio
+async def test_create_buffer_is_exposed_as_postgis_tool_and_admits_result_as_evidence() -> None:
+    ledger = EvidenceLedger(session_id="session-buffer")
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=ledger,
+        spatial_service=FakeSpatialService(),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="buffer-1",
+            name="create_buffer",
+            arguments={"center": [104.0, 30.0], "distance_m": 500.0},
+        ),
+    )
+
+    assert observation.status == "ok"
+    assert observation.payload["result"]["geometry"]["type"] == "Polygon"
+    evidence_id = observation.payload["evidence_id"]
+    assert ledger.get(evidence_id) is not None
+    assert ledger.get(evidence_id).source == "postgis"
+
+
+@pytest.mark.asyncio
+async def test_render_geojson_layer_is_a_browser_handoff_not_a_server_side_map_mutation() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-render"),
+    )
+    geojson = {"type": "Point", "coordinates": [104.0, 30.0]}
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="render-1",
+            name="render_geojson_layer",
+            arguments={"geojson": geojson, "name": "缓冲区结果"},
+        ),
+    )
+
+    assert observation.status == "browser_execution_required"
+    assert observation.payload["map_action"]["type"] == "render_geojson_layer"
+    assert observation.payload["map_action"]["payload"]["geojson"] == geojson
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_tool", ["create_buffer", "spatial_overlay"])
+async def test_spatial_geometry_result_can_flow_into_single_render_geojson_layer_tool(source_tool: str) -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id=f"session-{source_tool}-render"),
+        spatial_service=FakeSpatialService(),
+    )
+    if source_tool == "create_buffer":
+        source_arguments = {"center": [104.0, 30.0], "distance_m": 500.0}
+    else:
+        source_arguments = {
+            "left": {"geometry": {"type": "Point", "coordinates": [104.0, 30.0]}},
+            "right": {"region": {"adcode": "510000"}},
+            "operation": "intersection",
+        }
+    source = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(tool_call_id=f"{source_tool}-1", name=source_tool, arguments=source_arguments),
+    )
+    geometry = source.payload["result"]["geometry"]
+    render = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id=f"render-{source_tool}-1",
+            name="render_geojson_layer",
+            arguments={"geojson": geometry, "name": f"{source_tool} result"},
+        ),
+    )
+    assert render.status == "browser_execution_required"
+    assert render.payload["map_action"]["payload"]["geojson"] == geometry
+
+
+class FakeGeoSQLExecutor:
+    async def execute(self, _compiled):
+        return [
+            {"adcode": "510100", "region_name": "Chengdu", "geometry": {"type": "Point", "coordinates": [104.0, 30.0]}},
+            {"adcode": "510000", "region_name": "Sichuan", "geometry": {"type": "Point", "coordinates": [104.1, 30.1]}},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_query_geospatial_data_executes_controlled_plan_and_admits_evidence() -> None:
+    ledger = EvidenceLedger(session_id="session-geosql")
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=ledger,
+        geosql_executor=FakeGeoSQLExecutor(),
+    )
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="geosql-1",
+            name="query_geospatial_data",
+            arguments={
+                "operation": "select",
+                "target_table": "spatial_regions",
+                "select_fields": ["adcode", "region_name", "geometry"],
+                "filters": [],
+                "limit": 2,
+            },
+        ),
+    )
+    assert observation.status == "ok"
+    result = observation.payload["result"]
+    assert result["row_count"] == 2
+    assert result["rows"] == [
+        {"adcode": "510100", "region_name": "Chengdu"},
+        {"adcode": "510000", "region_name": "Sichuan"},
+    ]
+    assert result["geojson"]["type"] == "GeometryCollection"
+    assert len(result["geojson"]["geometries"]) == 2
+    evidence = ledger.get(observation.payload["evidence_id"])
+    assert evidence is not None
+    assert evidence.source == "postgis"
+
+
+@pytest.mark.asyncio
+async def test_geosql_geometry_requires_explicit_render_tool_for_map_side_effect() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-geosql-render"),
+        geosql_executor=FakeGeoSQLExecutor(),
+    )
+    query = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="geosql-1",
+            name="query_geospatial_data",
+            arguments={
+                "operation": "select",
+                "target_table": "spatial_regions",
+                "select_fields": ["geometry"],
+                "limit": 2,
+            },
+        ),
+    )
+    assert query.is_terminal is False
+    render = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="render-geosql-1",
+            name="render_geojson_layer",
+            arguments={"geojson": query.payload["result"]["geojson"], "name": "GeoSQL result"},
+        ),
+    )
+    assert render.status == "browser_execution_required"

@@ -3,6 +3,8 @@
 支持 OpenAI、智谱AI、DeepSeek 等
 """
 
+import inspect
+import json
 import logging
 from typing import Optional, Dict, Any, AsyncGenerator
 from enum import Enum

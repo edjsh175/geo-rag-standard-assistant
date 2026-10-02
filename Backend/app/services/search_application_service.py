@@ -164,58 +164,70 @@ class SearchApplicationService:
                 evidence_ids=[item.evidence_id for item in admitted],
             )
             main_model_name = self._resolve_main_model(thinking=False)
-            answer_kwargs = dict(
+            working_evidence = [
+                {
+                    "evidence_id": item.evidence_id,
+                    "citation_id": item.citation_id,
+                    "title": item.title,
+                    "excerpt": item.text[:800],
+                    "score": item.score,
+                }
+                for item in snapshot.items
+            ]
+            frame = self.agent_runtime.context_engine.build_frame(
+                session_id=session_id,
+                principal_id=principal_id,
+                question=request.query,
+                events=(),
+                working_evidence=working_evidence,
+                current_turn_id=turn_id,
+            )
+            linear_events: list[AgentEvent] = []
+            linear_snapshots: list[tuple[object, str]] = []
+
+            async def append_linear_event(event: AgentEvent) -> None:
+                linear_events.append(event)
+
+            async def save_linear_snapshot(snapshot_record: object, stage: str) -> None:
+                linear_snapshots.append((snapshot_record, stage))
+
+            async def linear_not_cancelled() -> bool:
+                return False
+
+            publication_outcome = await self.agent_runtime.answer_publication_pipeline.run(
                 question=request.query,
                 snapshot=snapshot,
+                frame=frame,
+                conversation_summary="",
                 stage_policy=LLMStagePolicy(
                     user_thinking=False,
                     endpoint_supports_reasoning=False,
                 ),
+                model_name=main_model_name,
+                reviewer_enabled=request.reviewer_enabled,
+                principal_id=principal_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                trace_id=f"linear-trace-{uuid4()}",
+                append_event=append_linear_event,
+                save_snapshot=save_linear_snapshot,
+                is_cancelled=linear_not_cancelled,
             )
-            if main_model_name is not None:
-                answer_kwargs["model_name"] = main_model_name
-            answer = await self.agent_runtime.answer_generator.generate(**answer_kwargs)
-            publication_state = "published"
-            generated_answer = answer.answer
-            if request.reviewer_enabled:
-                reviewer = getattr(self.agent_runtime, "reviewer", None)
-                if reviewer is None:
-                    publication_state = "review_failed"
-                    generated_answer = "证据审查执行失败，答案未发布。"
-                else:
-                    try:
-                        reviewer_kwargs = dict(
-                            question=request.query,
-                            answer=answer,
-                            snapshot=snapshot,
-                            stage_policy=LLMStagePolicy(
-                                user_thinking=False,
-                                endpoint_supports_reasoning=False,
-                            ),
-                        )
-                        if main_model_name is not None:
-                            reviewer_kwargs["model_name"] = main_model_name
-                        review = await reviewer.review(**reviewer_kwargs)
-                    except Exception:
-                        publication_state = "review_failed"
-                        generated_answer = "证据审查执行失败，答案未发布。"
-                    else:
-                        verdict = str(getattr(review, "verdict", "")).strip().upper()
-                        if verdict not in {"SUPPORTED", "PASS", "PASSED"}:
-                            publication_state = "review_rejected"
-                            generated_answer = "答案未通过证据审查，未发布。"
-            published = (
-                PublishedResult.publish(
-                    text=answer.answer,
-                    publication_state="published",
+            if publication_outcome.terminal_state is None:
+                if publication_outcome.answer is None:
+                    raise RuntimeError("linear publication pipeline returned no answer")
+                publication_state = "published"
+                published = PublishedResult.publish(
+                    text=publication_outcome.answer.answer,
+                    publication_state=publication_state,
                     map_action=None,
                 )
-                if publication_state == "published"
-                else PublishedResult.safe_fallback(
+            else:
+                publication_state = publication_outcome.terminal_state
+                published = PublishedResult.safe_fallback(
                     publication_state=publication_state,
-                    fallback_text=generated_answer,
+                    fallback_text=str(publication_outcome.message or "答案未发布。"),
                 )
-            )
             elapsed = (datetime.now() - started_at).total_seconds()
             return SearchResponse(
                 query=request.query,

@@ -7,6 +7,8 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.services.geosql.contracts import GeoQueryPlan
+
 
 BROWSER_TOOL_NAMES = frozenset(
     {
@@ -17,6 +19,7 @@ BROWSER_TOOL_NAMES = frozenset(
         "locate_map",
         "inspect_layer_features",
         "get_feature_geometry",
+        "render_geojson_layer",
     }
 )
 
@@ -28,19 +31,6 @@ class RetrieveKbInput(BaseModel):
 class ReuseEvidenceInput(BaseModel):
     query: str = Field(..., min_length=1)
     limit: int = Field(8, ge=1, le=50)
-
-
-class ComposeAnswerInput(BaseModel):
-    evidence_ids: list[str] = Field(default_factory=list)
-    selected_evidence_ids: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def unify_ids(self) -> "ComposeAnswerInput":
-        if not self.evidence_ids and self.selected_evidence_ids:
-            self.evidence_ids = list(self.selected_evidence_ids)
-        elif not self.selected_evidence_ids and self.evidence_ids:
-            self.selected_evidence_ids = list(self.evidence_ids)
-        return self
 
 
 class LimitationInput(BaseModel):
@@ -137,6 +127,30 @@ class SpatialOverlayInput(BaseModel):
     left: SpatialOperand
     right: SpatialOperand
     operation: str = Field(..., pattern="^(intersection|union|difference)$")
+
+
+class CreateBufferInput(BaseModel):
+    center: tuple[float, float]
+    distance_m: float = Field(..., gt=0)
+
+    @model_validator(mode="after")
+    def validate_center(self):
+        lon, lat = self.center
+        if not (-180.0 <= lon <= 180.0 and -90.0 <= lat <= 90.0):
+            raise ValueError("center coordinates out of bounds")
+        return self
+
+
+class RenderGeoJsonLayerInput(BaseModel):
+    geojson: dict[str, Any]
+    name: str = Field("Spatial result", min_length=1, max_length=200)
+    style: VectorStylePatch | None = None
+
+    @model_validator(mode="after")
+    def validate_geojson(self):
+        from app.services.spatial_service import validate_geojson_geometry
+        validate_geojson_geometry(self.geojson)
+        return self
 
 
 class SearchEvidenceMemoryInput(BaseModel):
@@ -368,12 +382,37 @@ def build_default_tool_registry() -> ToolRegistry:
                 provider="postgis",
             ),
             ToolSpec(
+                name="create_buffer",
+                description="Ask PostGIS to create a meter-based buffer around a WGS84 coordinate.",
+                input_model=CreateBufferInput,
+                use_when="需要围绕明确经纬度按米生成缓冲区时调用。",
+                result_semantics="返回 PostGIS 生成的 GeoJSON Polygon，并写入 Evidence Ledger。",
+                provider="postgis",
+            ),
+            ToolSpec(
                 name="spatial_overlay",
                 description="Ask PostGIS to compute intersection, union, or difference for two GeoJSON or spatial_regions operands.",
                 input_model=SpatialOverlayInput,
                 use_when="需要计算两个区域或要素的几何叠加（求交集、并集、差集）时调用。",
                 result_semantics="返回叠加分析后的几何体与面积等统计属性。",
                 provider="postgis",
+            ),
+            ToolSpec(
+                name="query_geospatial_data",
+                description="Execute a validated GeoQueryPlan without SQL text. Current catalog: spatial_regions; selectable columns: id, adcode, region_name, geometry, created_at; filterable columns exclude geometry.",
+                input_model=GeoQueryPlan,
+                use_when="需要按属性、空间关系、距离或最近邻查询受控空间数据时调用。",
+                result_semantics="返回受限行集并写入 Evidence Ledger；若结果含 geometry，同时返回可渲染 GeoJSON。",
+                provider="postgis",
+            ),
+            ToolSpec(
+                name="render_geojson_layer",
+                description="Request the active browser GIS runtime to render a validated GeoJSON geometry as a user vector layer.",
+                input_model=RenderGeoJsonLayerInput,
+                use_when="PostGIS 或 GeoSQL 已产生需要显示在地图上的 GeoJSON 几何结果时调用。",
+                result_semantics="浏览器创建用户矢量图层并返回稳定 layer_ref 与更新后的 map_context receipt。",
+                side_effect=True,
+                provider="browser",
             ),
         )
     )
