@@ -12,16 +12,14 @@ from app.services.agent.controller_protocol import (
     CLARIFY_ACTION,
     COMPOSE_ANSWER_ACTION,
     DIRECT_ANSWER_ACTION,
-    TOOL_CALL_ACTION,
     ControllerDecision,
     ExecutableActionState,
     build_control_action_contracts,
-    build_controller_decision_schema,
-    validate_controller_decision_payload,
 )
 from app.services.agent.model_client import ModelRequest, StageModelClient
 from app.services.agent.langchain_tooling import (
     build_langchain_tools,
+    control_action_tool_schemas,
     controller_decision_from_tool_call,
     openai_tool_schemas,
 )
@@ -29,7 +27,6 @@ from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.structured_candidate import (
     StructuredCandidateProtocolError,
     execute_structured_candidate,
-    extract_json_object,
 )
 from app.services.agent.controller_protocol import ControllerOutputError
 from app.services.agent.tool_runtime import ToolObservation
@@ -121,10 +118,18 @@ class MainController:
                 for ev in effective_evidence_catalog
                 if isinstance(ev, Mapping) and ev.get("evidence_id")
             )
+            evidence_id_aliases = {
+                str(ev.get("citation_id")): str(ev.get("evidence_id"))
+                for ev in effective_evidence_catalog
+                if isinstance(ev, Mapping)
+                and ev.get("citation_id")
+                and ev.get("evidence_id")
+            }
             action_state = ExecutableActionState(
                 available_capabilities=capabilities,
                 available_control_actions=control_actions,
                 selectable_evidence_ids=selectable_ids,
+                evidence_id_aliases=evidence_id_aliases,
                 has_evidence=bool(selectable_ids),
             )
 
@@ -157,11 +162,7 @@ class MainController:
             action_state.available_capabilities,
         )
         tool_schemas = openai_tool_schemas(langchain_tools)
-        decision_schema = build_controller_decision_schema(
-            capability_schemas={},
-            allowed_control_actions=list(action_state.available_control_actions),
-            allowed_answer_kinds=list(action_state.allowed_answer_kinds),
-        )
+        tool_schemas = tool_schemas + control_action_tool_schemas(action_state)
 
         observation_text = "\n".join(
             f"- tool={item.tool_name} status={item.status} tool_call_id={item.tool_call_id} payload={dict(item.payload)}"
@@ -184,19 +185,21 @@ class MainController:
         clarify_instruction = ""
         if CLARIFY_ACTION in action_state.available_control_actions:
             clarify_instruction = (
-                "- Runtime has authoritative ambiguous entity candidates. If user confirmation is required, return "
-                "{\"action\":\"clarify\",\"arguments\":{}}. Do not invent clarification text or candidate options.\n"
+                "- Runtime has authoritative ambiguous entity candidates. If user confirmation is required, call "
+                "clarify with no arguments. Do not invent clarification text or candidate options.\n"
             )
 
         system_prompt = (
             "You are the Main Controller and semantic planner for the GeoAI Agent.\n"
             "Choose exactly one action from the current Action Space for the next step. "
-            "You must return only valid JSON matching the schema.\n\n"
+            "Emit exactly one native action call and no JSON text. Executable capabilities and "
+            "control actions share this model-facing call channel, while the runtime keeps their "
+            "execution semantics separate.\n\n"
             "Action Space:\n"
             f"1. Control Actions:\n{control_text}\n\n"
             f"2. Executable Capabilities (Tools):\n{tools_text}\n\n"
             "Rules:\n"
-            "- To call a capability, use the model's native tool-calling channel. Do not encode tool calls as JSON text.\n"
+            "- Use the model's native tool-calling channel for every action. Do not encode any Controller action as JSON text.\n"
             "- When the user prompt asks to '尝试' (attempt) an action with a specific file_ref, layer_ref, feature_ref, coordinates, or adcode (such as '尝试导入 file_ref=\"...\"', '尝试读取 feature_ref=\"...\"', '调用地图定位到经度 999...', '查询不存在的行政区 adcode=999999...'), you MUST issue the tool_call first (e.g. import_vector_dataset, get_feature_geometry, locate_map, query_spatial_relation) with those exact arguments, and do NOT preemptively answer without invoking the tool.\n"
             "- For feature observation ('列出图层前 20 个要素属性', '翻页读取下一批要素', '从图层树定位用户图层再读取要素'): use inspect_layer_features with layer_ref from user_layers, and appropriate offset/limit (e.g. offset=0 for first 20, offset=20 for next batch).\n"
             "- To read feature geometry ('读取指定 feature_ref 的精确几何', '重复读取同一要素'): call get_feature_geometry with a feature_ref from previous inspect_layer_features observation or user_layers[0].feature_refs[0].\n"
@@ -204,14 +207,17 @@ class MainController:
             "- For a repeated read, obtain exactly two successful current-turn reads for the same reference when the user did not specify a count: make the first call if there are none, and make one more call if there is only one. Once two are present, compare the feature refs and geometry values, provide the comparison and continue any other requested steps; do not repeat that read. Finalize only when the full user request is satisfied.\n"
             "- For spatial feature region analysis ('判断要素几何是否位于指定行政区'): if feature geometry is not yet in observations, first call get_feature_geometry; once geometry is available in observations, call query_spatial_relation with left={\"geometry\": geometry}, right={\"region\":{\"region_name\":\"成都市\"}}, relation=\"within\"; then answer with the conclusion.\n"
             "- For combined multi-tool workflow ('知识检索后导入数据、改样式、定位并总结执行结果'): sequence through retrieve_kb -> import_vector_dataset (using file_ref from available_files) -> set_vector_style (e.g. red stroke) -> fit_vector_layer -> compose_answer with retrieved knowledge evidence.\n"
-            "- To finalize a knowledge answer: {\"action\":\"compose_answer\",\"arguments\":{\"answer_kind\":\"knowledge_answer\",\"selected_evidence_ids\":[...]}}\n"
+            "- To finalize a knowledge answer, call compose_answer with answer_kind=knowledge_answer and selected_evidence_ids=[...].\n"
             "- You may directly select evidence from the Evidence Catalog (including historical session evidence) for compose_answer without re-retrieving if it is sufficient.\n"
             "- If evidence is insufficient, call retrieve_kb to search the knowledge base or search_evidence_memory to search historical evidence.\n"
             "- For broad or unspecified standards knowledge requests, search with retrieve_kb using the user's request and existing conversation topics. Do not invent a standard topic; use retrieved results to discover relevant evidence before answering.\n"
+            "- For standards catalogue questions asking which/all/list/count standards apply to the current administrative region, use list_applicable_standards. Do NOT use retrieve_kb Top-K as proof of a complete catalogue. For a specific standard's content, clause, requirement, explanation, or evidence, use retrieve_kb instead.\n"
+            "- For a region-qualified standards catalogue request (for example '四川有哪些标准' or '重庆有多少标准'), the named region is the required retrieval scope even when the user did not explicitly ask to operate the map. If active_region is missing or differs from that named region and select_region is available, call select_region as the only action for this planning step. After the browser receipt updates active_region, use list_applicable_standards on the next planning step. Do not call retrieve_kb or emit another tool call in the same step as select_region.\n"
+            "- If the user explicitly asks to switch/select an administrative region and the current active_region is different, call select_region. Use locate_map only for viewport movement; locate_map does not change active_region or retrieval scope.\n"
             "- Judge Evidence Catalog entries by relevance to the current user question. An empty catalog, no matching entry, or entries only about older/unrelated topics is an evidence gap for the current question, not proof that the knowledge base has no data. For a current knowledge request with no matching support in the catalog, call retrieve_kb for the current question before concluding there is no supporting knowledge.\n"
             "- When the request asks about multiple facts, select relevant evidence covering all requested facts before composing the answer.\n"
             "- Use limitation for a fact-seeking knowledge request only after a current-turn retrieval returns no relevant matches or the tool reports failure/unavailability; spatial entity resolution failure may also require limitation. Never invent a retrieval result or cite unrelated evidence. If the user explicitly asks about system limitations, explain the known policy without implying a search occurred.\n"
-            "- To answer non-knowledge conversational or meta requests: {\"action\":\"direct_answer\",\"answer\":\"...\"}\n"
+            "- To answer non-knowledge conversational or meta requests, call direct_answer with answer=\"...\".\n"
             f"{clarify_instruction}"
             "- 工具操作失败时，面向用户的失败回复应简洁，直接说明失败、原因和已观测状态，使用“失败/已中止”表述。失败回复中不得出现“成功”或“已完成”，包括否定句、假设或未来成功描述；只陈述已观测事实。\n"
             "- Do not generate tool_call_id; the application assigns it.\n"
@@ -273,7 +279,7 @@ class MainController:
                 call_id=call_id,
                 attempt=attempt.protocol_attempt,
                 timeout_seconds=remaining,
-                response_schema=decision_schema,
+                response_schema=None,
                 tools=tool_schemas,
                 audit_context={
                     **dict(audit_context or {}),
@@ -302,7 +308,7 @@ class MainController:
             )
         except StructuredCandidateProtocolError as exc:
             raise ControllerOutputError(
-                f"controller must return a structured tool call: {exc}"
+                f"controller must return one native action call: {exc}"
             ) from exc
 
     def _parse_model_response(
@@ -313,44 +319,12 @@ class MainController:
         tool_call_id: str,
     ) -> ControllerDecision:
         tool_calls = tuple(getattr(response, "tool_calls", ()) or ())
-        if tool_calls:
-            if len(tool_calls) != 1:
-                raise ControllerOutputError(
-                    "controller must emit exactly one tool call per planning step"
-                )
-            return controller_decision_from_tool_call(
-                tool_calls[0],
-                state=state,
-                registry=self.tool_registry,
-            )
-        decision = self._parse_decision(
-            getattr(response, "content", None),
-            state=state,
-            tool_call_id=tool_call_id,
-        )
-        if decision.action == TOOL_CALL_ACTION:
+        if len(tool_calls) != 1:
             raise ControllerOutputError(
-                "controller tool calls must use the native tool-calling channel"
+                "controller must emit exactly one native action call per planning step"
             )
-        return decision
-
-    def _parse_decision(
-        self,
-        content: str | None,
-        *,
-        state: ExecutableActionState,
-        tool_call_id: str,
-    ) -> ControllerDecision:
-        try:
-            payload = extract_json_object(content)
-        except ValueError as exc:
-            raise ControllerOutputError(str(exc)) from exc
-        try:
-            return validate_controller_decision_payload(
-                payload,
-                state=state,
-                registry=self.tool_registry,
-                tool_call_id=tool_call_id,
-            )
-        except ValueError as exc:
-            raise ControllerOutputError(str(exc)) from exc
+        return controller_decision_from_tool_call(
+            tool_calls[0],
+            state=state,
+            registry=self.tool_registry,
+        )

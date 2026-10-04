@@ -8,6 +8,8 @@ import pytest
 from app.models.search_models import DocumentResult
 from app.models.search_models import MetadataFilter, SpatialFilter
 from app.services.agent.evidence import EvidenceLedger
+from app.services.agent.controller_protocol import ControllerDecision
+from app.services.agent.orchestration.tool_execution import ToolExecutionCoordinator
 from app.services.agent.tool_runtime import (
     RetrievalRequestConstraints,
     RetrievalUnavailableError,
@@ -26,7 +28,9 @@ from app.services.rag.contracts import (
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
+    StandardScopeConstraint,
 )
+from app.services.spatial_service import RegionAmbiguityError, RegionNotFoundError
 
 
 def make_candidate(chunk_id: str, text: str) -> RetrievalCandidate:
@@ -67,6 +71,11 @@ class FakeRetrievalPort:
 
 
 class FakeSpatialService:
+    async def resolve_region(self, *, adcode=None, region_name=None):
+        if adcode == "510000" or region_name == "四川":
+            return {"adcode": "510000", "region_name": "四川省"}
+        raise ValueError("unknown region")
+
     async def query_relation(self, *, left, right, relation):
         return {"operation": "relation", "relation": relation, "result": True, "left": left, "right": right}
 
@@ -81,6 +90,47 @@ class SlowSpatialService(FakeSpatialService):
     async def query_relation(self, *, left, right, relation):
         await asyncio.sleep(0.05)
         return await super().query_relation(left=left, right=right, relation=relation)
+
+
+class AmbiguousRegionSpatialService(FakeSpatialService):
+    async def resolve_region(self, *, adcode=None, region_name=None):
+        raise RegionAmbiguityError(
+            str(region_name or "成都"),
+            [
+                {"adcode": "510100", "region_name": "成都市"},
+                {"adcode": "510199", "region_name": "成都测试区"},
+            ],
+        )
+
+
+class MissingRegionSpatialService(FakeSpatialService):
+    async def resolve_region(self, *, adcode=None, region_name=None):
+        raise RegionNotFoundError("Administrative region does not exist")
+
+
+class FakeStandardApplicabilityService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def list_applicable_standards(self, *, scope, query=None, limit=50, cursor=None):
+        self.calls.append({"scope": scope, "query": query, "limit": limit, "cursor": cursor})
+        return {
+            "region": {"adcode": scope.adcode, "name": scope.region_name},
+            "items": [
+                {
+                    "standard_key": "gb500162014",
+                    "standard_code": "GB 50016-2014",
+                    "title": "建筑设计防火规范",
+                    "scope_type": "nationwide",
+                    "basis_type": "jurisdiction_default",
+                    "verification_status": "derived",
+                }
+            ],
+            "eligible_count": 1,
+            "unresolved_count": 2,
+            "next_cursor": None,
+            "coverage_complete": False,
+        }
 
 
 def spatial_registry(
@@ -124,6 +174,7 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
 
     assert registry.names() == {
         "retrieve_kb",
+        "list_applicable_standards",
         "reuse_evidence",
         "search_evidence_memory",
         "import_vector_dataset",
@@ -131,6 +182,7 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
         "set_vector_style",
         "fit_vector_layer",
         "locate_map",
+        "select_region",
         "inspect_layer_features",
         "get_feature_geometry",
         "query_spatial_relation",
@@ -150,6 +202,210 @@ def test_default_registry_exposes_graph_free_rag_browser_and_spatial_tools() -> 
     assert "图谱" not in serialized
     assert "多实体必须" not in serialized
     assert "检索两次" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_list_applicable_standards_uses_runtime_scope_and_admits_catalogue_evidence() -> None:
+    ledger = EvidenceLedger(session_id="session-standard-list")
+    service = FakeStandardApplicabilityService()
+    scope = StandardScopeConstraint(adcode="510000", region_name="四川省")
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=ledger,
+        standard_scope=scope,
+        standard_applicability_service=service,
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-list",
+        call=ToolCall(
+            tool_call_id="list-sichuan",
+            name="list_applicable_standards",
+            arguments={"query": "防火", "limit": 20},
+        ),
+    )
+
+    assert service.calls == [{"scope": scope, "query": "防火", "limit": 20, "cursor": None}]
+    assert observation.status == "ok"
+    assert observation.payload["eligible_count"] == 1
+    assert observation.payload["coverage_complete"] is False
+    assert ledger.get(observation.payload["evidence_id"]).source == "standard_catalogue"
+
+
+@pytest.mark.asyncio
+async def test_list_applicable_standards_requires_active_region_scope() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-no-region"),
+        standard_applicability_service=FakeStandardApplicabilityService(),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-list",
+        call=ToolCall(
+            tool_call_id="list-no-region",
+            name="list_applicable_standards",
+            arguments={},
+        ),
+    )
+
+    assert observation.status == "failed"
+    assert observation.payload["error"] == "active_region is required"
+
+
+@pytest.mark.asyncio
+async def test_select_region_resolves_canonical_region_before_browser_execution() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-select-region"),
+        spatial_service=FakeSpatialService(),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="select-sichuan",
+            name="select_region",
+            arguments={"region_name": "四川"},
+        ),
+    )
+
+    assert observation.status == "browser_execution_required"
+    assert observation.payload["map_action"] == {
+        "type": "select_region",
+        "target": "browser_map",
+        "payload": {"adcode": "510000", "name": "四川省"},
+        "timeout_seconds": pytest.approx(30.0),
+    }
+
+
+@pytest.mark.asyncio
+async def test_select_region_accepts_consistent_name_and_adcode_but_keeps_resolver_authoritative() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-select-region-both"),
+        spatial_service=FakeSpatialService(),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-both",
+        call=ToolCall(
+            tool_call_id="select-sichuan-both",
+            name="select_region",
+            arguments={"region_name": "四川", "adcode": "510000"},
+        ),
+    )
+
+    assert observation.status == "browser_execution_required"
+    assert observation.payload["map_action"]["payload"] == {
+        "adcode": "510000",
+        "name": "四川省",
+    }
+
+
+@pytest.mark.asyncio
+async def test_select_region_rejects_conflicting_name_and_adcode_after_canonical_resolution() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-select-region-conflict"),
+        spatial_service=FakeSpatialService(),
+    )
+
+    observation = await runtime.execute(
+        turn_id="turn-conflict",
+        call=ToolCall(
+            tool_call_id="select-conflicting-region",
+            name="select_region",
+            arguments={"region_name": "四川", "adcode": "500000"},
+        ),
+    )
+
+    assert observation.status == "failed"
+    assert observation.payload["error_code"] == "REGION_IDENTITY_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_tool_execution_coordinator_adapts_controller_decision_to_tool_call() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-controller-decision"),
+        spatial_service=FakeSpatialService(),
+    )
+    coordinator = ToolExecutionCoordinator(runtime)
+
+    outcome = await coordinator.execute(
+        turn_id="turn-1",
+        session_id="session-controller-decision",
+        trace_id="trace-controller-decision",
+        call=ControllerDecision(
+            action="tool_call",
+            tool="select_region",
+            arguments={"region_name": "四川"},
+            tool_call_id="select-controller-decision",
+        ),
+    )
+
+    assert isinstance(outcome.call, ToolCall)
+    assert outcome.call.name == "select_region"
+    assert outcome.observation is not None
+    assert outcome.observation.status == "browser_execution_required"
+
+
+@pytest.mark.asyncio
+async def test_select_region_ambiguity_reuses_runtime_identity_resolution_contract() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-ambiguous-region"),
+        spatial_service=AmbiguousRegionSpatialService(),
+    )
+    coordinator = ToolExecutionCoordinator(runtime)
+
+    outcome = await coordinator.execute(
+        turn_id="turn-ambiguous",
+        session_id="session-ambiguous-region",
+        trace_id="trace-ambiguous",
+        call=ToolCall(
+            tool_call_id="select-ambiguous",
+            name="select_region",
+            arguments={"region_name": "成都"},
+        ),
+    )
+
+    assert outcome.observation is not None
+    assert outcome.observation.status == "failed"
+    assert outcome.observation.payload["error_code"] == "REGION_AMBIGUOUS"
+    assert outcome.identity_resolution is not None
+    assert outcome.identity_resolution.requires_confirmation is True
+    assert [item.entity_ref for item in outcome.identity_resolution.candidate_refs] == [
+        "region:510100",
+        "region:510199",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_select_region_not_found_is_observed_failure_not_runtime_crash() -> None:
+    runtime = ToolRuntime(
+        retrieval_port=FakeRetrievalPort(),
+        evidence_ledger=EvidenceLedger(session_id="session-missing-region"),
+        spatial_service=MissingRegionSpatialService(),
+    )
+    coordinator = ToolExecutionCoordinator(runtime)
+
+    outcome = await coordinator.execute(
+        turn_id="turn-missing",
+        session_id="session-missing-region",
+        trace_id="trace-missing",
+        call=ToolCall(
+            tool_call_id="select-missing",
+            name="select_region",
+            arguments={"region_name": "不存在行政区"},
+        ),
+    )
+
+    assert outcome.observation is not None
+    assert outcome.observation.status == "failed"
+    assert outcome.observation.payload["error_code"] == "REGION_NOT_FOUND"
+    assert outcome.identity_resolution is None
 
 
 @pytest.mark.asyncio
@@ -397,6 +653,33 @@ async def test_retrieve_kb_preserves_request_level_retrieval_constraints() -> No
     assert query.use_rerank is False
     assert query.metadata_filter.region == "重庆"
     assert query.spatial_filter.distance == 5000
+
+
+@pytest.mark.asyncio
+async def test_retrieve_kb_adds_runtime_standard_scope_without_persisting_it() -> None:
+    port = FakeRetrievalPort()
+    runtime = ToolRuntime(
+        retrieval_port=port,
+        evidence_ledger=EvidenceLedger(session_id="session-standard-scope"),
+        standard_scope=StandardScopeConstraint(
+            adcode="510000",
+            region_name="四川省",
+        ),
+    )
+
+    await runtime.execute(
+        turn_id="turn-1",
+        call=ToolCall(
+            tool_call_id="retrieve-sichuan",
+            name="retrieve_kb",
+            arguments={"query": "地质灾害监测"},
+        ),
+    )
+
+    assert port.queries[0].standard_scope == StandardScopeConstraint(
+        adcode="510000",
+        region_name="四川省",
+    )
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from app.models.search_models import DocumentResult
 from app.services.agent.answer_generator import GeneratedAnswer
 from app.services.agent.answer_generator import AnswerGenerationError
 from app.services.agent.controller import ControllerOutputError
+from app.services.agent.controller_protocol import ControllerDecision
 from app.services.agent.runtime import AgentRunRequest, AgentRuntime
 from app.services.agent.session import InMemoryAgentSessionStore
 from app.services.agent.tool_runtime import ToolCall
@@ -26,6 +27,22 @@ from app.services.rag.contracts import (
     RetrievalQuery,
     RetrievalResult,
 )
+
+
+def test_runtime_validates_native_controller_tool_field_against_action_surface() -> None:
+    decision = ControllerDecision(
+        action="tool_call",
+        tool="select_region",
+        arguments={"region_name": "四川"},
+        tool_call_id="call-select-region",
+    )
+    action_state = SimpleNamespace(
+        available_capabilities=frozenset({"select_region"}),
+        available_control_actions=frozenset(),
+        selectable_evidence_ids=frozenset(),
+    )
+
+    AgentRuntime._validate_decision_against_action_state(decision, action_state)
 
 
 def make_candidate(chunk_id: str, text: str) -> RetrievalCandidate:
@@ -900,6 +917,40 @@ async def test_runtime_reports_answer_generation_failure_as_structured_failure()
     assert result.publication_state == "model_output_invalid"
     assert result.events[-1].payload["failure_stage"] == "answer_generation"
     assert "invalid structured answer" in result.events[-1].payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_closes_publication_before_reraising_unexpected_answer_failure() -> None:
+    class FailingGenerator:
+        async def generate(self, **kwargs):
+            raise RuntimeError("provider temporarily unavailable")
+
+    observed_events = []
+    runtime = AgentRuntime(
+        retrieval_port=FakeRetrievalPort([make_candidate("chunk-1", "证据")]),
+        controller=RetrieveThenComposeController(),
+        answer_generator=FailingGenerator(),
+        session_store=InMemoryAgentSessionStore(),
+    )
+
+    with pytest.raises(RuntimeError, match="provider temporarily unavailable"):
+        await runtime.run(
+            AgentRunRequest(
+                question="问题",
+                session_id="session-answer-runtime-error",
+                principal_id="admin:test",
+            ),
+            event_listener=observed_events.append,
+        )
+
+    publication = next(
+        (event for event in reversed(observed_events) if event.event_type == "publication_completed"),
+        None,
+    )
+    assert publication is not None
+    assert publication.payload["state"] == "runtime_error"
+    assert publication.payload["failure_stage"] == "answer_publication"
+    assert publication.payload["error_type"] == "RuntimeError"
 
 
 @pytest.mark.asyncio

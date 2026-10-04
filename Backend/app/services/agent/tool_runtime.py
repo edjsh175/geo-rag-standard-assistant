@@ -16,7 +16,9 @@ from app.services.agent.tool_policy import (
 from app.services.agent.tools import ToolRegistry, build_default_tool_registry
 from app.services.geosql import GeoQueryCompiler, GeoQueryExecutor, GeoQueryPlan
 from app.models.search_models import MetadataFilter, SpatialFilter
-from app.services.rag.contracts import RetrievalPort, RetrievalQuery
+from app.services.rag.contracts import RetrievalPort, RetrievalQuery, StandardScopeConstraint
+from app.services.standard_applicability import StandardApplicabilityService
+from app.services.spatial_service import RegionAmbiguityError, RegionNotFoundError
 
 
 class ToolExecutionError(ValueError):
@@ -29,6 +31,19 @@ class ResourceFuseExceeded(RuntimeError):
 
 class RetrievalUnavailableError(RuntimeError):
     """Raised when every retrieval channel attempted for a tool call is unavailable."""
+
+
+class RegionSelectionAmbiguous(ToolExecutionError):
+    """Structured region ambiguity that must be resolved by Runtime clarify flow."""
+
+    def __init__(self, *, region_name: str, candidates: list[dict[str, Any]]) -> None:
+        self.region_name = region_name
+        self.candidates = tuple(dict(item) for item in candidates)
+        super().__init__(f"administrative region is ambiguous: {region_name}")
+
+
+class RegionSelectionNotFound(ToolExecutionError):
+    """Structured region resolution failure; no browser side effect was emitted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +138,8 @@ class ToolRuntime:
         registry: ToolRegistry | None = None,
         resource_fuse: ResourceFuse | None = None,
         retrieval_constraints: RetrievalRequestConstraints | None = None,
+        standard_scope: StandardScopeConstraint | None = None,
+        standard_applicability_service: Any | None = None,
         spatial_service: Any | None = None,
         geosql_compiler: Any | None = None,
         geosql_executor: Any | None = None,
@@ -134,6 +151,8 @@ class ToolRuntime:
         self.registry = registry or build_default_tool_registry()
         self.resource_fuse = resource_fuse
         self.retrieval_constraints = retrieval_constraints or RetrievalRequestConstraints()
+        self.standard_scope = standard_scope
+        self.standard_applicability_service = standard_applicability_service or StandardApplicabilityService()
         self.spatial_service = spatial_service
         self.geosql_compiler = geosql_compiler or GeoQueryCompiler()
         self.geosql_executor = geosql_executor or GeoQueryExecutor()
@@ -221,6 +240,8 @@ class ToolRuntime:
     async def _execute_validated(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
         if call.name == "retrieve_kb":
             observation = await self._retrieve_kb(turn_id=turn_id, call=call)
+        elif call.name == "list_applicable_standards":
+            observation = await self._list_applicable_standards(turn_id=turn_id, call=call)
         elif call.name == "search_evidence_memory":
             observation = self._search_evidence_memory(turn_id=turn_id, call=call)
         elif call.name == "reuse_evidence":
@@ -236,6 +257,8 @@ class ToolRuntime:
             "render_geojson_layer",
         }:
             observation = self._browser_action(call=call)
+        elif call.name == "select_region":
+            observation = await self._select_region(call=call)
         elif call.name in {"query_spatial_relation", "spatial_overlay", "create_buffer"}:
             observation = await self._spatial_operation(turn_id=turn_id, call=call)
         elif call.name == "query_geospatial_data":
@@ -243,6 +266,90 @@ class ToolRuntime:
         else:  # pragma: no cover - registry.get() already rejects this branch.
             raise KeyError(f"unknown tool: {call.name}")
         return observation
+
+    async def _list_applicable_standards(self, *, turn_id: str, call: ToolCall) -> ToolObservation:
+        if self.standard_scope is None:
+            return ToolObservation(
+                tool_call_id=call.tool_call_id,
+                tool_name=call.name,
+                status="failed",
+                payload={"error": "active_region is required"},
+            )
+        result = await self.standard_applicability_service.list_applicable_standards(
+            scope=self.standard_scope,
+            query=call.arguments.get("query"),
+            limit=int(call.arguments.get("limit", 50)),
+            cursor=call.arguments.get("cursor"),
+        )
+        evidence = self.evidence_ledger.add_observation(
+            turn_id=turn_id,
+            source="standard_catalogue",
+            observation_key=call.tool_call_id,
+            title=f"Applicable standards for {self.standard_scope.region_name}",
+            payload=result,
+        )
+        return ToolObservation(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            status="ok",
+            payload={**result, "evidence_id": evidence.evidence_id},
+        )
+
+    async def _select_region(self, *, call: ToolCall) -> ToolObservation:
+        if self.spatial_service is None:
+            return ToolObservation(
+                tool_call_id=call.tool_call_id,
+                tool_name=call.name,
+                status="failed",
+                payload={"error": "spatial service is unavailable"},
+            )
+        region_name = str(call.arguments.get("region_name") or "").strip() or None
+        supplied_adcode = str(call.arguments.get("adcode") or "").strip() or None
+        try:
+            resolved = await self.spatial_service.resolve_region(
+                # When both are present, the human-readable region name remains
+                # authoritative.  The model-provided adcode is only a claim that
+                # must agree with the canonical database resolution below.
+                adcode=None if region_name else supplied_adcode,
+                region_name=region_name,
+            )
+        except RegionAmbiguityError as exc:
+            raise RegionSelectionAmbiguous(
+                region_name=exc.region_name,
+                candidates=exc.candidates,
+            ) from exc
+        except RegionNotFoundError as exc:
+            raise RegionSelectionNotFound(str(exc)) from exc
+        resolved_adcode = str(resolved["adcode"])
+        if supplied_adcode and region_name and supplied_adcode != resolved_adcode:
+            return ToolObservation(
+                tool_call_id=call.tool_call_id,
+                tool_name=call.name,
+                status="failed",
+                payload={
+                    "error_code": "REGION_IDENTITY_MISMATCH",
+                    "supplied_adcode": supplied_adcode,
+                    "resolved_adcode": resolved_adcode,
+                    "region_name": str(resolved["region_name"]),
+                },
+                is_terminal=False,
+            )
+        return ToolObservation(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.name,
+            status="browser_execution_required",
+            payload={
+                "map_action": {
+                    "type": "select_region",
+                    "target": "browser_map",
+                    "payload": {
+                        "adcode": resolved_adcode,
+                        "name": str(resolved["region_name"]),
+                    },
+                }
+            },
+            is_terminal=True,
+        )
 
     @staticmethod
     def _browser_action(*, call: ToolCall) -> ToolObservation:
@@ -273,6 +380,7 @@ class ToolRuntime:
                 use_rerank=constraints.use_rerank,
                 metadata_filter=constraints.metadata_filter,
                 spatial_filter=constraints.spatial_filter,
+                standard_scope=self.standard_scope,
             )
         )
         if result.diagnostics.is_fully_unavailable:

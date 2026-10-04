@@ -121,6 +121,7 @@ class ExecutableActionState:
     allowed_answer_kinds: tuple[str, ...] = ("knowledge_answer", "limitation_or_clarification")
     identity_status: str = "resolved"
     selectable_evidence_ids: frozenset[str] = frozenset()
+    evidence_id_aliases: Mapping[str, str] = field(default_factory=_empty_mapping)
     has_evidence: bool = True
     provider_health: Mapping[str, bool] = field(default_factory=_empty_mapping)
     identity_resolution: IdentityResolution | None = None
@@ -134,6 +135,7 @@ class ExecutableActionState:
         identity_resolution: IdentityResolution | None = None,
         has_evidence: bool = True,
         selectable_evidence_ids: Sequence[str] | frozenset[str] | None = None,
+        evidence_id_aliases: Mapping[str, str] | None = None,
         forbid_finalize: bool = False,
         provider_health: Mapping[str, bool] | None = None,
     ) -> "ExecutableActionState":
@@ -148,6 +150,13 @@ class ExecutableActionState:
         else:
             selectable_ids = frozenset()
             effective_has_evidence = bool(has_evidence)
+
+        canonical_aliases = {
+            str(alias).strip(): str(evidence_id).strip()
+            for alias, evidence_id in dict(evidence_id_aliases or {}).items()
+            if str(alias).strip()
+            and str(evidence_id).strip() in selectable_ids
+        }
 
         if not forbid_finalize:
             control_actions.add(DIRECT_ANSWER_ACTION)
@@ -169,6 +178,7 @@ class ExecutableActionState:
             allowed_answer_kinds=allowed_kinds,
             identity_status=identity_resolution.status if identity_resolution is not None else "resolved",
             selectable_evidence_ids=selectable_ids,
+            evidence_id_aliases=MappingProxyType(canonical_aliases),
             has_evidence=effective_has_evidence,
             provider_health=provider_health or {},
             identity_resolution=identity_resolution,
@@ -254,13 +264,22 @@ def validate_controller_decision_payload(
                 raise ValueError(
                     "malformed_compose_answer: selected_evidence_ids must be a non-empty array for knowledge_answer"
                 )
+            canonical_ids: list[str] = []
             for eid in selected_ids:
                 if not isinstance(eid, str) or not eid.strip():
                     raise ValueError("malformed_compose_answer: selected_evidence_ids items must be non-empty strings")
-                if eid not in state.selectable_evidence_ids:
+                reference = eid.strip()
+                canonical_id = (
+                    reference
+                    if reference in state.selectable_evidence_ids
+                    else state.evidence_id_aliases.get(reference)
+                )
+                if not canonical_id or canonical_id not in state.selectable_evidence_ids:
                     raise ControllerOutputError(
-                        f"malformed_compose_answer: selected evidence '{eid}' is not selectable"
+                        f"malformed_compose_answer: selected evidence '{reference}' is not selectable"
                     )
+                canonical_ids.append(canonical_id)
+            args_dict["selected_evidence_ids"] = canonical_ids
         return ControllerDecision(
             action=COMPOSE_ANSWER_ACTION,
             arguments=args_dict,

@@ -19,11 +19,23 @@ class FakeModelClient:
         return self.response
 
 
+def native_action(name: str, args: dict, *, call_id: str = "call-control") -> ModelResponse:
+    return ModelResponse(
+        content=None,
+        tool_calls=(
+            {
+                "name": name,
+                "args": args,
+                "id": call_id,
+                "type": "tool_call",
+            },
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_controller_actual_model_request_receives_authority_class_sections() -> None:
-    client = FakeModelClient(
-        ModelResponse(content='{"action":"direct_answer","answer":"收到"}')
-    )
+    client = FakeModelClient(native_action("direct_answer", {"answer": "收到"}))
     controller = MainController(
         model_client=client,
         tool_registry=build_default_tool_registry(),
@@ -105,6 +117,8 @@ async def test_controller_returns_structured_tool_call_and_uses_controller_reaso
     system_prompt = client.calls[0].messages[0]["content"]
     assert "compose_answer" in system_prompt
     assert "input_schema=" not in system_prompt
+    assert "region-qualified standards catalogue" in system_prompt
+    assert "select_region as the only action" in system_prompt
     tool_schema_text = str(client.calls[0].tools)
     assert "retrieve_kb" in tool_schema_text
     assert "query" in tool_schema_text
@@ -143,8 +157,11 @@ async def test_controller_prefers_native_model_tool_call_channel() -> None:
     assert decision.arguments == {"query": "重庆滑坡监测"}
     assert decision.tool_call_id == "call-native-controller"
     assert client.calls[0].tools
-    assert client.calls[0].response_schema is not None
-    assert "retrieve_kb" not in str(client.calls[0].response_schema)
+    assert client.calls[0].response_schema is None
+    action_schema_text = str(client.calls[0].tools)
+    assert "retrieve_kb" in action_schema_text
+    assert "compose_answer" in action_schema_text
+    assert "direct_answer" in action_schema_text
 
 
 @pytest.mark.asyncio
@@ -159,7 +176,7 @@ async def test_controller_rejects_text_encoded_tool_call() -> None:
         tool_registry=build_default_tool_registry(),
     )
 
-    with pytest.raises(ValueError, match="native tool-calling channel"):
+    with pytest.raises(ValueError, match="native action call"):
         await controller.decide(
             question="重庆滑坡监测有什么要求？",
             context_summary="",
@@ -172,12 +189,13 @@ async def test_controller_rejects_text_encoded_tool_call() -> None:
 @pytest.mark.asyncio
 async def test_controller_receives_working_evidence_catalog_for_semantic_decisions() -> None:
     client = FakeModelClient(
-        ModelResponse(
-            content=(
-                '{"action":"compose_answer",'
-                '"arguments":{"answer_kind":"knowledge_answer",'
-                '"selected_evidence_ids":["ev-1"]}}'
-            )
+        native_action(
+            "compose_answer",
+            {
+                "answer_kind": "knowledge_answer",
+                "selected_evidence_ids": ["ev-1"],
+            },
+            call_id="compose-native",
         )
     )
     controller = MainController(
@@ -185,7 +203,7 @@ async def test_controller_receives_working_evidence_catalog_for_semantic_decisio
         tool_registry=build_default_tool_registry(),
     )
 
-    await controller.decide(
+    decision = await controller.decide(
         question="有什么要求？",
         context_summary="",
         working_evidence=(
@@ -204,15 +222,17 @@ async def test_controller_receives_working_evidence_catalog_for_semantic_decisio
     assert "ev-1" in user_prompt
     assert "E1" in user_prompt
     assert "重庆市滑坡监测应按本标准执行" in user_prompt
+    assert decision.action == "compose_answer"
+    assert decision.arguments["selected_evidence_ids"] == ["ev-1"]
+    assert decision.tool is None
+    assert decision.tool_call_id == "compose-native"
 
 
 @pytest.mark.asyncio
 async def test_controller_model_request_exposes_publication_evidence_budget_and_item_costs() -> None:
     from app.services.agent.context.engine import ContextEngine
 
-    client = FakeModelClient(
-        ModelResponse(content='{"action":"direct_answer","answer":"ok"}')
-    )
+    client = FakeModelClient(native_action("direct_answer", {"answer": "ok"}))
     controller = MainController(
         model_client=client,
         tool_registry=build_default_tool_registry(),
@@ -267,7 +287,7 @@ async def test_controller_rejects_non_tool_direct_answer_shape() -> None:
         tool_registry=build_default_tool_registry(),
     )
 
-    with pytest.raises(ValueError, match="tool call"):
+    with pytest.raises(ValueError, match="native action call"):
         await controller.decide(
             question="有什么要求？",
             context_summary="",

@@ -10,6 +10,7 @@ from app.services.rag.contracts import (
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
+    StandardScopeConstraint,
 )
 from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 from app.services.search_service import SearchService
@@ -146,6 +147,28 @@ async def test_search_service_is_thin_facade_over_retrieval_port() -> None:
         search_mode="keyword",
         use_rerank=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_search_service_forwards_standard_scope_to_retrieval_port() -> None:
+    class FakeRetrievalPort:
+        def __init__(self) -> None:
+            self.query: RetrievalQuery | None = None
+
+        async def retrieve(self, query: RetrievalQuery) -> RetrievalResult:
+            self.query = query
+            return RetrievalResult(candidates=(), embedding_available=False)
+
+    fake_port = FakeRetrievalPort()
+    service = SearchService.__new__(SearchService)
+    service.retrieval_adapter = fake_port
+    service._log_search = lambda *args, **kwargs: None
+    scope = StandardScopeConstraint(adcode="510000", region_name="四川省")
+
+    await service.search("地质灾害", standard_scope=scope)
+
+    assert fake_port.query is not None
+    assert fake_port.query.standard_scope == scope
 
 
 @pytest.mark.asyncio

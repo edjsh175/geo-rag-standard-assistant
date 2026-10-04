@@ -35,7 +35,17 @@ async def test_controller_provider_messages_match_persisted_model_input_audit_ha
         async def ainvoke(self, messages):
             from langchain_core.messages import AIMessage
             llm.calls.append({"messages": messages})
-            return AIMessage(content='{"action":"direct_answer","answer":"ok"}')
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "direct_answer",
+                        "args": {"answer": "ok"},
+                        "id": "call-1",
+                        "type": "tool_call",
+                    }
+                ],
+            )
 
     class FakeChatModel:
         def __init__(self, **kwargs):

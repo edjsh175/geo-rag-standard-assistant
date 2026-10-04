@@ -17,6 +17,7 @@ BROWSER_TOOL_NAMES = frozenset(
         "set_vector_style",
         "fit_vector_layer",
         "locate_map",
+        "select_region",
         "inspect_layer_features",
         "get_feature_geometry",
         "render_geojson_layer",
@@ -26,6 +27,20 @@ BROWSER_TOOL_NAMES = frozenset(
 
 class RetrieveKbInput(BaseModel):
     query: str = Field(..., min_length=1)
+
+
+class ListApplicableStandardsInput(BaseModel):
+    query: str | None = Field(
+        None,
+        min_length=1,
+        max_length=200,
+        description=(
+            "Optional standard topic/title/code filter only. The active administrative "
+            "region is supplied by runtime scope, so do not repeat region/list wording here."
+        ),
+    )
+    limit: int = Field(50, ge=1, le=100)
+    cursor: str | None = Field(None, min_length=1, max_length=200)
 
 
 class ReuseEvidenceInput(BaseModel):
@@ -79,6 +94,17 @@ class LocateMapInput(BaseModel):
     longitude: float
     latitude: float
     zoom: float | None = Field(None, ge=1, le=22)
+
+
+class SelectRegionInput(BaseModel):
+    adcode: str | None = Field(None, min_length=1)
+    region_name: str | None = Field(None, min_length=1)
+
+    @model_validator(mode="after")
+    def require_region_identity(self):
+        if not self.adcode and not self.region_name:
+            raise ValueError("select_region requires adcode or region_name")
+        return self
 
 
 class InspectLayerFeaturesInput(BaseModel):
@@ -240,6 +266,18 @@ def executable_tool_names(
 
     candidates = (registry.names() - BROWSER_TOOL_NAMES) - CONTROL_ACTION_NAMES
 
+    # Region-scoped catalogue is physically executable only when the admitted
+    # browser context already contains an authoritative active_region.  Keep
+    # this rule in the action-surface boundary rather than letting Controller
+    # discover the missing precondition through a failed tool call.
+    active_region = map_context.get("active_region") if isinstance(map_context, Mapping) else None
+    if not (
+        isinstance(active_region, Mapping)
+        and str(active_region.get("adcode") or "").strip()
+        and str(active_region.get("name") or "").strip()
+    ):
+        candidates.discard("list_applicable_standards")
+
     # Provider health filter (P0-8 / P0-10)
     if provider_health:
         health_map = dict(provider_health)
@@ -300,6 +338,19 @@ def build_default_tool_registry() -> ToolRegistry:
                 provider="kb",
             ),
             ToolSpec(
+                name="list_applicable_standards",
+                description=(
+                    "Deterministically list or count standards applicable to the current active_region. "
+                    "Use this for complete/list/count catalogue questions instead of semantic Top-K retrieval."
+                ),
+                input_model=ListApplicableStandardsInput,
+                use_when="用户问当前行政区有哪些、全部、清单、数量或是否列全标准时调用；可带主题 query 缩小目录。",
+                avoid_when="用户询问某标准具体内容、条款、要求或解释时使用 retrieve_kb，而不是本工具。",
+                result_semantics="返回适用标准目录、eligible_count、unresolved_count、coverage_complete 与分页游标，并写入 Evidence Ledger。",
+                failure_semantics="没有 active_region 时返回失败，不猜测区域。",
+                provider="kb",
+            ),
+            ToolSpec(
                 name="search_evidence_memory",
                 description="Search historical evidence already admitted in this session by query.",
                 input_model=SearchEvidenceMemoryInput,
@@ -356,6 +407,17 @@ def build_default_tool_registry() -> ToolRegistry:
                 description="Request browser execution to move the active map viewport to a coordinate.",
                 input_model=LocateMapInput,
                 use_when="需要将地图定位到特定的经纬度坐标中心或缩放级别时调用。",
+                side_effect=True,
+                provider="browser",
+            ),
+            ToolSpec(
+                name="select_region",
+                description="Resolve and select one administrative region in the active browser map, updating the canonical active_region state.",
+                input_model=SelectRegionInput,
+                use_when="用户明确要求切换当前行政区，或区域限定的标准清单/全部/数量问题需要建立查询范围，且当前 active_region 与目标区域不一致时调用。",
+                avoid_when="仅需移动地图视角时使用 locate_map；当前 active_region 已是目标区域时不重复调用。",
+                result_semantics="后端先确定性解析行政区，再由浏览器写入唯一 active_region 并返回包含新 map_context 的收据。",
+                failure_semantics="行政区无法唯一解析时不得向浏览器发出副作用动作。",
                 side_effect=True,
                 provider="browser",
             ),

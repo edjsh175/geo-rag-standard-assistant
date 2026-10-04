@@ -8,16 +8,19 @@ export interface CesiumRuntimeState {
   zoom: number;
   adminVisible: boolean;
   satelliteVisible: boolean;
+  regionSelectionReady: boolean;
 }
 
 export const createCesiumGisRuntime = ({
   readState,
   locateMap,
   setLayerVisibility,
+  selectRegion,
 }: {
   readState: () => CesiumRuntimeState;
   locateMap: (input: { longitude: number; latitude: number; zoom?: number }) => Promise<Record<string, unknown>>;
   setLayerVisibility: (layerRef: string, visible: boolean) => Promise<Record<string, unknown>>;
+  selectRegion: (region: { adcode: string; name: string }) => Promise<Record<string, unknown>>;
 }) => {
   let revision = 0;
   let signature = '';
@@ -28,7 +31,9 @@ export const createCesiumGisRuntime = ({
       schema_version: 2 as const,
       dimension: '3d' as const,
       ready: state.ready,
-      supported_tools: ['locate_map', 'set_layer_visibility'],
+      supported_tools: state.regionSelectionReady
+        ? ['locate_map', 'select_region', 'set_layer_visibility']
+        : ['locate_map', 'set_layer_visibility'],
       viewport: {
         center: state.center,
         zoom: state.zoom,
@@ -93,6 +98,14 @@ export const createCesiumGisRuntime = ({
             throw new GisExecutionError('UNKNOWN_LAYER', `图层不存在: ${layerRef}`);
           }
           return setLayerVisibility(layerRef, Boolean(payload.visible));
+        }
+        case 'select_region': {
+          const adcode = String(payload.adcode ?? '').trim();
+          const name = String(payload.name ?? '').trim();
+          if (!adcode || !name) {
+            throw new GisExecutionError('INVALID_TOOL_CALL', '缺少行政区 adcode 或 name');
+          }
+          return selectRegion({ adcode, name });
         }
         default:
           throw new GisExecutionError('UNSUPPORTED_TOOL', `不支持的 3D GIS 工具: ${action.type}`);

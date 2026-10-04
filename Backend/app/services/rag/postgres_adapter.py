@@ -26,11 +26,17 @@ from app.services.rag.contracts import (
     RetrievalDiagnostics,
     RetrievalQuery,
     RetrievalResult,
+    StandardScopeConstraint,
 )
 from app.services.rag.filters import RagFilterEngine
 from app.services.rag.fusion import rrf_fuse
 from app.services.rag.query_planner import QueryPlanner
 from app.services.rag.reranker import BaseReranker, RagReranker, create_reranker
+from app.services.standard_scope_sql import (
+    build_standard_scope_predicate,
+    effective_fact_clause,
+    scope_match_sql,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -142,12 +148,18 @@ class PostgresRetrievalAdapter:
         vector_results: list[DocumentResult] = []
         embedding_available = False
         channels: list[RetrievalChannelDiagnostic] = []
+        scope_kwargs = (
+            {"standard_scope": query.standard_scope}
+            if query.standard_scope is not None
+            else {}
+        )
 
         if mode in {"hybrid", "keyword", "exact"}:
             try:
                 exact_results = await self._exact_standard_code_search(
                     query.query_text,
                     expanded_top_k,
+                    **scope_kwargs,
                 )
                 channels.append(
                     RetrievalChannelDiagnostic(channel="exact", state="succeeded")
@@ -167,6 +179,7 @@ class PostgresRetrievalAdapter:
                 keyword_results = await self._keyword_search(
                     query.query_text,
                     expanded_top_k,
+                    **scope_kwargs,
                 )
                 channels.append(
                     RetrievalChannelDiagnostic(channel="keyword", state="succeeded")
@@ -205,6 +218,7 @@ class PostgresRetrievalAdapter:
                         query_embedding=query_embedding,
                         top_k=expanded_top_k,
                         threshold=query.threshold,
+                        **scope_kwargs,
                     )
                     channels.append(
                         RetrievalChannelDiagnostic(channel="vector", state="succeeded")
@@ -254,6 +268,12 @@ class PostgresRetrievalAdapter:
         else:
             final_results = candidate_results[: plan.top_k]
 
+        if query.standard_scope is not None and final_results:
+            await self._attach_standard_scope_provenance(
+                final_results,
+                query.standard_scope,
+            )
+
         return RetrievalResult(
             candidates=tuple(
                 RetrievalCandidate.from_document_result(item) for item in final_results
@@ -266,6 +286,87 @@ class PostgresRetrievalAdapter:
                 channels=tuple(channels),
             ),
         )
+
+    async def _attach_standard_scope_provenance(
+        self,
+        results: list[DocumentResult],
+        scope: StandardScopeConstraint,
+    ) -> None:
+        """Attach the exact effective applicability fact used by scoped retrieval.
+
+        Eligibility is decided before ranking.  This post-step does not change the
+        candidate set; it makes the already-applied qualification auditable in the
+        RetrievalCandidate/Evidence metadata.
+        """
+        standard_keys = {
+            DocumentAssetService.normalize_standard_code(
+                str(result.metadata.get("standard_code") or "")
+            )
+            for result in results
+        }
+        standard_keys.discard("")
+        if not standard_keys or not db_manager.postgres_sessionmaker:
+            return
+
+        sql = text(
+            f"""
+            WITH target_region AS (
+                SELECT geometry
+                FROM spatial_regions
+                WHERE adcode = :standard_scope_adcode
+            )
+            SELECT DISTINCT ON (sa.standard_key)
+                sa.standard_key,
+                sa.scope_type,
+                sa.scope_adcode,
+                sa.basis_type,
+                sa.basis_chunk_id,
+                sa.verification_status
+            FROM standard_applicability sa
+            CROSS JOIN target_region target
+            WHERE sa.standard_key = ANY(:standard_keys)
+              AND sa.verification_status IN ('verified', 'derived')
+              AND {effective_fact_clause('sa')}
+              AND {scope_match_sql(fact_alias='sa', target_alias='target', relation=scope.relation)}
+            ORDER BY sa.standard_key, sa.updated_at DESC, sa.id DESC
+            """
+        )
+        async with db_manager.get_postgres_session() as session:
+            rows = (
+                await session.execute(
+                    sql,
+                    {
+                        "standard_scope_adcode": scope.adcode,
+                        "standard_keys": sorted(standard_keys),
+                    },
+                )
+            ).mappings().all()
+        facts = {str(row["standard_key"]): dict(row) for row in rows}
+        for result in results:
+            key = DocumentAssetService.normalize_standard_code(
+                str(result.metadata.get("standard_code") or "")
+            )
+            fact = facts.get(key)
+            if fact is None:
+                continue
+            result.metadata["standard_scope"] = {
+                "target_adcode": scope.adcode,
+                "target_region": scope.region_name,
+                "relation": scope.relation,
+                "scope_type": fact.get("scope_type"),
+                "scope_adcode": fact.get("scope_adcode"),
+                "basis_type": fact.get("basis_type"),
+                "basis_chunk_id": fact.get("basis_chunk_id"),
+                "verification_status": fact.get("verification_status"),
+            }
+
+    @staticmethod
+    def _standard_scope_predicate(
+        *,
+        alias: str,
+        scope: StandardScopeConstraint | None,
+    ) -> tuple[str, dict[str, Any]]:
+        return build_standard_scope_predicate(alias=alias, scope=scope)
 
     def _merge_and_dedupe_results(
         self,
@@ -304,16 +405,35 @@ class PostgresRetrievalAdapter:
             reverse=True,
         )[:top_k]
 
-    def _extract_keyword_terms(self, query: str) -> list[str]:
-        compact_query = re.sub(r"\s+", "", query)
+    def _extract_keyword_terms(
+        self,
+        query: str,
+        *,
+        standard_scope: StandardScopeConstraint | None = None,
+    ) -> list[str]:
+        effective_query = query
+        if standard_scope is not None:
+            for alias in _region_aliases(standard_scope.region_name):
+                effective_query = effective_query.replace(alias, " ")
+            province_prefix = PROVINCE_STANDARD_PREFIXES.get(standard_scope.region_name)
+            if province_prefix:
+                effective_query = re.sub(
+                    re.escape(province_prefix),
+                    " ",
+                    effective_query,
+                    flags=re.IGNORECASE,
+                )
+
+        compact_query = re.sub(r"\s+", "", effective_query)
         terms: list[str] = []
 
-        for region_name, standard_prefix in PROVINCE_STANDARD_PREFIXES.items():
-            matched_aliases = [
-                alias for alias in _region_aliases(region_name) if alias in compact_query
-            ]
-            if matched_aliases:
-                terms.extend([*matched_aliases, standard_prefix])
+        if standard_scope is None:
+            for region_name, standard_prefix in PROVINCE_STANDARD_PREFIXES.items():
+                matched_aliases = [
+                    alias for alias in _region_aliases(region_name) if alias in compact_query
+                ]
+                if matched_aliases:
+                    terms.extend([*matched_aliases, standard_prefix])
 
         cleaned = compact_query
         for word in QUERY_STOP_WORDS:
@@ -323,7 +443,7 @@ class PostgresRetrievalAdapter:
             if token and token not in QUERY_STOP_WORDS:
                 terms.append(token)
 
-        spaced_cleaned = query
+        spaced_cleaned = effective_query
         for word in QUERY_STOP_WORDS:
             spaced_cleaned = spaced_cleaned.replace(word, " ")
 
@@ -506,13 +626,18 @@ class PostgresRetrievalAdapter:
         self,
         query: str,
         top_k: int,
+        standard_scope: StandardScopeConstraint | None = None,
     ) -> list[DocumentResult]:
         query_standard_code = self._extract_standard_code_query(query)
         if not query_standard_code or not db_manager.postgres_sessionmaker:
             return []
 
+        scope_clause, scope_params = self._standard_scope_predicate(
+            alias="policy_chunks",
+            scope=standard_scope,
+        )
         sql = text(
-            """
+            f"""
             SELECT
                 id, standard_code, document_name, content,
                 category, keyword, chinese_name, english_name,
@@ -520,6 +645,7 @@ class PostgresRetrievalAdapter:
                 release_unit, charge_unit, draft_unit, application_scope
             FROM policy_chunks
             WHERE REGEXP_REPLACE(LOWER(COALESCE(standard_code, '')), '[^a-z0-9]+', '', 'g') = :standard_code
+              {scope_clause}
               AND NOT EXISTS (
                   SELECT 1 FROM document_overrides dov
                   WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
@@ -532,7 +658,7 @@ class PostgresRetrievalAdapter:
         async with db_manager.get_postgres_session() as session:
             result = await session.execute(
                 sql,
-                {"standard_code": query_standard_code, "limit": top_k},
+                {"standard_code": query_standard_code, "limit": top_k, **scope_params},
             )
             rows = result.fetchall()
         return [
@@ -549,8 +675,9 @@ class PostgresRetrievalAdapter:
         self,
         query: str,
         top_k: int,
+        standard_scope: StandardScopeConstraint | None = None,
     ) -> list[DocumentResult]:
-        terms = self._extract_keyword_terms(query)
+        terms = self._extract_keyword_terms(query, standard_scope=standard_scope)
         if not terms or not db_manager.postgres_sessionmaker:
             return []
         try:
@@ -568,6 +695,11 @@ class PostgresRetrievalAdapter:
                     f" + (CASE WHEN document_name ILIKE :{param_name} THEN 0.12 ELSE 0 END)"
                     f" + (CASE WHEN content ILIKE :{param_name} THEN 0.04 ELSE 0 END)"
                 )
+            scope_clause, scope_params = self._standard_scope_predicate(
+                alias="policy_chunks",
+                scope=standard_scope,
+            )
+            params.update(scope_params)
             sql = text(
                 f"""
                 WITH matched AS (
@@ -579,6 +711,7 @@ class PostgresRetrievalAdapter:
                         LEAST(0.95, 0.55 + ({' + '.join(score_parts)})) AS similarity
                     FROM policy_chunks
                     WHERE ({' OR '.join(conditions)})
+                      {scope_clause}
                       AND NOT EXISTS (
                           SELECT 1 FROM document_overrides dov
                           WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
@@ -602,17 +735,18 @@ class PostgresRetrievalAdapter:
                 )
                 for row in rows
             ]
-            try:
-                uploaded_results = await self._uploaded_keyword_search(
-                    query, top_k, terms
-                )
-            except RuntimeError as exc:
-                logger.warning(
-                    "Uploaded-document keyword retrieval unavailable; "
-                    "continuing with policy chunks: %s",
-                    exc.__cause__ or exc,
-                )
-                uploaded_results = []
+            uploaded_results: list[DocumentResult] = []
+            if standard_scope is None:
+                try:
+                    uploaded_results = await self._uploaded_keyword_search(
+                        query, top_k, terms
+                    )
+                except RuntimeError as exc:
+                    logger.warning(
+                        "Uploaded-document keyword retrieval unavailable; "
+                        "continuing with policy chunks: %s",
+                        exc.__cause__ or exc,
+                    )
             return self._merge_source_results(policy_results, uploaded_results, top_k)
         except Exception as exc:
             raise RuntimeError("keyword retrieval unavailable") from exc
@@ -718,12 +852,17 @@ class PostgresRetrievalAdapter:
         top_k: int,
         threshold: float = 0.7,
         exclude_doc_id: str | None = None,
+        standard_scope: StandardScopeConstraint | None = None,
     ) -> list[DocumentResult]:
         if not db_manager.postgres_sessionmaker or not query_embedding:
             return []
         try:
             embedding_str = str(query_embedding)
-            sql = """
+            scope_clause, scope_params = self._standard_scope_predicate(
+                alias="policy_chunks",
+                scope=standard_scope,
+            )
+            sql = f"""
                 SELECT
                     id, standard_code, document_name, content,
                     category, keyword, chinese_name, english_name,
@@ -736,10 +875,12 @@ class PostgresRetrievalAdapter:
                     WHERE (dov.doc_id = policy_chunks.id::text OR dov.doc_id = policy_chunks.standard_code)
                       AND dov.deleted_at IS NOT NULL
                 )
+                {scope_clause}
             """
             params: dict[str, Any] = {
                 "embedding_str": embedding_str,
                 "limit": top_k,
+                **scope_params,
             }
             if exclude_doc_id:
                 sql += " AND id != :exclude_doc_id "
@@ -758,20 +899,21 @@ class PostgresRetrievalAdapter:
                 for row in rows
                 if float(row.similarity) >= threshold
             ]
-            try:
-                uploaded_results = await self._uploaded_vector_search(
-                    query_embedding=query_embedding,
-                    top_k=top_k,
-                    threshold=threshold,
-                    exclude_doc_id=exclude_doc_id,
-                )
-            except RuntimeError as exc:
-                logger.warning(
-                    "Uploaded-document vector retrieval unavailable; "
-                    "continuing with policy chunks: %s",
-                    exc.__cause__ or exc,
-                )
-                uploaded_results = []
+            uploaded_results: list[DocumentResult] = []
+            if standard_scope is None:
+                try:
+                    uploaded_results = await self._uploaded_vector_search(
+                        query_embedding=query_embedding,
+                        top_k=top_k,
+                        threshold=threshold,
+                        exclude_doc_id=exclude_doc_id,
+                    )
+                except RuntimeError as exc:
+                    logger.warning(
+                        "Uploaded-document vector retrieval unavailable; "
+                        "continuing with policy chunks: %s",
+                        exc.__cause__ or exc,
+                    )
             return self._merge_source_results(policy_results, uploaded_results, top_k)
         except Exception as exc:
             raise RuntimeError("vector retrieval unavailable") from exc

@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from app.core.database import db_manager
 from app.models.search_models import DocumentResult, MetadataFilter, SpatialFilter
-from app.services.rag.contracts import RetrievalQuery
+from app.services.rag.contracts import RetrievalQuery, StandardScopeConstraint
 from app.services.rag.postgres_adapter import PostgresRetrievalAdapter
 from app.services.rag.search_logger import RagSearchLogger
 
@@ -63,6 +63,7 @@ class SearchService:
         metadata_filter: Optional[MetadataFilter] = None,
         search_mode: str = "hybrid",
         use_rerank: bool = True,
+        standard_scope: Optional[StandardScopeConstraint] = None,
     ) -> List[DocumentResult]:
         """
         智能检索文档
@@ -89,6 +90,7 @@ class SearchService:
                 use_rerank=use_rerank,
                 spatial_filter=spatial_filter,
                 metadata_filter=metadata_filter,
+                standard_scope=standard_scope,
             )
             retrieved = await self.get_retrieval_port().retrieve(retrieval_query)
             final_results = [candidate.source_result for candidate in retrieved.candidates]
@@ -103,6 +105,7 @@ class SearchService:
                 threshold=threshold,
                 metadata_filter=metadata_filter,
                 spatial_filter=spatial_filter,
+                standard_scope=standard_scope,
                 used_rerank=use_rerank,
                 embedding_available=retrieved.embedding_available,
             )
@@ -208,6 +211,7 @@ class SearchService:
         threshold: float = 0.7,
         metadata_filter: Optional[MetadataFilter] = None,
         spatial_filter: Optional[SpatialFilter] = None,
+        standard_scope: Optional[StandardScopeConstraint] = None,
         used_rerank: bool = True,
         embedding_available: Optional[bool] = None,
     ):
@@ -221,6 +225,7 @@ class SearchService:
                 use_rerank=used_rerank,
                 metadata_filter=metadata_filter,
                 spatial_filter=spatial_filter,
+                standard_scope=standard_scope,
             )
             await self._get_rag_search_logger().log_search(
                 context,

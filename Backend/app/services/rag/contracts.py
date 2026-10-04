@@ -9,6 +9,13 @@ from app.models.search_models import DocumentResult, MetadataFilter, SpatialFilt
 
 
 @dataclass(frozen=True, slots=True)
+class StandardScopeConstraint:
+    adcode: str
+    region_name: str
+    relation: Literal["covers", "intersects"] = "covers"
+
+
+@dataclass(frozen=True, slots=True)
 class RetrievalQuery:
     query_text: str
     top_k: int = 10
@@ -17,6 +24,7 @@ class RetrievalQuery:
     use_rerank: bool = True
     metadata_filter: MetadataFilter | None = None
     spatial_filter: SpatialFilter | None = None
+    standard_scope: StandardScopeConstraint | None = None
 
     @property
     def mode(self) -> str:

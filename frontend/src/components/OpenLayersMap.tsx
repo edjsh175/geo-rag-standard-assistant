@@ -17,6 +17,7 @@ import { getMapFitPadding, type MapLayoutMode } from '../lib/mapViewport';
 import { useMapStore, INITIAL_VIEW, type ActiveRegion } from '../store/useMapStore';
 import { createBrowserGisRuntime } from '../gis/createBrowserGisRuntime';
 import { registerBrowserGisRuntime } from '../gis/browserBridge';
+import { GisExecutionError } from '../gis/contracts';
 
 // ============================================================
 //  OpenLayers 2D 地图引擎
@@ -392,6 +393,16 @@ const OpenLayersMap: React.FC<OpenLayersMapProps> = ({
       map,
       () => getFitPadding(map),
       onAgentLayerVisibilityChange,
+      async ({ adcode, name }) => {
+        const feature = provincesSourceRef.current?.getFeatures().find(
+          (item) => String(item.get('adcode') ?? '') === adcode,
+        );
+        if (!feature) {
+          throw new GisExecutionError('UNKNOWN_REGION', `未知行政区: ${adcode}`);
+        }
+        setActiveRegion({ adcode, name });
+        return { adcode, name };
+      },
     );
     const unregisterGisRuntime = registerBrowserGisRuntime('2d', gisRuntime);
 

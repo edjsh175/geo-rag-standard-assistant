@@ -15,6 +15,12 @@ export const createMapContextReader = (map: Map, readUserLayers: () => UserVecto
     // import_vector_dataset is always listed so the controller can attempt it with any
     // file_ref (including missing ones); the executor returns a failure receipt in that case.
     const supportedTools = ['locate_map', 'set_layer_visibility', 'import_vector_dataset', 'render_geojson_layer'];
+    const hasSelectableRegions = map.getLayers().getArray().some((layer) => {
+      if (String(layer.get('gisLayerRef') ?? '') !== 'system:provinces') return false;
+      const source = (layer as any).getSource?.();
+      return Array.isArray(source?.getFeatures?.()) && source.getFeatures().length > 0;
+    });
+    if (hasSelectableRegions) supportedTools.push('select_region');
     if (userLayers.length > 0) {
       supportedTools.push('set_vector_style', 'fit_vector_layer', 'inspect_layer_features');
     }

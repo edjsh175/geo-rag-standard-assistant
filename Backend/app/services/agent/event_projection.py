@@ -94,11 +94,13 @@ def public_event_payload(event_type: str, payload: Mapping[str, Any]) -> dict[st
         tool_name = str(output.get("tool_name") or "")
         tool_argument_fields = {
             "retrieve_kb": {"query"}, "reuse_evidence": {"query", "limit"},
+            "list_applicable_standards": {"query", "limit", "cursor"},
             "search_evidence_memory": {"query", "limit"},
             "import_vector_dataset": {"file_ref", "name"},
             "set_layer_visibility": {"layer_ref", "visible"},
             "set_vector_style": {"layer_ref", "style"},
             "fit_vector_layer": {"layer_ref"}, "locate_map": {"longitude", "latitude", "zoom"},
+            "select_region": {"adcode", "region_name"},
             "inspect_layer_features": {"layer_ref", "offset", "limit"},
             "get_feature_geometry": {"feature_ref"},
             "query_spatial_relation": {"left", "right", "relation"},

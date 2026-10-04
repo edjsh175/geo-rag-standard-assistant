@@ -18,11 +18,13 @@ export const createFrontendExecutor = ({
   capabilities,
   snapshot,
   onLayerVisibilityChange,
+  selectRegion,
 }: {
   map: OlMap;
   capabilities: ReturnType<typeof import('./userVectorCapabilities').createUserVectorCapabilities>;
   snapshot: () => BrowserMapContext;
   onLayerVisibilityChange?: (layerRef: string, visible: boolean) => void;
+  selectRegion: (region: { adcode: string; name: string }) => Promise<Record<string, unknown>>;
 }) => {
   const calls = new globalThis.Map<string, { signature: string; promise: Promise<Record<string, unknown>> }>();
   let queue = Promise.resolve();
@@ -103,6 +105,14 @@ export const createFrontendExecutor = ({
               );
             });
             return { center: [longitude, latitude], zoom };
+          }
+          case 'select_region': {
+            const adcode = String(payload.adcode ?? '').trim();
+            const name = String(payload.name ?? '').trim();
+            if (!adcode || !name) {
+              throw new GisExecutionError('INVALID_TOOL_CALL', '缺少行政区 adcode 或 name');
+            }
+            return selectRegion({ adcode, name });
           }
           default:
             throw new GisExecutionError('UNSUPPORTED_TOOL', `不支持的 GIS 工具: ${action.type}`);

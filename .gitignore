@@ -224,3 +224,7 @@ docs/memory_share.md
 frontend/tests/1121.html
 frontend/tests/index.js
 frontend/tests/cesium鼠标交互测试/
+
+# AOCI agent host integration (machine-bound; do not commit)
+.codex/config.toml
+.codex/config.toml.backup.*

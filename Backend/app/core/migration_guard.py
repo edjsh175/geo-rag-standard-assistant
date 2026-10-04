@@ -40,6 +40,8 @@ REQUIRED_TABLE_MIGRATION_MAP: dict[str, str] = {
     "geoai_pending_browser_executions": "Backend/migrations/20260925_agent_context_persistence.sql",
     # 20260927_spatial_regions.sql
     "spatial_regions": "Backend/migrations/20260927_spatial_regions.sql",
+    # 20261002_standard_applicability.sql
+    "standard_applicability": "Backend/migrations/20261002_standard_applicability.sql",
 }
 
 

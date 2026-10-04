@@ -299,6 +299,7 @@ Controller continues planning
 | --- | --- |
 | `import_vector_dataset` | 导入 GeoJSON / SHP 等本地矢量数据 |
 | `render_geojson_layer` | 渲染分析/计算生成的 GeoJSON 为用户图层，分配稳定 `layer_ref` 并可选配置样式 |
+| `select_region` | 切换并高亮行政区划，设置当前检索区域权威上下文并回执 `active_region` |
 | `set_layer_visibility` | 修改用户图层显隐 |
 | `set_vector_style` | 修改边线、填充、点样式等 |
 | `fit_vector_layer` | 缩放至目标图层范围 |
@@ -836,6 +837,7 @@ python scripts/preflight_geoai_agent_e2e.py
 
 主要设计与实施文档：
 
+- `docs/superpowers/specs/2026-10-02-geoai-region-selection-standard-spatial-fusion-prd.md`
 - `docs/superpowers/specs/2026-09-30-geoai-agent-framework-reuse-gis-loop-geosql-architecture-convergence-prd.md`
 - `docs/superpowers/specs/2026-09-23-georag-gis-observation-spatial-eval-design.md`
 - `docs/superpowers/plans/2026-09-23-georag-gis-observation-spatial-eval.md`

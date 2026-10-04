@@ -13,6 +13,7 @@ import { useMapStore } from '../store/useMapStore';
 import { heightToZoom, zoomToHeight } from '../store/useMapStore';
 import { createCesiumGisRuntime } from '../gis/cesiumRuntime';
 import { registerBrowserGisRuntime } from '../gis/browserBridge';
+import { GisExecutionError } from '../gis/contracts';
 
 // ============================================================
 //  Cesium 3D 地球引擎 — 性能优化版
@@ -767,6 +768,7 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
           zoom: heightToZoom(pos.height, latitude),
           adminVisible: layersRef.current.admin,
           satelliteVisible: layersRef.current.wms,
+          regionSelectionReady: entityByAdcodeRef.current.size > 0,
         };
       },
       locateMap: async ({ longitude, latitude, zoom }) => {
@@ -797,6 +799,14 @@ const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
         onAgentLayerVisibilityChange?.(layerRef, visible);
         viewer.scene.requestRender();
         return { layer_ref: layerRef, visible };
+      },
+      selectRegion: async ({ adcode, name }) => {
+        const regions = entityByAdcodeRef.current.get(adcode);
+        if (!regions || regions.length === 0) {
+          throw new GisExecutionError('UNKNOWN_REGION', `未知行政区: ${adcode}`);
+        }
+        setActiveRegion({ adcode, name });
+        return { adcode, name };
       },
     });
     const unregisterGisRuntime = registerBrowserGisRuntime('3d', gisRuntime);

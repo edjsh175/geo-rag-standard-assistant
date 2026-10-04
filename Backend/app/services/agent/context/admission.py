@@ -13,6 +13,7 @@ VALID_DIMENSIONS = {"2d", "3d"}
 VALID_CRS = {"EPSG:4326", "EPSG:3857"}
 VALID_WEBGIS_TOOLS = {
     "locate_map",
+    "select_region",
     "set_layer_visibility",
     "import_vector_dataset",
     "set_vector_style",

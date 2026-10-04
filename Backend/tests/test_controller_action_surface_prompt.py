@@ -33,7 +33,21 @@ class CapturingModelClient:
                     },
                 ),
             )
-        return ModelResponse(content=self.response)
+        action_name = payload.get("action")
+        args = {k: v for k, v in payload.items() if k != "action"}
+        if "arguments" in payload and isinstance(payload["arguments"], dict):
+            args = payload["arguments"]
+        return ModelResponse(
+            content=None,
+            tool_calls=(
+                {
+                    "name": action_name,
+                    "args": args,
+                    "id": "capture-tool-call",
+                    "type": "tool_call",
+                },
+            ),
+        )
 
 
 def _controller_with_action_state(
@@ -88,8 +102,7 @@ async def test_clarify_instructions_match_current_action_space() -> None:
     )
     prompt_without_clarify = await _capture_prompt(controller, client, state)
 
-    assert "- When the user's query asks for clarification" not in prompt_without_clarify
-    assert '{"action":"clarify"' not in prompt_without_clarify
+    assert "call clarify with no arguments" not in prompt_without_clarify
     assert "Choose exactly one action from the current Action Space" in prompt_without_clarify
 
     controller, client, state = _controller_with_action_state(
@@ -98,7 +111,7 @@ async def test_clarify_instructions_match_current_action_space() -> None:
     )
     prompt_with_clarify = await _capture_prompt(controller, client, state)
 
-    assert '{"action":"clarify"' in prompt_with_clarify
+    assert "call clarify with no arguments" in prompt_with_clarify
     assert "Runtime has authoritative ambiguous entity candidates" in prompt_with_clarify
     assert "Do not invent clarification text or candidate options" in prompt_with_clarify
 

@@ -425,3 +425,59 @@ async def test_model_client_uses_native_tool_call_channel_when_tools_are_bound()
     assert factory.bind_calls[0][1]["tool_choice"] == "auto"
     assert factory.bind_calls[0][1]["parallel_tool_calls"] is False
     assert factory.invocations[0] == [{"role": "user", "content": "问题"}]
+
+
+@pytest.mark.asyncio
+async def test_model_client_does_not_mix_response_format_with_tool_binding() -> None:
+    from langchain_core.messages import AIMessage
+
+    class FakeLLMConfig:
+        supports_reasoning = False
+
+    class FakeBoundModel:
+        async def ainvoke(self, messages):
+            return AIMessage(content='{"action":"finalize"}')
+
+    class FakeChatModel:
+        def __init__(self, **kwargs):
+            factory.model_kwargs.append(kwargs)
+
+        def bind_tools(self, tools, **kwargs):
+            factory.bind_calls.append((tools, kwargs))
+            return FakeBoundModel()
+
+    class FakeFactory:
+        def __init__(self):
+            self.model_kwargs = []
+            self.bind_calls = []
+
+        def __call__(self, **kwargs):
+            return FakeChatModel(**kwargs)
+
+    factory = FakeFactory()
+    client = LLMConfigStageModelClient(FakeLLMConfig(), chat_model_factory=factory)
+    tools = (
+        {
+            "type": "function",
+            "function": {
+                "name": "retrieve_kb",
+                "description": "search knowledge base",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        },
+    )
+
+    response = await client.complete(
+        ModelRequest(
+            stage="controller",
+            messages=({"role": "user", "content": "问题"},),
+            tools=tools,
+        )
+    )
+
+    assert response.content == '{"action":"finalize"}'
+    assert "response_format" not in factory.bind_calls[0][1]

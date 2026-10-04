@@ -16,6 +16,7 @@ from app.services.agent.publication import PublishedResult
 from app.services.agent.runtime import AgentRunRequest
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import RetrievalRequestConstraints
+from app.services.agent.region_scope import RegionScopeProjector
 from app.services.rag.contracts import RetrievalCandidate
 
 
@@ -398,6 +399,10 @@ class SearchApplicationService:
         return resolver(thinking=thinking) if callable(resolver) else None
 
     async def _deterministic_search(self, request: SearchRequest):
+        admitted_map = None
+        if request.map_context is not None:
+            admitted_map, _ = admit_map_context(request.map_context)
+        standard_scope = RegionScopeProjector.from_map_context(admitted_map)
         results = await self.search_service.search(
             query=request.query,
             top_k=request.top_k,
@@ -406,6 +411,7 @@ class SearchApplicationService:
             metadata_filter=request.metadata_filter,
             search_mode=request.search_mode,
             use_rerank=request.use_rerank,
+            standard_scope=standard_scope,
         )
         if not results and request.threshold > RELAXED_VECTOR_THRESHOLD:
             results = await self.search_service.search(
@@ -416,6 +422,7 @@ class SearchApplicationService:
                 metadata_filter=request.metadata_filter,
                 search_mode=request.search_mode,
                 use_rerank=request.use_rerank,
+                standard_scope=standard_scope,
             )
         results = await self.asset_service.enrich_search_results(results)
         return await self.contract_service.filter_deleted_results(results)

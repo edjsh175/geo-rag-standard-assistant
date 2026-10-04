@@ -76,6 +76,20 @@ def test_executable_action_state_dynamic_surface():
     assert COMPOSE_ANSWER_ACTION in state_2d.available_control_actions
     assert CLARIFY_ACTION not in state_2d.available_control_actions  # resolved identity
 
+    # Region-scoped catalogue is executable only when an authoritative
+    # active_region is present in the admitted map context.
+    assert "list_applicable_standards" not in state_2d.available_capabilities
+
+    map_context_2d_with_region = {
+        **map_context_2d,
+        "active_region": {"adcode": "510000", "name": "四川省"},
+    }
+    state_2d_with_region = ExecutableActionState.compute(
+        registry=registry,
+        map_context=map_context_2d_with_region,
+    )
+    assert "list_applicable_standards" in state_2d_with_region.available_capabilities
+
     # 2. 3D map ready: only supports locate_map and set_layer_visibility
     map_context_3d = {
         "ready": True,
@@ -206,6 +220,7 @@ def test_validate_compose_answer_payload():
     state = ExecutableActionState.compute(
         registry=registry,
         selectable_evidence_ids=("ev-1", "ev-2"),
+        evidence_id_aliases={"E44": "ev-1", "E45": "ev-2"},
     )
 
     # Valid compose_answer with explicit evidence ids
@@ -224,6 +239,22 @@ def test_validate_compose_answer_payload():
     )
     assert decision.action == COMPOSE_ANSWER_ACTION
     assert decision.arguments["selected_evidence_ids"] == ["ev-1", "ev-2"]
+
+    # Server-issued citation ids are accepted at the model boundary and
+    # canonicalized before the decision reaches Runtime.
+    alias_decision = validate_controller_decision_payload(
+        {
+            "action": "compose_answer",
+            "arguments": {
+                "answer_kind": "knowledge_answer",
+                "selected_evidence_ids": ["E44", "E45"],
+            },
+        },
+        state=state,
+        registry=registry,
+        tool_call_id="compose-alias",
+    )
+    assert alias_decision.arguments["selected_evidence_ids"] == ["ev-1", "ev-2"]
 
     # Reject knowledge_answer without selected_evidence_ids
     with pytest.raises(ValueError, match="selected_evidence_ids must be a non-empty array"):
@@ -300,7 +331,17 @@ def test_previous_turn_runtime_facts_extraction():
 @pytest.mark.asyncio
 async def test_runtime_executes_direct_answer_action():
     client = FakeModelClient(
-        ModelResponse(content='{"action":"direct_answer","answer":"我刚才已经将地图定位到天府广场。"}')
+        ModelResponse(
+            content=None,
+            tool_calls=(
+                {
+                    "name": "direct_answer",
+                    "args": {"answer": "我刚才已经将地图定位到天府广场。"},
+                    "id": "call-direct-runtime",
+                    "type": "tool_call",
+                },
+            ),
+        )
     )
     controller = MainController(
         model_client=client,
@@ -335,7 +376,17 @@ async def test_direct_answer_never_invokes_reviewer_even_when_enabled():
             raise AssertionError("direct_answer must bypass reviewer")
 
     client = FakeModelClient(
-        ModelResponse(content='{"action":"direct_answer","answer":"你好，我可以直接回答这个问题。"}')
+        ModelResponse(
+            content=None,
+            tool_calls=(
+                {
+                    "name": "direct_answer",
+                    "args": {"answer": "你好，我可以直接回答这个问题。"},
+                    "id": "call-direct-review",
+                    "type": "tool_call",
+                },
+            ),
+        )
     )
     controller = MainController(
         model_client=client,

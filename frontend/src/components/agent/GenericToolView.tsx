@@ -23,11 +23,13 @@ const renderJson = (value: unknown): string => {
 
 const views: Record<string, { title: string; input: string[]; output: string[] }> = {
   retrieve_kb: { title: '检索知识库', input: ['query'], output: ['evidence_ids', 'candidate_count', 'admitted_count'] },
+  list_applicable_standards: { title: '列出适用标准', input: ['query', 'limit', 'cursor'], output: ['eligible_count', 'unresolved_count', 'coverage_complete', 'next_cursor'] },
   import_vector_dataset: { title: '导入矢量数据集', input: ['file_ref', 'name'], output: ['layer_ids', 'layer_count', 'feature_count'] },
   set_layer_visibility: { title: '图层显隐控制', input: ['layer_ref', 'visible'], output: [] },
   set_vector_style: { title: '更新矢量样式', input: ['layer_ref', 'style'], output: [] },
   fit_vector_layer: { title: '缩放至图层范围', input: ['layer_ref'], output: [] },
   locate_map: { title: '地图视角定位', input: ['longitude', 'latitude', 'zoom'], output: [] },
+  select_region: { title: '选择行政区', input: ['adcode', 'region_name'], output: ['adcode', 'name'] },
   inspect_layer_features: { title: '要素属性探查', input: ['layer_ref', 'offset', 'limit'], output: ['feature_ids', 'feature_count'] },
   get_feature_geometry: { title: '提取要素空间几何', input: ['feature_ref'], output: ['feature_count'] },
   query_spatial_relation: { title: 'PostGIS 空间关系查询', input: ['left', 'right', 'relation'], output: ['result_ids', 'result_count', 'evidence_ids'] },

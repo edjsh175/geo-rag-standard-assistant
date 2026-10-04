@@ -7,9 +7,10 @@ import { executeBrowserTool, registerBrowserGisRuntime, setActiveBrowserGisRunti
 test('invalid coordinates produce a failed 3d receipt without moving the camera', async () => {
   let moves = 0;
   const runtime = createCesiumGisRuntime({
-    readState: () => ({ ready: true, center: [104, 30], zoom: 5, adminVisible: true, satelliteVisible: false }),
+    readState: () => ({ ready: true, center: [104, 30], zoom: 5, adminVisible: true, satelliteVisible: false, regionSelectionReady: true }),
     locateMap: async () => { moves += 1; return {}; },
     setLayerVisibility: async () => ({}),
+    selectRegion: async () => ({}),
   });
   const unregister = registerBrowserGisRuntime('3d', runtime);
   setActiveBrowserGisRuntime('3d');
@@ -36,14 +37,16 @@ test('cesium runtime exposes only implemented 3d tools and logical map state', (
       zoom: 5,
       adminVisible: true,
       satelliteVisible: false,
+      regionSelectionReady: true,
     }),
     locateMap: async () => ({ center: [104, 30], zoom: 6 }),
     setLayerVisibility: async (layerRef, visible) => ({ layer_ref: layerRef, visible }),
+    selectRegion: async (region) => region,
   });
 
   const snapshot = runtime.snapshot();
   assert.equal(snapshot.dimension, '3d');
-  assert.deepEqual(snapshot.supported_tools, ['locate_map', 'set_layer_visibility']);
+  assert.deepEqual(snapshot.supported_tools, ['locate_map', 'select_region', 'set_layer_visibility']);
   assert.equal(snapshot.layer_tree.find((item) => item.layer_ref === 'system:provinces')?.visible, true);
   assert.equal(snapshot.layer_tree.find((item) => item.layer_ref === 'base:vector')?.visible, true);
   assert.equal(snapshot.layer_tree.find((item) => item.layer_ref === 'base:satellite')?.visible, false);
@@ -58,6 +61,7 @@ test('cesium runtime delegates locate and logical layer visibility actions', asy
       zoom: 5,
       adminVisible: true,
       satelliteVisible: false,
+      regionSelectionReady: true,
     }),
     locateMap: async (input) => {
       calls.push({ type: 'locate', ...input });
@@ -66,6 +70,10 @@ test('cesium runtime delegates locate and logical layer visibility actions', asy
     setLayerVisibility: async (layerRef, visible) => {
       calls.push({ type: 'visibility', layerRef, visible });
       return { layer_ref: layerRef, visible };
+    },
+    selectRegion: async (region) => {
+      calls.push({ type: 'select_region', ...region });
+      return region;
     },
   });
 
@@ -79,9 +87,15 @@ test('cesium runtime delegates locate and logical layer visibility actions', asy
     target: 'browser_map',
     payload: { layer_ref: 'system:provinces', visible: false },
   });
+  await runtime.execute('run-1', 'call-3', {
+    type: 'select_region',
+    target: 'browser_map',
+    payload: { adcode: '510000', name: '四川省' },
+  });
 
   assert.deepEqual(calls, [
     { type: 'locate', longitude: 106.5, latitude: 29.5, zoom: 7 },
     { type: 'visibility', layerRef: 'system:provinces', visible: false },
+    { type: 'select_region', adcode: '510000', name: '四川省' },
   ]);
 });

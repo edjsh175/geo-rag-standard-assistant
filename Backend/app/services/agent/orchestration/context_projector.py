@@ -89,12 +89,18 @@ class ContextProjector:
 
         all_ledger_items = tuple(session.evidence_ledger.all_items())
         selectable_ids = tuple(item.evidence_id for item in all_ledger_items)
+        evidence_id_aliases = {
+            str(item.citation_id): item.evidence_id
+            for item in all_ledger_items
+            if getattr(item, "citation_id", None)
+        }
         action_state = ExecutableActionState.compute(
             registry=registry,
             map_context=map_context,
             identity_resolution=frame.identity_resolution,
             has_evidence=bool(selectable_ids),
             selectable_evidence_ids=selectable_ids,
+            evidence_id_aliases=evidence_id_aliases,
             provider_health=provider_health,
         )
 

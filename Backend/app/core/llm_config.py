@@ -331,11 +331,16 @@ class LLMConfig:
     def _create_deepseek_client() -> AsyncOpenAI:
         """Use an explicit optional proxy; ignore broken ambient proxy variables."""
         proxy = (settings.DEEPSEEK_PROXY or "").strip() or None
-        http_client = httpx.AsyncClient(
-            proxies=proxy,
-            trust_env=False,
-            timeout=httpx.Timeout(60.0, connect=10.0),
-        )
+        client_kwargs: dict[str, Any] = {
+            "trust_env": False,
+            "timeout": httpx.Timeout(60.0, connect=10.0),
+        }
+        if proxy:
+            if "proxy" in inspect.signature(httpx.AsyncClient.__init__).parameters:
+                client_kwargs["proxy"] = proxy
+            else:
+                client_kwargs["proxies"] = proxy
+        http_client = httpx.AsyncClient(**client_kwargs)
         return AsyncOpenAI(
             api_key=settings.DEEPSEEK_API_KEY,
             base_url="https://api.deepseek.com",

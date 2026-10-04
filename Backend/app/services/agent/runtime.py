@@ -45,6 +45,7 @@ from app.services.agent.publication import (
 )
 from app.services.agent.provider_health import FAIL_CLOSED_PROVIDER_HEALTH
 from app.services.agent.session import PendingBrowserExecution
+from app.services.agent.region_scope import RegionScopeProjector
 from app.services.agent.stage_policy import LLMStagePolicy
 from app.services.agent.tool_runtime import (
     RetrievalRequestConstraints,
@@ -571,6 +572,7 @@ class AgentRuntime:
             registry=registry,
             resource_fuse=fuse,
             retrieval_constraints=retrieval_constraints,
+            standard_scope=RegionScopeProjector.from_request_context(effective_request_context),
             spatial_service=self.spatial_service,
         )
         tool_execution = ToolExecutionCoordinator(tool_runtime)
@@ -807,6 +809,10 @@ class AgentRuntime:
 
         async def planning_after_tool(outcome) -> str | None:
             obs = outcome.observation
+            if outcome.identity_resolution is not None:
+                session.identity_resolution = outcome.identity_resolution
+                if hasattr(self.session_store, "save_session"):
+                    await self.session_store.save_session(session)
             if obs is not None:
                 observations.append(obs)
                 if outcome.persist_evidence:
@@ -1179,22 +1185,48 @@ class AgentRuntime:
 
             answer_frame = projection.frame
             conv_summary = projection.controller_projection.conversation_text
-            publication_outcome = await self.answer_publication_pipeline.run(
-                question=question,
-                snapshot=snapshot,
-                frame=answer_frame,
-                conversation_summary=conv_summary,
-                stage_policy=stage_policy,
-                model_name=main_model_name,
-                reviewer_enabled=reviewer_enabled,
-                principal_id=request.principal_id,
-                session_id=session.session_id,
-                turn_id=turn_id,
-                trace_id=trace_id,
-                append_event=append_publication_event,
-                save_snapshot=save_publication_snapshot,
-                is_cancelled=publication_is_cancelled,
-            )
+            try:
+                publication_outcome = await self.answer_publication_pipeline.run(
+                    question=question,
+                    snapshot=snapshot,
+                    frame=answer_frame,
+                    conversation_summary=conv_summary,
+                    stage_policy=stage_policy,
+                    model_name=main_model_name,
+                    reviewer_enabled=reviewer_enabled,
+                    principal_id=request.principal_id,
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    append_event=append_publication_event,
+                    save_snapshot=save_publication_snapshot,
+                    is_cancelled=publication_is_cancelled,
+                )
+            except Exception as exc:
+                # The stream boundary will still surface the original exception,
+                # but the durable turn must not remain indefinitely "running".
+                # Persist only failure classification here; semantic recovery and
+                # provider retry remain owned by their existing stages.
+                logger.exception(
+                    "Answer publication failed after evidence freeze: session_id=%s turn_id=%s",
+                    session.session_id,
+                    turn_id,
+                )
+                await self.publisher.publish(
+                    principal_id=request.principal_id,
+                    session=session,
+                    turn_events=turn_events,
+                    turn_id=turn_id,
+                    trace_id=trace_id,
+                    publication_state="runtime_error",
+                    text="查询处理失败，请稍后重试。",
+                    payload={
+                        "failure_stage": "answer_publication",
+                        "error_type": type(exc).__name__,
+                    },
+                    event_listener=event_listener,
+                )
+                raise
             if publication_outcome.terminal_state == "cancelled":
                 return await cancelled_result()
             if publication_outcome.terminal_state == "resource_fuse":
@@ -1375,15 +1407,16 @@ class AgentRuntime:
     def _validate_decision_against_action_state(call: Any, action_state: Any) -> None:
         """Fail closed if a Controller result escapes the request-scoped action surface."""
         action = str(getattr(call, "action", "") or "").strip()
-        name = str(getattr(call, "name", "") or "").strip()
 
         if action == "tool_call":
+            name = str(getattr(call, "tool", "") or "").strip()
             if name not in action_state.available_capabilities:
                 raise ControllerOutputError(
                     f"controller selected unavailable tool '{name}'"
                 )
             return
 
+        name = str(getattr(call, "name", "") or "").strip()
         control_name = action if action in CONTROL_ACTION_NAMES else name
         if control_name in CONTROL_ACTION_NAMES:
             if control_name not in action_state.available_control_actions:

@@ -220,7 +220,6 @@ class LLMConfigStageModelClient:
         temperature: float,
         timeout_seconds: float | None,
         tools: tuple[Mapping[str, Any], ...],
-        response_format: Mapping[str, Any] | None,
     ):
         """Build one request-scoped LangChain chat model and bind current tools.
 
@@ -253,8 +252,11 @@ class LLMConfigStageModelClient:
             "tool_choice": "auto",
             "parallel_tool_calls": False,
         }
-        if response_format is not None:
-            bind_kwargs["response_format"] = dict(response_format)
+        # Tool-bound controller requests deliberately do not mix provider-level
+        # ``response_format`` with native Tool Calling. LangChain/OpenAI routes
+        # that combination through the SDK auto-parser, which requires every
+        # function tool to be strict. GeoAI instead validates the non-tool JSON
+        # branch through its existing structured-candidate contract/retry loop.
         return model.bind_tools([dict(tool) for tool in tools], **bind_kwargs)
 
     @property
@@ -311,7 +313,6 @@ class LLMConfigStageModelClient:
                         temperature=effective_request.temperature,
                         timeout_seconds=effective_request.timeout_seconds,
                         tools=effective_request.tools,
-                        response_format=structured_output.get("response_format"),
                     )
                     message = await bound_model.ainvoke(
                         [dict(item) for item in effective_request.messages]
@@ -340,7 +341,6 @@ class LLMConfigStageModelClient:
                             temperature=effective_request.temperature,
                             timeout_seconds=effective_request.timeout_seconds,
                             tools=effective_request.tools,
-                            response_format={"type": "json_object"},
                         )
                         message = await bound_model.ainvoke(
                             [dict(item) for item in effective_request.messages]
