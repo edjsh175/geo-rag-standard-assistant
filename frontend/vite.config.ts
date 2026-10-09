@@ -47,5 +47,27 @@ export default defineConfig(({mode}) => {
         },
       },
     },
+    build: {
+      chunkSizeWarningLimit: 4000,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            const normalized = id.replace(/\\/g, '/');
+            if (normalized.includes('/node_modules/')) {
+              if (normalized.includes('/node_modules/cesium/') || normalized.toLowerCase().includes('cesium')) {
+                return 'cesium';
+              }
+              if (normalized.includes('/node_modules/ol/')) {
+                return 'openlayers';
+              }
+              if (normalized.includes('/node_modules/lucide-react/')) {
+                return 'lucide';
+              }
+              return 'vendor';
+            }
+          },
+        },
+      },
+    },
   };
 });

@@ -12,6 +12,9 @@ from app.models.search_models import (
     SearchRequest,
 )
 from app.api.search_routes import cancel_agent_run
+from app.api.search_routes import stream_search_documents
+from app.core.auth import UserIdentity
+from app.services.agent.distributed_lock import SessionLockAcquisitionError
 from app.services.agent.publication import PublishedResult
 from app.services.agent.context import ContextEngine
 from app.services.search_application_service import SearchApplicationService
@@ -160,6 +163,40 @@ async def test_generation_false_uses_deterministic_search_without_agent() -> Non
     assert runtime.requests == []
     assert response.generated_answer is None
     assert response.results[0].id == "chunk-1"
+
+
+@pytest.mark.asyncio
+async def test_real_search_service_preserves_session_lock_conflict_as_sse_error() -> None:
+    import json
+
+    class SessionLockFailureRuntime(AgentRuntimeStub):
+        async def stream(self, request):
+            self.requests.append(request)
+            if False:  # pragma: no cover - keeps this an async generator
+                yield None
+            raise SessionLockAcquisitionError("session is busy")
+
+    service = SearchApplicationService(
+        search_service=SearchServiceStub(),
+        asset_service=AssetServiceStub(),
+        contract_service=ContractServiceStub(),
+        agent_runtime=SessionLockFailureRuntime(),
+        retrieval_port=RetrievalPortStub(),
+    )
+    response = await stream_search_documents(
+        SearchRequest(query="规划标准", use_generation=True),
+        UserIdentity(username="admin"),
+        service,
+        object(),
+    )
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = b"".join(chunk if isinstance(chunk, bytes) else chunk.encode() for chunk in chunks)
+    lines = body.decode().splitlines()
+    event = next(line[7:] for line in lines if line.startswith("event: "))
+    payload = next(line[6:] for line in lines if line.startswith("data: "))
+
+    assert event == "error"
+    assert json.loads(payload)["status"] == 409
 
 
 @pytest.mark.asyncio

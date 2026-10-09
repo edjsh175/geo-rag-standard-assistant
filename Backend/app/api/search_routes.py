@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 import logging
+from types import SimpleNamespace
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -14,7 +15,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.core.auth import UserIdentity
+from app.core.database import db_manager
 from app.core.security import require_authenticated_user
+from app.models.problem_details import ProblemDetails
 from app.models.search_models import (
     AgentCancelRequest,
     AgentCancelResponse,
@@ -29,6 +32,10 @@ from app.services.agent.answer_generator import AnswerGenerator
 from app.services.agent.conversation_memory import ConversationMemorySummarizer
 from app.services.agent.controller import MainController
 from app.services.agent.dependencies import get_agent_store
+from app.services.agent.distributed_lock import (
+    PostgresAdvisorySessionLock,
+    SessionLockAcquisitionError,
+)
 from app.services.agent.events import AgentEvent
 from app.services.agent.event_projection import public_event_payload
 from app.services.agent.model_client import LLMConfigStageModelClient, ModelCallAudit
@@ -126,6 +133,9 @@ def _build_search_application_service(
             model_client=model_client
         ),
         session_store=_agent_session_store,
+        session_lock=PostgresAdvisorySessionLock(
+            manager=SimpleNamespace(postgres_engine=db_manager.postgres_lock_engine)
+        ),
         spatial_service=SpatialService(),
         provider_health_provider=_provider_health_service,
     )
@@ -181,6 +191,8 @@ async def search_documents(
         )
         response.quota = _quota_status(quota_decision)
         return response
+    except SessionLockAcquisitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
 
@@ -208,33 +220,48 @@ async def stream_search_documents(
 
         async def event_generator():
             fallback_sequence = 0
-            async for frame in application_service.stream(
-                request,
-                generation_allowed=generation_allowed,
-                principal_id=_principal_id(current_user),
-            ):
-                if frame.event is not None:
-                    event = frame.event
-                    fallback_sequence += 1
-                    payload = {
-                        "event_id": getattr(event, "event_id", "") or f"{event.session_id}:{event.turn_id}:{fallback_sequence}",
-                        "sequence": getattr(event, "sequence", 0) or fallback_sequence,
-                        "session_id": event.session_id,
-                        "turn_id": event.turn_id,
-                        "trace_id": event.trace_id,
-                        "payload": public_event_payload(event.event_type, event.payload),
-                        "created_at": event.created_at.isoformat(),
-                    }
-                    yield (
-                        f"event: {event.event_type}\n"
-                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    )
-                    continue
+            try:
+                async for frame in application_service.stream(
+                    request,
+                    generation_allowed=generation_allowed,
+                    principal_id=_principal_id(current_user),
+                ):
+                    if frame.event is not None:
+                        event = frame.event
+                        fallback_sequence += 1
+                        payload = {
+                            "event_id": getattr(event, "event_id", "") or f"{event.session_id}:{event.turn_id}:{fallback_sequence}",
+                            "sequence": getattr(event, "sequence", 0) or fallback_sequence,
+                            "session_id": event.session_id,
+                            "turn_id": event.turn_id,
+                            "trace_id": event.trace_id,
+                            "payload": public_event_payload(event.event_type, event.payload),
+                            "created_at": event.created_at.isoformat(),
+                        }
+                        yield (
+                            f"event: {event.event_type}\n"
+                            f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        )
+                        continue
 
-                if frame.response is not None:
-                    frame.response.quota = _quota_status(quota_decision)
-                    payload = json.dumps(frame.response.model_dump(), ensure_ascii=False, default=str)
-                    yield f"event: result\ndata: {payload}\n\n"
+                    if frame.response is not None:
+                        frame.response.quota = _quota_status(quota_decision)
+                        payload = json.dumps(frame.response.model_dump(), ensure_ascii=False, default=str)
+                        yield f"event: result\ndata: {payload}\n\n"
+            except Exception as stream_exc:
+                logging.getLogger(__name__).exception("SSE stream interrupted: %s", stream_exc)
+                problem = ProblemDetails.from_status(
+                    status_code=(
+                        409
+                        if isinstance(stream_exc, SessionLockAcquisitionError)
+                        else 500
+                    ),
+                    detail=f"SSE stream interrupted: {stream_exc}",
+                    instance="/api/search/query/stream",
+                    type_uri="urn:geoai:error:stream",
+                    title="Stream Execution Error",
+                )
+                yield f"event: error\ndata: {json.dumps(problem.to_response_dict(), ensure_ascii=False)}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as exc:

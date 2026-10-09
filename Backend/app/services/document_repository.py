@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from typing import Any
 from uuid import uuid4
@@ -12,6 +12,10 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.core.database import db_manager
 from app.services.document_chunker import compute_chunk_uid, compute_content_hash
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _json(value: Any) -> str:
@@ -354,7 +358,7 @@ class DocumentRepository:
             )
             """
         )
-        now = datetime.utcnow()
+        now = _utcnow()
         async with db_manager.get_postgres_session() as session:
             result = await session.execute(check_sql, {"document_id": document_id})
             doc_row = None
@@ -505,7 +509,7 @@ class DocumentRepository:
             return existing_job_id
 
         job_id = str(uuid4())
-        now = datetime.utcnow()
+        now = _utcnow()
         await self.create_index_job(
             job_id=job_id,
             document_id=doc_id,
@@ -564,7 +568,7 @@ class DocumentRepository:
                 event_type="deleted",
                 actor=requested_by,
                 payload={},
-                created_at=datetime.utcnow(),
+                created_at=_utcnow(),
             )
         return bool(result.rowcount)
 

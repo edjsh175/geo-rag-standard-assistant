@@ -37,6 +37,18 @@ class GeneratedAnswer:
     units: tuple[AnswerUnit, ...] = ()
 
 
+_READABILITY_GUIDANCE = """Answer readability requirements:
+- Follow the user's language. Answer simple questions directly and briefly.
+- For a long answer, give the conclusion first, then put important limitations in their own paragraph before supporting details or lists.
+- Give each paragraph one main point. Use Markdown lists for enumerations, with one evidence-backed item per list entry; use a table only when comparing several attributes.
+- Group standards only by applicability scope explicitly supported by Frozen Evidence. Never infer a region from a standard number or name, and never invent a grouping or standard.
+- Express tool fields and enum values in plain user-facing language rather than dumping raw field names or JSON; retain technical field names only when the user explicitly asks about fields or debugging.
+- When Frozen Evidence provides a scope_type or an equivalent scope value (such as national or regional), explain that evidence-backed scope in natural language without guessing it from a standard number or name.
+- Explain counts and coverage accurately: eligible_count is the total number confirmed applicable, distinct from the number shown on the current page; unresolved_count is the number of standards in the library whose applicable scope has not been determined, not the number confirmed applicable in the requested region; coverage_complete describes whether applicable-scope facts are resolved, not whether results are paginated; next_cursor indicates whether another page is available.
+- Treat browser/GIS execution receipts as evidence that an operation ran, never as evidence that a standard applies to a region.
+- Each unit's text must be a complete Markdown block. Preserve its facts and citation binding; do not claim anything beyond its cited evidence."""
+
+
 class AnswerGenerator:
     def __init__(self, *, model_client: StageModelClient) -> None:
         self.model_client = model_client
@@ -122,7 +134,9 @@ class AnswerGenerator:
             "1. Preserved units must keep their exact unit_id, text, and citations.\n"
             "2. Editable units must only reference allowed evidence from the Frozen Evidence.\n"
             "3. Do not invent new facts or add new units.\n"
-            "4. Return valid JSON containing units array and answer string."
+            "4. Return only the existing JSON contract: kind='knowledge_answer' and units array; each unit has unit_id, text, and citations. Do not add an answer field.\n"
+            "5. Readability guidance below applies only to Editable Units. Immutable Units must remain byte-for-byte unchanged.\n"
+            f"{_READABILITY_GUIDANCE}"
         )
         base_units_json = json.dumps(
             [{"unit_id": u.unit_id, "text": u.text, "citations": list(u.citations)} for u in base_answer.units],
@@ -198,6 +212,7 @@ class AnswerGenerator:
                     "Return only JSON that satisfies the following schema exactly. "
                     "Do not invent alternative kind labels such as summary or grounded_summary. "
                     "Do not introduce external facts.\n\n"
+                    f"{_READABILITY_GUIDANCE}\n\n"
                     f"Output JSON Schema:\n{json.dumps(output_schema, ensure_ascii=False, sort_keys=True)}"
                 ),
             },
@@ -293,7 +308,7 @@ class AnswerGenerator:
                     citations=tuple(citations),
                 )
             )
-        answer = "\n".join(unit.text for unit in units)
+        answer = "\n\n".join(unit.text for unit in units)
         citations = tuple(
             dict.fromkeys(citation for unit in units for citation in unit.citations)
         )

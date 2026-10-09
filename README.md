@@ -5,10 +5,11 @@
 > 项目将知识检索、证据约束、Agent 多步规划、浏览器 GIS 工具执行、PostGIS 空间分析与 2D/3D 地图联动统一到一套可追踪的 Agent Runtime 中，使系统从“检索后直接让模型回答”的传统 RAG，升级为能够 **查资料、读地图、操作图层、执行空间分析并基于真实执行结果继续决策** 的 GeoAI Agent。
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.119%2B-009688.svg)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-TypeScript-61DAFB.svg)](https://react.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector%20%2B%20PostGIS-336791.svg)](https://www.postgresql.org/)
 [![GeoAI](https://img.shields.io/badge/GeoAI-Agent%20%2B%20RAG-6A5ACD.svg)](#核心架构)
+[![CI](https://github.com/edjsh175/geo-rag-standard-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/edjsh175/geo-rag-standard-assistant/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey.svg)](LICENSE)
 
 ---

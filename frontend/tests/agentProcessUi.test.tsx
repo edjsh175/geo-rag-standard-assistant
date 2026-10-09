@@ -98,3 +98,15 @@ test('process header shows the latest review verdict after a revision cycle', ()
   assert.match(html, /审查: SUPPORTED/);
   assert.doesNotMatch(html, /审查: REVISE/);
 });
+
+test('unexpanded process header bounds content and prevents right boundary clipping', () => {
+  const html = renderToStaticMarkup(<AgentProcess turn={turn('published', [
+    { kind: 'tool', callId: 'c1', toolName: 'retrieve_kb', status: 'succeeded' },
+    { kind: 'review', verdict: 'SUPPORTED', status: 'completed', summary: '支持', timestamp: '1' },
+  ])} />);
+  assert.match(html, /min-w-0/);
+  assert.match(html, /truncate/);
+  assert.match(html, /shrink-0 ml-auto/);
+  assert.match(html, /whitespace-nowrap/);
+});
+

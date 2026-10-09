@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 import pytest
 
@@ -40,6 +41,29 @@ def make_snapshot():
         candidates=[RetrievalCandidate.from_document_result(result)],
     )[0]
     return ledger.freeze(turn_id="turn-1", evidence_ids=[item.evidence_id])
+
+
+def test_answer_units_are_separate_paragraphs_without_changing_unit_or_citation_data() -> None:
+    snapshot = make_snapshot()
+    payload = json.dumps(
+        {
+            "kind": "knowledge_answer",
+            "units": [
+                {"unit_id": "u1", "text": "已确认适用。", "citations": ["E1"]},
+                {"unit_id": "u2", "text": "适用范围仍有待核验项。", "citations": ["E1"]},
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    answer = AnswerGenerator._parse(payload, snapshot=snapshot)
+
+    assert answer.answer == "已确认适用。\n\n适用范围仍有待核验项。"
+    assert [(unit.unit_id, unit.text, unit.citations) for unit in answer.units] == [
+        ("u1", "已确认适用。", ("E1",)),
+        ("u2", "适用范围仍有待核验项。", ("E1",)),
+    ]
+    assert answer.citations == ("E1",)
 
 
 class FakeModelClient:
@@ -96,6 +120,11 @@ async def test_answer_generator_uses_frozen_evidence_and_reasoning_off() -> None
     assert "重庆市滑坡监测应按本标准执行" in client.calls[0].messages[-1]["content"]
     assert '"const": "knowledge_answer"' in client.calls[0].messages[0]["content"]
     assert '"enum": ["E1"]' in client.calls[0].messages[0]["content"]
+    instructions = client.calls[0].messages[0]["content"]
+    assert "unresolved_count" in instructions and "not the number confirmed applicable" in instructions
+    assert "next_cursor" in instructions and "not whether results are paginated" in instructions
+    assert "complete Markdown block" in instructions
+    assert "plain user-facing language rather than dumping raw field names or JSON" in instructions
 
 
 @pytest.mark.asyncio
@@ -121,6 +150,23 @@ async def test_answer_generator_passes_provider_native_response_schema() -> None
     )
 
     assert client.calls[0].response_schema == generator._output_schema(snapshot)
+
+
+def test_answer_unit_markdown_text_is_preserved_verbatim() -> None:
+    snapshot = make_snapshot()
+    markdown = "**结论**\n\n- 依据一\n- 依据二"
+    payload = json.dumps(
+        {
+            "kind": "knowledge_answer",
+            "units": [{"unit_id": "u1", "text": markdown, "citations": ["E1"]}],
+        },
+        ensure_ascii=False,
+    )
+
+    answer = AnswerGenerator._parse(payload, snapshot=snapshot)
+
+    assert answer.units[0].text == markdown
+    assert answer.answer == markdown
 
 
 @pytest.mark.asyncio
@@ -160,6 +206,10 @@ async def test_answer_repair_passes_provider_native_response_schema() -> None:
     )
 
     assert client.calls[0].response_schema == generator._output_schema(snapshot)
+    repair_prompt = client.calls[0].messages[0]["content"]
+    assert "applies only to Editable Units" in repair_prompt
+    assert "Immutable Units must remain byte-for-byte unchanged" in repair_prompt
+    assert "Do not add an answer field" in repair_prompt
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,7 @@
 """
 
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 import re
 
@@ -63,7 +63,7 @@ class UploadRequest(BaseModel):
     chunk_number: Optional[int] = Field(None, description="分块编号（用于大文件分块上传）")
     total_chunks: Optional[int] = Field(None, description="总分块数")
 
-    @validator('file_type')
+    @field_validator('file_type')
     def validate_file_type(cls, v):
         """验证文件类型"""
         allowed_types = {

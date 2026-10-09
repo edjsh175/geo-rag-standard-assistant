@@ -308,3 +308,5 @@ export interface PaginatedResponse<T> {
   has_next: boolean;
   has_previous: boolean;
 }
+
+export * from './problemDetails';

@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import {
   Compass,
   FileCheck,
@@ -26,6 +26,11 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
   onExpandedChange,
 }) => {
   const [manualExpanded, setManualExpanded] = useState<boolean | undefined>(defaultExpanded);
+  useEffect(() => {
+    if (defaultExpanded !== undefined) {
+      setManualExpanded(defaultExpanded);
+    }
+  }, [defaultExpanded]);
   const isExpanded = manualExpanded ?? (turn.status === 'running' || turn.status === 'failed' || turn.status === 'cancelled' || Boolean(turn.interruption));
   const contentId = useId();
 
@@ -134,28 +139,28 @@ export const AgentProcess: React.FC<AgentProcessProps> = ({
         }}
         aria-expanded={isExpanded}
         aria-controls={contentId}
-        className="w-full flex items-center justify-between px-3.5 py-2.5 bg-surface-container/35 hover:bg-surface-container/65 transition-colors cursor-pointer select-none text-left"
+        className="w-full flex items-center justify-between gap-2.5 px-3.5 py-2.5 bg-surface-container/35 hover:bg-surface-container/65 transition-colors cursor-pointer select-none text-left min-w-0"
       >
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full bg-primary-container ${turn.status === 'running' && !turn.interruption ? 'animate-pulse motion-reduce:animate-none' : ''}`} style={turn.status === 'running' && !turn.interruption ? { boxShadow: '0 0 8px rgba(240,112,64,0.6)' } : {}} />
-          <span className="font-semibold text-on-background text-xs tracking-wide">
+        <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+          <span className={`w-2 h-2 rounded-full bg-primary-container shrink-0 ${turn.status === 'running' && !turn.interruption ? 'animate-pulse motion-reduce:animate-none' : ''}`} style={turn.status === 'running' && !turn.interruption ? { boxShadow: '0 0 8px rgba(240,112,64,0.6)' } : {}} />
+          <span className="font-semibold text-on-background text-xs tracking-wide shrink-0">
             Agent 执行流程
           </span>
-          <span className="text-[11px] text-on-background/55">
+          <span className="text-[11px] text-on-background/55 truncate min-w-0">
             · {turn.items.length} 步骤
             {toolCount > 0 && ` (${toolCount} 个工具)`}
             {reviewItem && ` · 审查: ${reviewItem.verdict || reviewItem.status || 'unknown'}`}
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 text-on-background/50">
-          <span className="text-[10.5px] font-mono uppercase tracking-wider">
+        <div className="flex items-center gap-1.5 text-on-background/50 shrink-0 ml-auto">
+          <span className="text-[10.5px] font-mono uppercase tracking-wider whitespace-nowrap">
             {turn.status}
           </span>
           {isExpanded ? (
-            <ChevronUp className="w-3.5 h-3.5" />
+            <ChevronUp className="w-3.5 h-3.5 shrink-0" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5" />
+            <ChevronDown className="w-3.5 h-3.5 shrink-0" />
           )}
         </div>
       </button>

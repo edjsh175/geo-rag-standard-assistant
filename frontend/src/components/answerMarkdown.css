@@ -1,0 +1,134 @@
+.answer-markdown {
+  min-width: 0;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+.answer-markdown.prose > :first-child {
+  margin-top: 0;
+}
+
+.answer-markdown.prose > :last-child {
+  margin-bottom: 0;
+}
+
+.answer-markdown.prose h1,
+.answer-markdown.prose h2,
+.answer-markdown.prose h3,
+.answer-markdown.prose h4 {
+  margin: 1.35em 0 0.55em;
+  color: var(--color-on-background);
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.answer-markdown.prose h1 { font-size: 1.35em; }
+.answer-markdown.prose h2 { font-size: 1.2em; }
+.answer-markdown.prose h3 { font-size: 1.08em; }
+.answer-markdown.prose h4 { font-size: 1em; }
+
+.answer-markdown.prose p {
+  margin: 0.75em 0;
+  line-height: 1.8;
+}
+
+.answer-markdown.prose strong {
+  color: var(--color-on-background);
+  font-weight: 700;
+}
+
+.answer-markdown.prose ul,
+.answer-markdown.prose ol {
+  margin: 0.65em 0 0.85em;
+  padding-left: 1.65em;
+}
+
+.answer-markdown.prose ul { list-style-type: disc; }
+.answer-markdown.prose ol { list-style-type: decimal; }
+
+.answer-markdown.prose li {
+  padding-left: 0.15em;
+  margin: 0.35em 0;
+}
+
+.answer-markdown.prose li::marker {
+  color: var(--color-primary-container);
+  font-weight: 650;
+}
+
+.answer-markdown__list-disclosure {
+  margin: 0.15em 0 0.8em;
+}
+
+.answer-markdown__list-disclosure > summary {
+  width: fit-content;
+  color: var(--color-primary-container);
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 600;
+  user-select: none;
+}
+
+.answer-markdown__list-disclosure > summary:focus-visible,
+.answer-markdown__scroll-region:focus-visible {
+  outline: 2px solid var(--color-primary-container);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.answer-markdown__collapse-label,
+.answer-markdown__list-disclosure[open] .answer-markdown__expand-label {
+  display: none;
+}
+
+.answer-markdown__list-disclosure[open] .answer-markdown__collapse-label {
+  display: inline;
+}
+
+.answer-markdown__scroll-region {
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior-inline: contain;
+  margin: 0.9em 0;
+}
+
+.answer-markdown.prose .answer-markdown__scroll-region table {
+  width: max-content;
+  max-width: none;
+  border-collapse: collapse;
+}
+
+.answer-markdown.prose .answer-markdown__scroll-region th,
+.answer-markdown.prose .answer-markdown__scroll-region td {
+  padding: 0.45em 0.7em;
+  border: 1px solid var(--color-outline);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.answer-markdown.prose .answer-markdown__scroll-region th {
+  color: var(--color-on-background);
+  background: color-mix(in srgb, var(--color-surface-container-low) 75%, transparent);
+}
+
+.answer-markdown.prose .answer-markdown__code-region pre {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0.85em 1em;
+  overflow: visible;
+  white-space: pre;
+}
+
+.answer-markdown.prose :not(pre) > code {
+  overflow-wrap: anywhere;
+}
+
+.answer-markdown.prose blockquote {
+  margin: 0.9em 0;
+  padding-left: 0.9em;
+  border-left: 2px solid var(--color-primary-container);
+  color: var(--color-on-background);
+  opacity: 0.82;
+}

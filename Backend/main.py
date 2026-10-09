@@ -8,9 +8,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -20,6 +21,7 @@ from app.core.auth import validate_admin_auth_configuration
 from app.core.config import settings
 from app.core.database import db_manager
 from app.core.llm_config import llm_config  # noqa: F401
+from app.models.problem_details import ProblemDetails
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,9 @@ async def lifespan(app: FastAPI):
     validate_admin_auth_configuration()
     logger.info("Admin authentication configuration loaded.")
 
-    from app.core.config import validate_embedding_dimension_invariants
+    from app.core.config import validate_cors_configuration, validate_embedding_dimension_invariants
+    validate_cors_configuration()
+    logger.info("CORS configuration verified.")
     validate_embedding_dimension_invariants()
     logger.info("Embedding dimension invariants verified (PG_VECTOR_DIMENSION=2048, OLLAMA_EMBEDDING_DIMENSIONS=2048).")
 
@@ -79,6 +83,22 @@ app.add_middleware(
 )
 
 app.include_router(api_router, prefix="/api")
+
+
+@app.exception_handler(HTTPException)
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_problem_details_handler(request: Request, exc: HTTPException | StarletteHTTPException):
+    headers = getattr(exc, "headers", None)
+    problem = ProblemDetails.from_status(
+        status_code=exc.status_code,
+        detail=str(exc.detail),
+        instance=request.url.path,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=problem.to_response_dict(),
+        headers=headers,
+    )
 
 
 def _connection_status(flag_name: str) -> str:

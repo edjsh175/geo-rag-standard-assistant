@@ -271,6 +271,9 @@ def test_retrieval_gold_benchmark_run(tmp_path):
     assert gold_file.exists()
     out_file = tmp_path / "test_out.json"
     report = run_evaluation(gold_file, out_file)
+    assert report["evaluation_kind"] == "synthetic_ablation"
+    assert report["live_retrieval"] is False
+    assert report["retrieval_source"] == "simulated_from_gold_labels"
     assert report["total_queries"] > 0
     assert "hybrid_rrf" in report["modes"]
     assert report["modes"]["hybrid_rrf"]["mrr"] > 0.0

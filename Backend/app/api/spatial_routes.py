@@ -2,10 +2,11 @@
 空间分析 API 路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from typing import Optional
 from pydantic import BaseModel
 
+from app.core.auth import UserIdentity
 from app.core.security import require_authenticated_user
 
 router = APIRouter(dependencies=[Depends(require_authenticated_user)])
@@ -211,3 +212,118 @@ async def get_provinces(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取行政区划数据失败: {str(e)}",
         )
+
+
+class ChunkedUploadInitRequest(BaseModel):
+    filename: str
+    total_size: int
+    total_chunks: int
+    file_hash: Optional[str] = None
+
+
+class ChunkedUploadCompleteRequest(BaseModel):
+    upload_id: str
+
+
+def _upload_principal_id(user: UserIdentity) -> str:
+    if user.role == "visitor":
+        if not user.visitor_id:
+            raise HTTPException(status_code=400, detail="visitor_id is required")
+        return f"visitor:{user.visitor_id}"
+    return f"admin:{user.username}"
+
+
+@router.post("/upload/init")
+async def init_chunked_upload(
+    payload: ChunkedUploadInitRequest,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+):
+    """Initialize a resumable chunked spatial upload session."""
+    from app.services.spatial_chunked_upload_service import get_spatial_chunked_upload_service
+
+    svc = get_spatial_chunked_upload_service()
+    try:
+        meta = await svc.initiate_upload(
+            filename=payload.filename,
+            total_size=payload.total_size,
+            total_chunks=payload.total_chunks,
+            file_hash=payload.file_hash,
+            principal_id=_upload_principal_id(current_user),
+        )
+        return {
+            "upload_id": meta.upload_id,
+            "filename": meta.filename,
+            "total_chunks": meta.total_chunks,
+            "total_size": meta.total_size,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to initialize chunked upload: {exc}")
+
+
+@router.post("/upload/chunk")
+async def upload_spatial_chunk(
+    upload_id: str = Query(...),
+    chunk_index: int = Query(...),
+    chunk_hash: Optional[str] = Query(None),
+    request: Request = None,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+):
+    """Upload a single chunk for an active chunked upload session."""
+    from app.services.spatial_chunked_upload_service import get_spatial_chunked_upload_service
+
+    svc = get_spatial_chunked_upload_service()
+    try:
+        body = await request.body()
+        return await svc.upload_chunk(
+            upload_id=upload_id,
+            chunk_index=chunk_index,
+            chunk_bytes=body,
+            chunk_hash=chunk_hash,
+            principal_id=_upload_principal_id(current_user),
+        )
+    except Exception as exc:
+        from app.services.spatial_chunked_upload_service import UploadPermissionError
+
+        if isinstance(exc, UploadPermissionError):
+            raise HTTPException(status_code=403, detail="Upload session access denied")
+        raise HTTPException(status_code=400, detail=f"Failed to upload chunk: {exc}")
+
+
+@router.get("/upload/status")
+async def get_chunked_upload_status(
+    upload_id: str = Query(...),
+    current_user: UserIdentity = Depends(require_authenticated_user),
+):
+    """Check upload progress and list uploaded/missing chunks for resumption."""
+    from app.services.spatial_chunked_upload_service import get_spatial_chunked_upload_service
+
+    svc = get_spatial_chunked_upload_service()
+    try:
+        return await svc.get_status(upload_id, principal_id=_upload_principal_id(current_user))
+    except Exception as exc:
+        from app.services.spatial_chunked_upload_service import UploadPermissionError
+
+        if isinstance(exc, UploadPermissionError):
+            raise HTTPException(status_code=403, detail="Upload session access denied")
+        raise HTTPException(status_code=404, detail=f"Upload session not found: {exc}")
+
+
+@router.post("/upload/complete")
+async def complete_chunked_upload(
+    payload: ChunkedUploadCompleteRequest,
+    current_user: UserIdentity = Depends(require_authenticated_user),
+):
+    """Reassemble chunks, verify final file checksum, and return assembled spatial file."""
+    from app.services.spatial_chunked_upload_service import get_spatial_chunked_upload_service
+
+    svc = get_spatial_chunked_upload_service()
+    try:
+        return await svc.complete_upload(
+            payload.upload_id, principal_id=_upload_principal_id(current_user)
+        )
+    except Exception as exc:
+        from app.services.spatial_chunked_upload_service import UploadPermissionError
+
+        if isinstance(exc, UploadPermissionError):
+            raise HTTPException(status_code=403, detail="Upload session access denied")
+        raise HTTPException(status_code=400, detail=f"Failed to complete upload: {exc}")

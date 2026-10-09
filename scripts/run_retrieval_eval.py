@@ -1,4 +1,4 @@
-"""GeoAI RAG Retrieval Benchmark and Ablation Evaluation Runner.
+"""GeoAI RAG synthetic ranking ablation runner (not a live retrieval benchmark).
 
 Evaluates retrieval pipeline quality and ablations across:
 - Keyword only
@@ -106,6 +106,9 @@ def run_evaluation(
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
     report: dict[str, Any] = {
+        "evaluation_kind": "synthetic_ablation",
+        "live_retrieval": False,
+        "retrieval_source": "simulated_from_gold_labels",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "total_queries": len(gold_entries),
         "total_time_ms": round(elapsed_ms, 2),
@@ -145,7 +148,7 @@ def main() -> None:
 
     print(f"Running retrieval evaluation with gold: {args.gold}")
     report = run_evaluation(args.gold, args.output)
-    print("\n--- Retrieval Ablation Results ---")
+    print("\n--- Synthetic Ranking Ablation (no live database retrieval) ---")
     for mode, metrics in report["modes"].items():
         print(f"\n[{mode}]")
         for k, v in metrics.items():

@@ -32,6 +32,7 @@ class DatabaseManager:
 
     def __init__(self):
         self.postgres_engine: Optional[AsyncEngine] = None
+        self.postgres_lock_engine: Optional[AsyncEngine] = None
         self.postgres_sessionmaker: Optional[async_sessionmaker[AsyncSession]] = None
 
         self.mysql_engine: Optional[AsyncEngine] = None
@@ -94,6 +95,15 @@ class DatabaseManager:
             echo=settings.DEBUG,
             pool_size=20,
             max_overflow=30,
+            pool_pre_ping=True,
+        )
+
+        self.postgres_lock_engine = create_async_engine(
+            settings.DATABASE_URL,
+            echo=settings.DEBUG,
+            pool_size=5,
+            max_overflow=5,
+            pool_timeout=10,
             pool_pre_ping=True,
         )
 
@@ -200,6 +210,10 @@ class DatabaseManager:
         return self.redis_client
 
     async def close(self) -> None:
+        if self.postgres_lock_engine:
+            await self.postgres_lock_engine.dispose()
+            logger.info("PostgreSQL session-lock connection pool closed")
+
         if self.postgres_engine:
             await self.postgres_engine.dispose()
             logger.info("PostgreSQL connection closed")

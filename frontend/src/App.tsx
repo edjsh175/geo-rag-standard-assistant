@@ -1,15 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Map as MapIcon,
-  Microscope,
-  BarChart3,
-  Settings,
   Layers,
-  History,
-  Bot,
-  Sparkles,
-  Mic,
-  Send,
   ArrowLeft,
   X,
   Download,
@@ -17,6 +8,7 @@ import {
   RotateCcw,
   Bell,
   Radio,
+  Settings,
   Sun,
   Moon,
   LogOut,
@@ -32,226 +24,13 @@ import { useAuth } from './auth/AuthProvider';
 import { ensureBackendHealth, loadProvinceCollection, resetBootstrapCache } from './lib/bootstrap';
 import { cn } from './lib/utils';
 import { drawerGlassStyle, glassLightStyle, glassStyle } from './lib/glass';
-import { searchService, type DocumentResult as ApiDocumentResult } from './services/searchService';
-import { chatService } from './services/chatService';
-import { documentService } from './services/documentService';
-import type {
-  SearchResult,
-  Document,
-  ChatMessage as ChatMessageType,
-  DocumentPreview,
-  FollowUpContext,
-  FollowUpCandidateDocument,
-} from './types';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { getChatPanelWidth, type MapLayoutMode } from './lib/mapViewport';
-import { useMapStore, zoomToHeight, heightToZoom } from './store/useMapStore';
-import { registerVectorDataset } from './gis/fileReferenceStore';
-import { setActiveBrowserGisRuntime } from './gis/browserBridge';
-import { AgentEventProjector } from './components/agent/eventProjector';
-import type { AgentTurnViewModel } from './components/agent/types';
-import {
-  AgentSessionNotFoundError,
-  clearAgentSessionId,
-  createAgentSession,
-  deleteAgentSession,
-  listAgentSessions,
-  readAgentSessionId,
-  restoreAgentSession,
-  saveAgentSessionId,
-  type AgentSessionSummary,
-} from './services/agentHistory';
+import { useMapViewerState } from './hooks/useMapViewerState';
+import { useAgentSession, resolveFollowUpContext } from './hooks/useAgentSession';
+import { useDocumentManager, isIndexedStatus, indexingStatusLabel } from './hooks/useDocumentManager';
 
-type ApiDocumentDetail = NonNullable<Awaited<ReturnType<typeof documentService.getDocumentById>>>;
+export { resolveFollowUpContext };
 
-const asRecord = (value: unknown): Record<string, unknown> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-
-const asString = (value: unknown): string | undefined =>
-  typeof value === 'string' ? value : undefined;
-
-const asStringArray = (value: unknown): string[] =>
-  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-
-const asBoundingBox = (value: unknown): [number, number, number, number] | undefined =>
-  Array.isArray(value) &&
-  value.length === 4 &&
-  value.every((item) => typeof item === 'number')
-    ? [value[0], value[1], value[2], value[3]]
-    : undefined;
-
-const toSpatialMetadata = (value: unknown): Document['spatial_metadata'] => {
-  const spatial = asRecord(value);
-  if (Object.keys(spatial).length === 0) return undefined;
-  return {
-    geometry: asRecord(spatial.geometry),
-    bounding_box: asBoundingBox(spatial.bounding_box),
-    address: asString(spatial.address),
-    city: asString(spatial.city),
-    province: asString(spatial.province),
-    country: asString(spatial.country),
-    coordinate_system: 'EPSG:4326',
-  };
-};
-
-const metadataToDocumentMetadata = (
-  title: string,
-  description: string,
-  metadataValue: unknown
-): Document['metadata'] => {
-  const metadata = asRecord(metadataValue);
-  return {
-    title,
-    author: asString(metadata.author),
-    description,
-    keywords: asStringArray(metadata.keywords),
-    publish_date: asString(metadata.publish_date),
-    source: asString(metadata.source),
-    language: 'zh',
-    category: asString(metadata.category),
-    tags: asStringArray(metadata.tags),
-    custom_fields: asRecord(metadata.custom_fields),
-  };
-};
-
-const normalizeIndexingStatus = (value: unknown, fallback: Document['indexing_status'] = 'completed'): Document['indexing_status'] => {
-  const status = asString(value);
-  const supported: Document['indexing_status'][] = [
-    'pending',
-    'processing',
-    'completed',
-    'queued',
-    'parsing',
-    'chunking',
-    'embedding',
-    'indexed',
-    'failed',
-    'deleted',
-  ];
-  return supported.includes(status as Document['indexing_status'])
-    ? (status as Document['indexing_status'])
-    : fallback;
-};
-
-const isIndexedStatus = (status: Document['indexing_status']): boolean =>
-  status === 'completed' || status === 'indexed';
-
-const indexingStatusLabel = (status: Document['indexing_status']): string => {
-  const labels: Record<Document['indexing_status'], string> = {
-    pending: '待处理',
-    processing: '处理中',
-    completed: '已完成',
-    queued: '排队中',
-    parsing: '解析中',
-    chunking: '切分中',
-    embedding: '向量化',
-    indexed: '已完成',
-    failed: '失败',
-    deleted: '已删除',
-  };
-  return labels[status] ?? '待处理';
-};
-
-const toFrontendDocumentFromResult = (doc: ApiDocumentResult): Document => ({
-  id: doc.id,
-  filename: doc.title,
-  file_type: doc.file_type,
-  file_size: doc.file_size,
-  content_hash: '',
-  upload_time: doc.upload_time,
-  last_modified: doc.upload_time,
-  metadata: metadataToDocumentMetadata(doc.title, doc.content, doc.metadata),
-  spatial_metadata: toSpatialMetadata(doc.spatial_info),
-  vector_embedding: undefined,
-  is_indexed: true,
-  indexing_status: 'completed',
-  storage_path: '',
-  access_url: doc.source_url,
-  download_available: doc.download_available,
-  download_url: doc.download_url,
-  version: 1,
-});
-
-const toFrontendDocumentFromDetail = (documentDetail: ApiDocumentDetail): Document => ({
-  id: documentDetail.id,
-  filename: documentDetail.title,
-  file_type: documentDetail.file_info.type,
-  file_size: documentDetail.file_info.size,
-  content_hash: '',
-  upload_time: documentDetail.file_info.upload_time,
-  last_modified: documentDetail.file_info.upload_time,
-  metadata: metadataToDocumentMetadata(documentDetail.title, documentDetail.content, documentDetail.metadata),
-  spatial_metadata: toSpatialMetadata(documentDetail.spatial_info),
-  vector_embedding: undefined,
-  is_indexed: isIndexedStatus(
-    normalizeIndexingStatus(asRecord(asRecord(documentDetail.metadata).custom_fields).index_status)
-  ),
-  indexing_status: normalizeIndexingStatus(asRecord(asRecord(documentDetail.metadata).custom_fields).index_status),
-  storage_path: '',
-  access_url: documentDetail.download_url,
-  download_available: documentDetail.download_available,
-  download_url: documentDetail.download_url,
-  version: 1,
-});
-
-const PROVINCE_MAP: Record<string, string> = {
-  '110000': '北京市',
-  '120000': '天津市',
-  '130000': '河北省',
-  '140000': '山西省',
-  '150000': '内蒙古自治区',
-  '210000': '辽宁省',
-  '220000': '吉林省',
-  '230000': '黑龙江省',
-  '310000': '上海市',
-  '320000': '江苏省',
-  '330000': '浙江省',
-  '340000': '安徽省',
-  '350000': '福建省',
-  '360000': '江西省',
-  '370000': '山东省',
-  '410000': '河南省',
-  '420000': '湖北省',
-  '430000': '湖南省',
-  '440000': '广东省',
-  '450000': '广西壮族自治区',
-  '460000': '海南省',
-  '500000': '重庆市',
-  '510000': '四川省',
-  '520000': '贵州省',
-  '530000': '云南省',
-  '540000': '西藏自治区',
-  '610000': '陕西省',
-  '620000': '甘肃省',
-  '630000': '青海省',
-  '640000': '宁夏回族自治区',
-  '650000': '新疆维吾尔自治区',
-  '710000': '台湾省',
-  '810000': '香港特别行政区',
-  '820000': '澳门特别行政区',
-};
-
-export const resolveFollowUpContext = (
-  _content: string,
-  _messages: ChatMessageType[],
-  selectedDocument: Document | null
-): FollowUpContext | undefined => {
-  if (selectedDocument) {
-    return {
-      target_document_id: selectedDocument.id,
-      candidate_documents: [
-        {
-          id: selectedDocument.id,
-          title: selectedDocument.metadata.title,
-          rank: 1,
-        },
-      ],
-      resolution_source: 'selected_document',
-    };
-  }
-  return undefined;
-};
+type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
 
 const getBootErrorMessage = (error: unknown): string => {
   if (error instanceof Error) {
@@ -260,36 +39,45 @@ const getBootErrorMessage = (error: unknown): string => {
   return '系统初始化失败，请稍后重试。';
 };
 
-type BootCeremonyStage = 'loading' | 'ready' | 'entering' | 'done';
-
-const createWelcomeMessage = (): ChatMessageType => ({
-  id: 'init-1',
-  role: 'assistant',
-  content: `您好！我是 **GeoAI 空间规划智能体**。
-
-已接入国土自然资源知识库与 WebGIS/PostGIS 空间底座，支持规划咨询与地图协同：
-
-- 📚 **规范溯源**：规程标准权威问答与规划法规条款精准溯源
-- 🗺️ **地图协同**：二三维联动漫游、图层显隐与样式定制（支持 📎 登记矢量数据）
-- 📐 **空间分析**：PostGIS 拓扑相交、要素查验与几何计算
-
-您可以直接提问规划业务（如 *“检索城镇开发边界划定标准”*），或发出地图操作指令（如 *“定位到成都市”*）。`,
-  timestamp: new Date().toISOString(),
-  metadata: { document_ids: [], citations: [] },
-});
-
 export default function App() {
   const { logout, user, updateQuota } = useAuth();
   const isVisitor = user?.role === 'visitor';
   const reduceMotion = useReducedMotion();
-  // ==================== 全局空间状态 ====================
-  const viewMode = useMapStore((s) => s.viewMode);
-  const setViewMode = useMapStore((s) => s.setViewMode);
-  const activeRegion = useMapStore((s) => s.activeRegion);
-  const setActiveRegion = useMapStore((s) => s.setActiveRegion);
-  const setViewState = useMapStore((s) => s.setViewState);
-  const resetView = useMapStore((s) => s.resetView);
+
+  // ==================== 1. 主题管理 ====================
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  // ==================== 2. 三大核心业务 Hooks ====================
+  const map = useMapViewerState();
+  const doc = useDocumentManager();
+  const { selectedDocument, isDrawerOpen, setIsDrawerOpen } = doc;
+
+  // Authority invariant: Browser/UI-observed map state is authoritative.
+  // Natural-language text must not mutate map facts before Controller interpretation.
+  const activeRegion = map.activeRegion;
+  const regionContext = activeRegion;
+
+  const handleDocumentsFound = useCallback((documents: any[]) => {
+    const newSearchResults = documents.map((d) => ({
+      id: d.id,
+      score: 0.8,
+      document: d,
+      highlights: {},
+      explanation: '来自聊天上下文',
+    }));
+    doc.setSearchResults((prev) => [...prev, ...newSearchResults]);
+  }, [doc]);
+
+  const session = useAgentSession({
+    user,
+    updateQuota,
+    activeRegion: map.activeRegion,
+    setActiveRegion: map.setActiveRegion,
+    selectedDocument: doc.selectedDocument,
+    onDocumentsFound: handleDocumentsFound,
+  });
+
+  // ==================== 3. 引导开屏状态 ====================
   const [bootStatus, setBootStatus] = useState('正在检查服务健康状态');
   const [bootDetail, setBootDetail] = useState('请稍候，系统正在恢复安全会话与地图核心资源。');
   const [bootError, setBootError] = useState<string | null>(null);
@@ -297,25 +85,14 @@ export default function App() {
   const [bootRetryKey, setBootRetryKey] = useState(0);
   const [bootStage, setBootStage] = useState<BootCeremonyStage>('loading');
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const [chatExpanded, setChatExpanded] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(
-    () => (typeof window === 'undefined' ? 1920 : window.innerWidth)
-  );
-  const [mapReady, setMapReady] = useState<{ '2D': boolean; '3D': boolean }>({
-    '2D': false,
-    '3D': false,
-  });
   const enterCeremonyTimerRef = useRef<number | null>(null);
 
-  // ==================== 主题管理 ====================
   useEffect(() => {
-    // 1. 检测系统偏好
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const initialTheme = mediaQuery.matches ? 'dark' : 'light';
     setTheme(initialTheme);
     document.documentElement.dataset.theme = initialTheme;
 
-    // 2. 监听系统偏好变化
     const handler = (e: MediaQueryListEvent) => {
       const newTheme = e.matches ? 'dark' : 'light';
       setTheme(newTheme);
@@ -325,34 +102,13 @@ export default function App() {
     return () => mediaQuery.removeEventListener('change', handler);
   }, []);
 
-  useEffect(() => {
-    const handleResize = () => setViewportWidth(window.innerWidth);
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
   const handleThemeChange = (newTheme: 'dark' | 'light') => {
     setTheme(newTheme);
     document.documentElement.dataset.theme = newTheme;
-    
-    // 如果切换到日间模式，且当前是卫星图，则自动切换到电子底图以保持视觉一致
-    if (newTheme === 'light' && layers.wms) {
-      setLayers(prev => ({ ...prev, wms: false }));
+    if (newTheme === 'light' && map.layers.wms) {
+      map.setLayers((prev) => ({ ...prev, wms: false }));
     }
   };
-
-  const markMapReady = useCallback((mode: '2D' | '3D') => {
-    setMapReady((prev) => (prev[mode] ? prev : { ...prev, [mode]: true }));
-  }, []);
-
-  const handleMapReady2D = useCallback(() => {
-    markMapReady('2D');
-  }, [markMapReady]);
-
-  const handleMapReady3D = useCallback(() => {
-    markMapReady('3D');
-  }, [markMapReady]);
 
   const retryBoot = useCallback(() => {
     if (enterCeremonyTimerRef.current) {
@@ -411,7 +167,7 @@ export default function App() {
         if (cancelled) return;
 
         setBootBaseReady(true);
-        setBootStatus(viewMode === '3D' ? '正在准备三维地图引擎' : '正在准备二维地图引擎');
+        setBootStatus(map.viewMode === '3D' ? '正在准备三维地图引擎' : '正在准备二维地图引擎');
         setBootDetail('地图引擎初始化完成后将自动进入主界面。');
       } catch (error) {
         if (cancelled) return;
@@ -424,15 +180,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [bootRetryKey]);
+  }, [bootRetryKey, map.viewMode]);
 
   useEffect(() => {
-    if (bootError || !bootBaseReady || !mapReady[viewMode] || bootStage !== 'loading') return;
+    if (bootError || !bootBaseReady || !map.mapReady[map.viewMode] || bootStage !== 'loading') return;
 
     setBootStage('ready');
     setBootStatus('系统准备就绪');
     setBootDetail('地图与核心资源已完成加载，点击一次进入系统。');
-  }, [bootBaseReady, bootError, bootStage, mapReady, viewMode]);
+  }, [bootBaseReady, bootError, bootStage, map.mapReady, map.viewMode]);
 
   useEffect(() => {
     return () => {
@@ -444,560 +200,9 @@ export default function App() {
 
   useEffect(() => {
     if (!bootBaseReady || bootError || bootStage !== 'loading') return;
-    setBootStatus(viewMode === '3D' ? '正在准备三维地图视图' : '正在准备二维地图视图');
+    setBootStatus(map.viewMode === '3D' ? '正在准备三维地图视图' : '正在准备二维地图视图');
     setBootDetail('正在完成首屏地图初始化，请稍候。');
-  }, [bootBaseReady, bootError, bootStage, viewMode]);
-
-  // 2D/3D 地图容器 ref，用于视角交接
-  const olContainerRef = useRef<HTMLDivElement>(null);
-  const cesiumContainerRef = useRef<HTMLDivElement>(null);
-
-  // ==================== "视角交接仪式" ====================
-  // 切换引擎前：从当前引擎快照视角 → 写入 Store → 新引擎读取 Store 恢复
-  const handleViewModeSwitch = useCallback((targetMode: '2D' | '3D') => {
-    if (targetMode === viewMode) return;
-
-    if (viewMode === '3D' && targetMode === '2D') {
-      // 3D -> 2D: always snapshot the current Cesium view so post-focus pan/zoom survives mode switching.
-      const cesiumEl = document.getElementById('cesiumContainer');
-      if (cesiumEl && (cesiumEl as any).__snapshotView) {
-        (cesiumEl as any).__snapshotView();
-      }
-      const { height, center } = useMapStore.getState().viewState;
-      const zoom = heightToZoom(height, center[1]);
-      setViewState({ zoom, center });
-    } else {
-      // 2D → 3D：读取 OL 视角，换算 height，写入 Store
-      const olEl = olContainerRef.current?.querySelector('div[class]') ?? olContainerRef.current;
-      // OpenLayersMap 把 __snapshotView 挂在自己的根 div 上
-      // 我们需要找到 OpenLayersMap 渲染的那个 div
-      const mapSection = document.querySelector('[data-ol-map]');
-      if (mapSection && (mapSection as any).__snapshotView) {
-        (mapSection as any).__snapshotView();
-      } else {
-        // fallback：遍历查找
-        document.querySelectorAll('.w-full.h-full').forEach((el) => {
-          if ((el as any).__snapshotView) (el as any).__snapshotView();
-        });
-      }
-      const { zoom, center } = useMapStore.getState().viewState;
-      const height = zoomToHeight(zoom, center[1]);
-      setViewState({ height, center });
-    }
-
-    setViewMode(targetMode);
-  }, [viewMode, setViewMode, setViewState]);
-  const [layers, setLayers] = useState({
-    admin: true,
-    wms: false
-  });
-
-  useEffect(() => {
-    setActiveBrowserGisRuntime(viewMode === '3D' ? '3d' : '2d');
-  }, [viewMode]);
-
-  const handleAgentLayerVisibilityChange = useCallback((layerRef: string, visible: boolean) => {
-    if (layerRef === 'system:provinces') {
-      setLayers((prev) => ({ ...prev, admin: visible }));
-      return;
-    }
-    if (layerRef === 'base:satellite') {
-      setLayers((prev) => ({ ...prev, wms: visible }));
-      return;
-    }
-    if (layerRef === 'base:vector') {
-      setLayers((prev) => ({ ...prev, wms: !visible }));
-    }
-  }, []);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [selectedStandard, setSelectedStandard] = useState<any>(null);
-
-  // 聊天相关状态
-  const [chatInput, setChatInput] = useState('');
-  const [messages, setMessages] = useState<ChatMessageType[]>([createWelcomeMessage()]);
-
-  // 聊天加载状态
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const [reviewerEnabled, setReviewerEnabled] = useState(false);
-  const [activeTurn, setActiveTurn] = useState<AgentTurnViewModel | null>(null);
-  const conversationIdRef = useRef<string | undefined>(undefined);
-  const [activeSessionId, setActiveSessionId] = useState<string | undefined>(undefined);
-  const [agentSessions, setAgentSessions] = useState<AgentSessionSummary[]>([]);
-  const [isHistoryRestoring, setIsHistoryRestoring] = useState(false);
-  const [historyRestoreError, setHistoryRestoreError] = useState(false);
-  const [historyRetryKey, setHistoryRetryKey] = useState(0);
-  const historyRestorePromiseRef = useRef<Promise<boolean> | null>(null);
-  // AbortController引用（用于中断请求）
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const activeProjectorRef = useRef<AgentEventProjector | null>(null);
-
-  useEffect(() => {
-    if (!user) return;
-    let current = true;
-    const controller = new AbortController();
-    setHistoryRestoreError(false);
-    setIsHistoryRestoring(true);
-    const restoreTask = (async () => {
-      try {
-        const sessions = await listAgentSessions(controller.signal);
-        if (!current) return false;
-        setAgentSessions(sessions);
-        const savedSessionId = readAgentSessionId(user);
-        const sessionId = savedSessionId && sessions.some((item) => item.session_id === savedSessionId)
-          ? savedSessionId
-          : sessions[0]?.session_id;
-        if (!sessionId) {
-          conversationIdRef.current = undefined;
-          setActiveSessionId(undefined);
-          clearAgentSessionId(user);
-          setMessages([createWelcomeMessage()]);
-          return true;
-        }
-
-        conversationIdRef.current = sessionId;
-        setActiveSessionId(sessionId);
-        saveAgentSessionId(user, sessionId);
-        const restored = await restoreAgentSession(sessionId, user, controller.signal);
-        if (!current) return false;
-        conversationIdRef.current = restored.sessionId || sessionId;
-        setActiveSessionId(restored.sessionId || sessionId);
-        setMessages(restored.messages.length ? restored.messages : [createWelcomeMessage()]);
-        return true;
-      } catch (error) {
-        if (!current || controller.signal.aborted) return false;
-        if (error instanceof AgentSessionNotFoundError) {
-          conversationIdRef.current = undefined;
-          setActiveSessionId(undefined);
-          setMessages([createWelcomeMessage()]);
-          return true;
-        }
-        console.warn('恢复聊天历史失败:', error);
-        setHistoryRestoreError(true);
-        return false;
-      } finally {
-        if (current) setIsHistoryRestoring(false);
-      }
-    })();
-    historyRestorePromiseRef.current = restoreTask;
-
-    return () => {
-      current = false;
-      controller.abort();
-    };
-  }, [user?.role, user?.username, user?.visitor_id, historyRetryKey]);
-
-  const refreshAgentSessions = useCallback(async () => {
-    const sessions = await listAgentSessions();
-    setAgentSessions(sessions);
-  }, []);
-
-  const selectAgentSession = useCallback(async (sessionId: string) => {
-    if (!user || sessionId === conversationIdRef.current) return;
-    setHistoryRestoreError(false);
-    setIsHistoryRestoring(true);
-    const task = (async () => {
-      try {
-        const restored = await restoreAgentSession(sessionId, user);
-        conversationIdRef.current = restored.sessionId || sessionId;
-        setActiveSessionId(restored.sessionId || sessionId);
-        saveAgentSessionId(user, restored.sessionId || sessionId);
-        setMessages(restored.messages.length ? restored.messages : [createWelcomeMessage()]);
-        return true;
-      } catch (error) {
-        if (error instanceof AgentSessionNotFoundError) {
-          await refreshAgentSessions();
-        }
-        console.warn('切换会话失败:', error);
-        setHistoryRestoreError(true);
-        return false;
-      } finally {
-        setIsHistoryRestoring(false);
-      }
-    })();
-    historyRestorePromiseRef.current = task;
-    await task;
-  }, [refreshAgentSessions, user]);
-
-  const handleCreateAgentSession = useCallback(async () => {
-    if (!user) return;
-    const created = await createAgentSession();
-    conversationIdRef.current = created.session_id;
-    setActiveSessionId(created.session_id);
-    saveAgentSessionId(user, created.session_id);
-    setAgentSessions((current) => [created, ...current.filter((item) => item.session_id !== created.session_id)]);
-    setMessages([createWelcomeMessage()]);
-    setActiveTurn(null);
-    setHistoryRestoreError(false);
-  }, [user]);
-
-  const handleDeleteAgentSession = useCallback(async (sessionId: string) => {
-    if (!user) return;
-    await deleteAgentSession(sessionId);
-    const remaining = agentSessions.filter((item) => item.session_id !== sessionId);
-    setAgentSessions(remaining);
-    if (sessionId !== conversationIdRef.current) return;
-
-    conversationIdRef.current = undefined;
-    setActiveSessionId(undefined);
-    clearAgentSessionId(user);
-    if (remaining.length > 0) {
-      await selectAgentSession(remaining[0].session_id);
-    } else {
-      setMessages([createWelcomeMessage()]);
-      setHistoryRestoreError(false);
-    }
-  }, [agentSessions, selectAgentSession, user]);
-
-  const toggleLayer = (layer: keyof typeof layers) => {
-    setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
-  };
-
-  // 搜索相关状态
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
-  const [isLoadingDocument, setIsLoadingDocument] = useState(false);
-  const [isDownloadingDocument, setIsDownloadingDocument] = useState(false);
-
-  const handleReferenceClick = (doc: Document) => {
-    setSelectedDocument(doc);
-    setIsDrawerOpen(true);
-  };
-
-  // 搜索函数
-  const handleSearch = async (query: string) => {
-    if (!query.trim()) return;
-
-    setIsSearching(true);
-    try {
-      // 使用快速搜索方法
-      const documentResults = await searchService.quickSearch(query);
-
-      // 将DocumentResult转换为SearchResult
-      const results: SearchResult[] = documentResults.map(doc => ({
-        id: doc.id,
-        score: doc.similarity,
-        document: toFrontendDocumentFromResult(doc),
-        highlights: {},
-        explanation: `相似度: ${(doc.similarity * 100).toFixed(1)}%`,
-        vector_distance: 1 - doc.similarity
-      }));
-
-      setSearchResults(results);
-
-      // 更新聊天消息显示搜索结果
-      const newMessage: ChatMessageType = {
-        id: `search-${Date.now()}`,
-        role: 'assistant',
-        content: `已找到 ${results.length} 个相关文档。`,
-        timestamp: new Date().toISOString(),
-        metadata: {
-          document_ids: results.map(r => r.document.id),
-          citations: results.map(r => ({
-            document_id: r.document.id,
-            title: r.document.metadata.title,
-            excerpt: r.document.metadata.description || '',
-            confidence: r.score
-          })),
-          search_query: query
-        }
-      };
-
-      setMessages(prev => [...prev, newMessage]);
-    } catch (error) {
-      console.error('搜索失败:', error);
-      const errorMessage: ChatMessageType = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: '搜索过程中出现错误，请稍后重试。',
-        timestamp: new Date().toISOString(),
-        metadata: {}
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // 停止生成函数
-  const handleStopGeneration = () => {
-    if (abortControllerRef.current) {
-      if (activeTurn?.sessionId && activeTurn?.turnId) {
-        void chatService.cancelTurn(activeTurn.sessionId, activeTurn.turnId, 'user_stop')
-          .catch((error) => console.warn('服务端停止请求未确认:', error));
-      }
-      const observedTurn = activeProjectorRef.current?.snapshot();
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-      setIsChatLoading(false);
-      setActiveTurn(null);
-      activeProjectorRef.current = null;
-
-      const stopMessage: ChatMessageType = {
-        id: `stop-${Date.now()}`,
-        role: 'assistant',
-        content: '已请求停止生成。',
-        timestamp: new Date().toISOString(),
-        metadata: {
-          agent_turn: observedTurn?.items.length ? {
-            ...observedTurn,
-            interruption: { kind: 'stopped', message: '已停止接收执行事件，服务端执行状态可刷新查看。' },
-          } : undefined,
-        }
-      };
-      setMessages(prev => [...prev, stopMessage]);
-    }
-  };
-
-  // 聊天函数（集成AbortController）
-  const handleChatSubmit = async (content: string) => {
-    if (!content.trim()) return;
-    if (historyRestorePromiseRef.current && !(await historyRestorePromiseRef.current)) return;
-    if (historyRestoreError) return;
-    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) return;
-
-    // Browser/UI-observed map state is authoritative. Natural-language text must
-    // not mutate map facts before the Controller interprets the request.
-    const regionContext = activeRegion;
-    const followUpContext = resolveFollowUpContext(content, messages, selectedDocument);
-
-    // 构建历史记录：后端只接受 user/assistant，系统提示词只能由后端构建。
-    const history = messages
-      .filter((msg): msg is ChatMessageType & { role: 'user' | 'assistant' } =>
-        (msg.role === 'user' || msg.role === 'assistant') && msg.content.trim().length > 0
-      )
-      .map(msg => ({
-        role: msg.role,
-        // Backend SearchRequest deliberately caps legacy client history at
-        // 4k chars/message. Server-side Agent session history remains the
-        // authoritative long-term context; this field is only a compatibility hint.
-        content: msg.content.slice(0, 4000)
-      }));
-
-    // 添加用户消息
-    const userMessage: ChatMessageType = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: content,
-      timestamp: new Date().toISOString()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-
-    // 创建新的AbortController
-    abortControllerRef.current?.abort(); // 中止之前的请求
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    setIsChatLoading(true);
-    const projector = new AgentEventProjector();
-    activeProjectorRef.current = projector;
-    let boundTurnId: string | undefined;
-    setActiveTurn(projector.snapshot());
-
-    try {
-      // 原始用户问题与交互上下文发送给后端 Controller，流式接收 Agent 决策过程
-      const response = await chatService.sendMessage(
-        content,
-        conversationIdRef.current,
-        history,
-        abortController.signal,
-        followUpContext,
-        (agentEvent) => {
-          if (abortController.signal.aborted || abortControllerRef.current !== abortController) return;
-          if (agentEvent.session_id) {
-            conversationIdRef.current = agentEvent.session_id;
-            setActiveSessionId(agentEvent.session_id);
-            if (user) saveAgentSessionId(user, agentEvent.session_id);
-          }
-          if (agentEvent.event_type === 'session_started') return;
-          // A superseded browser call may emit an old-turn cancellation before the new user event.
-          if (!boundTurnId && (agentEvent.event_type === 'browser_tool_cancelled' || agentEvent.event_type === 'run_cancelled')) return;
-          boundTurnId ||= agentEvent.turn_id || undefined;
-          projector.applyEvent(agentEvent);
-          setActiveTurn(projector.snapshot());
-        },
-        reviewerEnabled,
-      );
-      // 检查是否被中止
-      if (abortController.signal.aborted || abortControllerRef.current !== abortController) {
-        return;
-      }
-      if (response.quota) updateQuota(response.quota);
-
-      // 转换references为citations
-      const citations = (response.references || []).map(ref => ({
-        document_id: ref.id,
-        title: ref.title,
-        excerpt: ref.content,
-        confidence: ref.similarity
-      }));
-
-      // 转换references为文档
-      const documents = (response.references || []).map(toFrontendDocumentFromResult);
-
-      const structuredMap = response.map_action;
-      const purifiedContent = response.message.trim();
-      const adcode = structuredMap?.adcode;
-      const name = structuredMap?.name;
-
-      // 如果提取到有效的ADCODE，写入全局 Store（双引擎自动响应）
-      if (adcode) {
-        // 如果没有名称，或者名称本身看起来像代码，则使用本地省级映射补全。
-        let finalName = name;
-        if (!finalName || /^\d+$/.test(String(finalName))) {
-          finalName = PROVINCE_MAP[String(adcode)] || String(adcode);
-        }
-
-        console.log(`提取到地理位置信息: ${finalName}(${adcode})，触发地图飞行`);
-        setActiveRegion({ adcode: String(adcode), name: String(finalName) });
-      }
-
-      const finalTurn = projector.snapshot();
-      if (response.transport_error) {
-        finalTurn.interruption = { kind: 'connection_error', message: response.transport_error };
-      }
-      const assistantMessage: ChatMessageType = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: purifiedContent,
-        timestamp: new Date().toISOString(),
-        metadata: {
-          document_ids: documents.map(d => d.id),
-          citations: citations,
-          search_query: content,
-          original_query: content,
-          follow_up_context: followUpContext,
-          selected_region: regionContext ?? undefined,
-          agent_turn: finalTurn.items.length > 0 ? finalTurn : undefined
-        }
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
-      void refreshAgentSessions().catch((error) => console.warn('刷新会话列表失败:', error));
-
-      // 如果有相关文档，更新搜索结果
-      if (documents.length > 0) {
-        // 将文档转换为SearchResult格式
-        const newSearchResults: SearchResult[] = documents.map(doc => ({
-          id: doc.id,
-          score: 0.8, // 默认分数
-          document: { ...doc, indexing_status: doc.indexing_status as Document['indexing_status'] },
-          highlights: {},
-          explanation: '来自聊天上下文'
-        }));
-        setSearchResults(prev => [...prev, ...newSearchResults]);
-      }
-    } catch (error: any) {
-      // 检查是否为中止错误
-      if (abortController.signal.aborted || abortControllerRef.current !== abortController || error.name === 'AbortError') {
-        console.log('请求被用户中止');
-        return;
-      }
-
-      console.error('聊天失败:', error);
-      const errorMessage: ChatMessageType = {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: '聊天过程中出现错误，请稍后重试。',
-        timestamp: new Date().toISOString(),
-        metadata: {
-          agent_turn: projector.snapshot().items.length ? {
-            ...projector.snapshot(),
-            interruption: { kind: 'connection_error', message: '连接中断，已保留收到的执行过程。' },
-          } : undefined,
-        }
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      // 清除AbortController引用
-      if (abortControllerRef.current === abortController) {
-        abortControllerRef.current = null;
-        activeProjectorRef.current = null;
-        setIsChatLoading(false);
-        setActiveTurn(null);
-      }
-    }
-  };
-
-  const handleVectorFilesSelected = useCallback(async (files: File[]) => {
-    const registered = await registerVectorDataset(files);
-    return registered.name;
-  }, []);
-
-  // 获取文档详情
-  const fetchDocumentDetails = async (documentId: string) => {
-    if (!documentId) return null;
-
-    setIsLoadingDocument(true);
-    try {
-      const documentDetail = await documentService.getDocumentById(documentId);
-      if (!documentDetail) return null;
-
-      const document = toFrontendDocumentFromDetail(documentDetail);
-
-      return document;
-    } catch (error) {
-      console.error('获取文档详情失败:', error);
-      return null;
-    } finally {
-      setIsLoadingDocument(false);
-    }
-  };
-
-  // 处理引用点击
-  const handleDocumentDownload = async () => {
-    if (!selectedDocument?.id || !selectedDocument.download_available || isDownloadingDocument) {
-      return;
-    }
-
-    setIsDownloadingDocument(true);
-    try {
-      const { blob, filename } = await documentService.downloadDocument(selectedDocument.id);
-      const objectUrl = window.URL.createObjectURL(blob);
-      const link = window.document.createElement('a');
-      link.href = objectUrl;
-      link.download =
-        filename ||
-        selectedDocument.filename ||
-        `${selectedDocument.id}.${selectedDocument.file_type || 'pdf'}`;
-      window.document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(objectUrl);
-    } catch (error) {
-      console.error('鏂囨。涓嬭浇澶辫触:', error);
-    } finally {
-      setIsDownloadingDocument(false);
-    }
-  };
-
-  const handleCitationClick = async (documentId: string) => {
-    const doc = await fetchDocumentDetails(documentId);
-    if (doc) {
-      handleReferenceClick(doc);
-    }
-  };
-
-  // 初始化加载数据
-  useEffect(() => {
-    // 可以在这里加载初始数据
-    const loadInitialData = async () => {
-      // 示例：加载一些初始搜索
-      // await handleSearch('国土空间规划');
-    };
-    loadInitialData();
-  }, []);
-
-  // 组件卸载时中止所有请求
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, []);
+  }, [bootBaseReady, bootError, bootStage, map.viewMode]);
 
   const showBootOverlay = !!bootError || bootStage !== 'done';
   const uiVisible = bootStage === 'entering' || bootStage === 'done';
@@ -1009,12 +214,12 @@ export default function App() {
       : bootStage === 'entering'
         ? 'entering'
         : 'loading';
+
   const getLayerTransition = (delay: number) =>
     reduceMotion
       ? { duration: 0.2, delay: Math.min(delay, 0.08), ease: 'easeOut' as const }
       : { type: 'spring' as const, damping: 24, stiffness: 210, mass: 0.92, delay };
-  const mapLayoutMode: MapLayoutMode = chatExpanded ? 'chatExpanded' : 'standard';
-  const chatPanelWidth = getChatPanelWidth(mapLayoutMode, viewportWidth);
+
   const chatPanelTransition = reduceMotion
     ? { duration: 0.2, delay: bootStage === 'done' ? 0 : 0.08, ease: 'easeOut' as const }
     : {
@@ -1026,7 +231,7 @@ export default function App() {
       };
 
   return (
-    <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{background:'var(--color-background)'}}>
+    <div className="relative w-full h-screen text-on-background font-sans overflow-hidden" style={{ background: 'var(--color-background)' }}>
       {/* Background Map Layer */}
       <motion.section
         className="absolute inset-0 z-0 overflow-hidden"
@@ -1049,21 +254,21 @@ export default function App() {
       >
         <CesiumGlobe
           theme={theme}
-          visible={viewMode === '3D'}
-          layoutMode={mapLayoutMode}
-          viewportWidth={viewportWidth}
-          layers={layers}
-          onReady={handleMapReady3D}
-          onAgentLayerVisibilityChange={handleAgentLayerVisibilityChange}
+          visible={map.viewMode === '3D'}
+          layoutMode={map.mapLayoutMode}
+          viewportWidth={map.viewportWidth}
+          layers={map.layers}
+          onReady={map.handleMapReady3D}
+          onAgentLayerVisibilityChange={map.handleAgentLayerVisibilityChange}
         />
         <OpenLayersMap
           theme={theme}
-          visible={viewMode === '2D'}
-          layoutMode={mapLayoutMode}
-          viewportWidth={viewportWidth}
-          layers={layers}
-          onReady={handleMapReady2D}
-          onAgentLayerVisibilityChange={handleAgentLayerVisibilityChange}
+          visible={map.viewMode === '2D'}
+          layoutMode={map.mapLayoutMode}
+          viewportWidth={map.viewportWidth}
+          layers={map.layers}
+          onReady={map.handleMapReady2D}
+          onAgentLayerVisibilityChange={map.handleAgentLayerVisibilityChange}
         />
       </motion.section>
 
@@ -1093,14 +298,13 @@ export default function App() {
           filter: uiVisible ? 'blur(0px)' : 'blur(12px)',
         }}
         transition={getLayerTransition(reduceMotion ? 0.03 : 0.28)}
-        style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
+        style={{ ...glassStyle, border: '0.5px solid var(--color-outline)', boxShadow: '0 8px 32px rgba(0,0,0,0.1)' }}
       >
         <div className="flex items-center gap-6">
-          {/* Logo */}
           <div className="flex items-center gap-2.5 font-headline">
             <div className="relative w-5 h-5">
-              <div className="absolute inset-0 rotate-45 rounded-[3px]" style={{background:'#f07040',boxShadow:'0 0 10px rgba(240,112,64,0.7)'}} />
-              <div className="absolute inset-[3px] rotate-45 rounded-[1px]" style={{background:'var(--color-background)'}} />
+              <div className="absolute inset-0 rotate-45 rounded-[3px]" style={{ background: '#f07040', boxShadow: '0 0 10px rgba(240,112,64,0.7)' }} />
+              <div className="absolute inset-[3px] rotate-45 rounded-[1px]" style={{ background: 'var(--color-background)' }} />
             </div>
             <span className="text-sm font-semibold tracking-wide text-on-background/90">标准规范</span>
             <span className="text-sm font-light text-on-background/20">·</span>
@@ -1115,12 +319,11 @@ export default function App() {
           </nav>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{background:'rgba(16,185,129,0.08)',border:'0.5px solid rgba(16,185,129,0.2)'}}>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" style={{boxShadow:'0 0 6px rgba(16,185,129,0.7)'}}></span>
-            <span className="text-[12.5px] font-medium" style={{color:'rgba(16,185,129,0.8)'}}>已连接</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full" style={{ background: 'rgba(16,185,129,0.08)', border: '0.5px solid rgba(16,185,129,0.2)' }}>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-soft" style={{ boxShadow: '0 0 6px rgba(16,185,129,0.7)' }}></span>
+            <span className="text-[12.5px] font-medium" style={{ color: 'rgba(16,185,129,0.8)' }}>已连接</span>
           </div>
           <div className="flex gap-1.5 items-center mr-2">
-            {/* Theme Segmented Control */}
             <div className="flex bg-on-background/5 p-0.5 rounded-lg border border-on-background/10 mr-2">
               <button 
                 onClick={() => handleThemeChange('light')}
@@ -1160,9 +363,6 @@ export default function App() {
         </div>
       </motion.header>
 
-      {/* Side Nav - Removed as requested */}
-
-
       {/* Floating Overlay Controls / Content */}
       <main className="absolute inset-0 pointer-events-none z-10">
         {/* Layer Controls - Bottom Left */}
@@ -1179,24 +379,24 @@ export default function App() {
           }}
           transition={getLayerTransition(reduceMotion ? 0.05 : 0.42)}
         >
-          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{...glassLightStyle,minWidth:'168px',border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
+          <div className="glass-light p-4 rounded-xl flex flex-col gap-3.5" style={{ ...glassLightStyle, minWidth: '168px', border: '0.5px solid var(--color-outline)', boxShadow: '0 8px 32px rgba(0,0,0,0.1)' }}>
             <div className="flex items-center gap-1.5 mb-0.5">
-              <Layers className="w-3 h-3" style={{color:'rgba(240,112,64,0.7)'}} />
-              <span className="text-[11.5px] font-semibold uppercase tracking-[0.15em]" style={{color:'rgba(240,112,64,0.65)'}}>图层控制</span>
+              <Layers className="w-3 h-3" style={{ color: 'rgba(240,112,64,0.7)' }} />
+              <span className="text-[11.5px] font-semibold uppercase tracking-[0.15em]" style={{ color: 'rgba(240,112,64,0.65)' }}>图层控制</span>
             </div>
             {[
               { id: 'admin', label: '行政区划' },
               { id: 'wms', label: '卫星底图' }
-            ].map(layer => {
-              const isOn = layers[layer.id as keyof typeof layers];
+            ].map((layer) => {
+              const isOn = map.layers[layer.id as keyof typeof map.layers];
               return (
                 <div key={layer.id} className="flex items-center justify-between gap-4">
                   <span className={cn("text-[13.5px] font-medium transition-colors", isOn ? "text-on-background/80" : "text-on-background/35")}>{layer.label}</span>
-                  <div className={`toggle-track ${isOn ? 'on' : 'off'}`} onClick={() => toggleLayer(layer.id as keyof typeof layers)}>
+                  <div className={`toggle-track ${isOn ? 'on' : 'off'}`} onClick={() => map.toggleLayer(layer.id as keyof typeof map.layers)}>
                     <motion.div
                       className={`toggle-thumb ${isOn ? 'on' : 'off'}`}
                       animate={{ x: isOn ? 17 : 3 }}
-                      transition={{ type:'spring', stiffness:500, damping:30 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                     />
                   </div>
                 </div>
@@ -1221,18 +421,18 @@ export default function App() {
         >
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeRegion?.adcode ?? 'overview'}
+              key={map.activeRegion?.adcode ?? 'overview'}
               initial={{ opacity: 0, x: -6, scale: 0.97 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
               exit={{ opacity: 0, x: 6, scale: 0.97 }}
               transition={{ duration: 0.2 }}
               className="glass-light flex flex-col items-start px-4 py-3 rounded-xl"
-              style={{...glassLightStyle,border:'0.5px solid var(--color-outline-glow)',boxShadow:'0 0 24px rgba(0,0,0,0.1)'}}
+              style={{ ...glassLightStyle, border: '0.5px solid var(--color-outline-glow)', boxShadow: '0 0 24px rgba(0,0,0,0.1)' }}
             >
-              {activeRegion ? (
+              {map.activeRegion ? (
                 <>
-                  <span className="font-headline font-bold text-xl tracking-tight text-glow" style={{color:'var(--color-primary)'}}>{activeRegion.name}</span>
-                  <span className="font-mono text-[11.5px] tracking-[0.18em] mt-0.5" style={{color:'var(--color-primary-container)', opacity: 0.6}}>ADCODE · {activeRegion.adcode}</span>
+                  <span className="font-headline font-bold text-xl tracking-tight text-glow" style={{ color: 'var(--color-primary)' }}>{map.activeRegion.name}</span>
+                  <span className="font-mono text-[11.5px] tracking-[0.18em] mt-0.5" style={{ color: 'var(--color-primary-container)', opacity: 0.6 }}>ADCODE · {map.activeRegion.adcode}</span>
                 </>
               ) : (
                 <>
@@ -1257,16 +457,16 @@ export default function App() {
           }}
           transition={getLayerTransition(reduceMotion ? 0.07 : 0.54)}
         >
-          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{...glassStyle,border:'0.5px solid var(--color-outline)',boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}>
-            {(['3D 地球','2D 地图'] as const).map((label,i) => {
-              const mode = i===0 ? '3D' : '2D';
-              const active = viewMode === mode;
+          <div className="glass p-[3px] rounded-full flex shadow-xl" style={{ ...glassStyle, border: '0.5px solid var(--color-outline)', boxShadow: '0 8px 32px rgba(0,0,0,0.1)' }}>
+            {(['3D 地球', '2D 地图'] as const).map((label, i) => {
+              const mode = i === 0 ? '3D' : '2D';
+              const active = map.viewMode === mode;
               return (
                 <button
                   key={mode}
-                  onClick={() => handleViewModeSwitch(mode)}
+                  onClick={() => map.handleViewModeSwitch(mode)}
                   className={cn("px-5 py-1.5 rounded-full text-xs font-semibold transition-all", !active && "text-on-background/35 hover:text-on-background/60")}
-                  style={active ? {background:'var(--color-primary-container)',color:'var(--color-on-primary-fixed)',boxShadow:'0 0 12px var(--color-primary-glow)'} : {}}
+                  style={active ? { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-fixed)', boxShadow: '0 0 12px var(--color-primary-glow)' } : {}}
                 >{label}</button>
               );
             })}
@@ -1282,7 +482,7 @@ export default function App() {
           initial={false}
           animate={{
             opacity: uiVisible ? 1 : 0,
-            width: chatPanelWidth,
+            width: map.chatPanelWidth,
             x: uiVisible ? 0 : reduceMotion ? 10 : 42,
             y: uiVisible ? 0 : reduceMotion ? 6 : 18,
             scale: uiVisible ? 1 : reduceMotion ? 0.995 : 0.975,
@@ -1291,45 +491,45 @@ export default function App() {
         >
           <div className="h-full rounded-2xl overflow-hidden glass border border-outline shadow-xl" style={glassStyle}>
             <Chat
-              messages={messages}
-              onSendMessage={handleChatSubmit}
-              onVectorFilesSelected={handleVectorFilesSelected}
-              reviewerEnabled={reviewerEnabled}
-              onReviewerEnabledChange={setReviewerEnabled}
-              sessions={agentSessions}
-              activeSessionId={activeSessionId}
-              sessionLoading={isHistoryRestoring}
-              onRefreshSessions={refreshAgentSessions}
-              onCreateSession={handleCreateAgentSession}
-              onSelectSession={selectAgentSession}
-              onDeleteSession={handleDeleteAgentSession}
-              panelWidth={chatPanelWidth}
-              isLoading={isChatLoading}
-              activeTurn={activeTurn}
-              onStopGeneration={handleStopGeneration}
-              inputValue={chatInput}
-              onInputChange={setChatInput}
-              onCitationClick={handleCitationClick}
-              disabled={isSearching || isHistoryRestoring || historyRestoreError}
+              messages={session.messages}
+              onSendMessage={session.handleChatSubmit}
+              onVectorFilesSelected={session.handleVectorFilesSelected}
+              reviewerEnabled={session.reviewerEnabled}
+              onReviewerEnabledChange={session.setReviewerEnabled}
+              sessions={session.agentSessions}
+              activeSessionId={session.activeSessionId}
+              sessionLoading={session.isHistoryRestoring}
+              onRefreshSessions={session.refreshAgentSessions}
+              onCreateSession={session.handleCreateAgentSession}
+              onSelectSession={session.selectAgentSession}
+              onDeleteSession={session.handleDeleteAgentSession}
+              panelWidth={map.chatPanelWidth}
+              isLoading={session.isChatLoading}
+              activeTurn={session.activeTurn}
+              onStopGeneration={session.handleStopGeneration}
+              inputValue={session.chatInput}
+              onInputChange={session.setChatInput}
+              onCitationClick={doc.handleCitationClick}
+              disabled={doc.isSearching || session.isHistoryRestoring || session.historyRestoreError}
               headerAction={
                 <div className="flex items-center gap-2">
-                  {historyRestoreError && (
+                  {session.historyRestoreError && (
                     <button
                       type="button"
-                      onClick={() => setHistoryRetryKey((value) => value + 1)}
+                      onClick={session.retryHistoryRestore}
                       className="text-[10px] px-2 py-1 rounded-md bg-surface-variant/60 hover:bg-surface-variant border border-outline text-on-background"
                     >重试恢复</button>
                   )}
                   <motion.button
                     type="button"
-                    aria-label={chatExpanded ? '收起对话框' : '展开对话框'}
-                    title={chatExpanded ? '收起对话框' : '展开对话框'}
-                    onClick={() => setChatExpanded((value) => !value)}
+                    aria-label={map.chatExpanded ? '收起对话框' : '展开对话框'}
+                    title={map.chatExpanded ? '收起对话框' : '展开对话框'}
+                    onClick={() => map.setChatExpanded((value) => !value)}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.94 }}
                     className="w-7 h-7 rounded-lg flex items-center justify-center transition-all bg-surface-variant/40 hover:bg-surface-variant/70 border border-outline"
                   >
-                    {chatExpanded ? (
+                    {map.chatExpanded ? (
                       <Minimize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
                     ) : (
                       <Maximize2 className="w-3.5 h-3.5 opacity-70 text-on-background" />
@@ -1339,9 +539,9 @@ export default function App() {
               }
               title="Sentinel GeoAI"
               status={
-                isHistoryRestoring
+                session.isHistoryRestoring
                   ? '正在恢复会话历史…'
-                  : historyRestoreError
+                  : session.historyRestoreError
                     ? '会话恢复失败，请重试'
                     : user?.role === 'visitor'
                   ? user.quota?.exhausted
@@ -1372,7 +572,7 @@ export default function App() {
           <span className="text-primary-container/40">WGS84</span>
         </motion.div>
 
-        {/* Reset View - Optimized Position to Bottom-Left Cluster */}
+        {/* Reset View */}
         <motion.div
           className={cn(
             "absolute bottom-[200px] left-6 z-10",
@@ -1389,11 +589,11 @@ export default function App() {
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
-            onClick={resetView}
+            onClick={map.resetView}
             className="glass-light flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer"
-            style={{...glassLightStyle,border:'0.5px solid var(--color-outline-glow)', color:'var(--color-primary-container)', boxShadow:'0 8px 32px rgba(0,0,0,0.1)'}}
-            onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(240,112,64,0.12)'}}
-            onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background=''}}
+            style={{ ...glassLightStyle, border: '0.5px solid var(--color-outline-glow)', color: 'var(--color-primary-container)', boxShadow: '0 8px 32px rgba(0,0,0,0.1)' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(240,112,64,0.12)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; }}
           >
             <RotateCcw className="w-3.5 h-3.5" />
             复位视角
@@ -1430,8 +630,7 @@ export default function App() {
                 <X className="w-3.5 h-3.5 text-on-background/35" />
               </button>
             </div>
-            
-            {/* Skip middle part for this specific edit to avoid too much text if needed, but here I should include enough to match */}
+
             <div className="flex-1 overflow-y-auto p-8 space-y-10 no-scrollbar">
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
@@ -1462,7 +661,7 @@ export default function App() {
                       {new Date(selectedDocument.upload_time).toLocaleDateString('zh-CN')}
                     </p>
                   </div>
-                   <div>
+                  <div>
                     <p className="text-[12.5px] opacity-40 text-on-background uppercase font-bold tracking-widest mb-1">索引状态</p>
                     <span className={`px-2 py-0.5 rounded text-[12.5px] font-bold ${
                       isIndexedStatus(selectedDocument.indexing_status)

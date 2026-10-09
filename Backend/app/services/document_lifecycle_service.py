@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Any, Protocol
 from uuid import uuid4
@@ -72,7 +72,7 @@ class DocumentLifecycleService:
     ) -> dict[str, str]:
         version_id = str(uuid4())
         job_id = str(uuid4())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         max_attempts = max(1, settings.DOCUMENT_INDEX_MAX_RETRIES + 1)
 
         await self.repository.create_upload_record(

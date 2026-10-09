@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 SCHEMA_VECTOR_DIMENSION: int = 2048
 
@@ -126,11 +126,12 @@ class Settings(BaseSettings):
             )
         return v
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 def validate_embedding_dimension_invariants(cfg: Settings | None = None) -> None:
@@ -146,6 +147,33 @@ def validate_embedding_dimension_invariants(cfg: Settings | None = None) -> None
             f"OLLAMA_EMBEDDING_DIMENSIONS must be {SCHEMA_VECTOR_DIMENSION} "
             f"(database schema invariant in policy_chunks and document_chunks tables, got {current.OLLAMA_EMBEDDING_DIMENSIONS})"
         )
+
+
+def validate_cors_configuration(cfg: Settings | None = None) -> None:
+    """Validate CORS configuration invariants.
+
+    In production (DEBUG=False), CORS_ORIGINS must not contain wildcard '*'
+    nor local development loopback addresses (localhost/127.0.0.1/0.0.0.0).
+    """
+    current = cfg or settings
+    if current.DEBUG:
+        return
+
+    if "*" in current.CORS_ORIGINS:
+        raise RuntimeError(
+            "CORS_ORIGINS cannot contain wildcard '*' when allow_credentials=True in production (DEBUG=False)."
+        )
+
+    for origin in current.CORS_ORIGINS:
+        origin_clean = origin.strip().lower()
+        if any(
+            origin_clean.startswith(prefix)
+            for prefix in ("http://localhost", "https://localhost", "http://127.0.0.1", "https://127.0.0.1", "http://0.0.0.0", "https://0.0.0.0")
+        ):
+            raise RuntimeError(
+                f"CORS_ORIGINS contains insecure development loopback origin '{origin}' while DEBUG=False. "
+                "Please configure explicit production origins via CORS_ORIGINS environment variable."
+            )
 
 
 settings = Settings()

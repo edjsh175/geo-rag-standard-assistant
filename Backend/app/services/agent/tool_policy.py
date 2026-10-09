@@ -3,8 +3,48 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Mapping
 
 from app.services.agent.tools import ToolSpec
+
+
+class ToolRiskLevel(str, Enum):
+    """Risk tier of a tool for Human-in-the-loop (HITL) approval governance."""
+
+    READ_ONLY = "READ_ONLY"
+    MUTATING = "MUTATING"
+    HIGH_RISK = "HIGH_RISK"
+
+
+DEFAULT_TOOL_RISK_MAP: dict[str, ToolRiskLevel] = {
+    "retrieve_kb": ToolRiskLevel.READ_ONLY,
+    "list_applicable_standards": ToolRiskLevel.READ_ONLY,
+    "reuse_evidence": ToolRiskLevel.READ_ONLY,
+    "limitation": ToolRiskLevel.READ_ONLY,
+    "inspect_layer_features": ToolRiskLevel.READ_ONLY,
+    "get_feature_geometry": ToolRiskLevel.READ_ONLY,
+    "locate_map": ToolRiskLevel.MUTATING,
+    "select_region": ToolRiskLevel.MUTATING,
+    "set_layer_visibility": ToolRiskLevel.MUTATING,
+    "set_vector_style": ToolRiskLevel.MUTATING,
+    "fit_vector_layer": ToolRiskLevel.MUTATING,
+    "render_geojson_layer": ToolRiskLevel.MUTATING,
+    "import_vector_dataset": ToolRiskLevel.HIGH_RISK,
+}
+
+
+def classify_tool_risk(tool_name: str, spec: ToolSpec | None = None) -> ToolRiskLevel:
+    """Classify the risk level of a tool invocation."""
+    if spec is not None and getattr(spec, "risk_level", None):
+        return getattr(spec, "risk_level")
+    if spec is not None and spec.confirmation_required:
+        return ToolRiskLevel.HIGH_RISK
+    if tool_name in DEFAULT_TOOL_RISK_MAP:
+        return DEFAULT_TOOL_RISK_MAP[tool_name]
+    if spec is not None and spec.side_effect:
+        return ToolRiskLevel.MUTATING
+    return ToolRiskLevel.READ_ONLY
 
 
 class ToolPolicyViolation(RuntimeError):
@@ -29,6 +69,7 @@ class ToolExecutionContext:
     confirmed_tool_call_ids: frozenset[str] = field(default_factory=frozenset)
     allow_side_effects: bool = True
     allowed_providers: frozenset[str] | None = None
+    require_approval_levels: frozenset[ToolRiskLevel] = field(default_factory=frozenset)
 
 
 class ToolPolicy:
@@ -60,7 +101,12 @@ class ToolPolicy:
                 f"'{required_permission}'"
             )
 
-        if spec.confirmation_required and tool_call_id not in context.confirmed_tool_call_ids:
+        risk_level = classify_tool_risk(spec.name, spec)
+        needs_confirmation = (
+            spec.confirmation_required
+            or (risk_level in context.require_approval_levels)
+        )
+        if needs_confirmation and tool_call_id not in context.confirmed_tool_call_ids:
             raise ToolConfirmationRequired(
                 f"TOOL_CONFIRMATION_REQUIRED: '{spec.name}' requires explicit confirmation"
             )
@@ -86,10 +132,13 @@ class ToolPolicy:
 
 
 __all__ = [
+    "DEFAULT_TOOL_RISK_MAP",
     "ToolConfirmationRequired",
     "ToolExecutionContext",
     "ToolPermissionDenied",
     "ToolPolicy",
     "ToolPolicyViolation",
+    "ToolRiskLevel",
     "ToolSideEffectDenied",
+    "classify_tool_risk",
 ]

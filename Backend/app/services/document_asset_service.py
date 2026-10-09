@@ -4,7 +4,7 @@ Document asset lookup and MinIO mapping helpers.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import mimetypes
 from pathlib import Path
@@ -489,7 +489,7 @@ class DocumentAssetService:
         upload_time = (
             (metadata_row or {}).get("asset_imported_at")
             or (metadata_row or {}).get("release_date")
-            or datetime.utcnow()
+            or datetime.now(timezone.utc).replace(tzinfo=None)
         )
 
         download_available = bool(

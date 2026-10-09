@@ -25,6 +25,34 @@ class FakeRedis:
         self.expirations[key] = seconds
         return True
 
+    async def eval(self, script: str, numkeys: int, *args):
+        # Emulate atomic Redis Lua script execution
+        keys = args[:numkeys]
+        argv = args[numkeys:]
+        visitor_key, ip_key, global_key = keys[0], keys[1], keys[2]
+        visitor_limit = int(argv[0])
+        ip_limit = int(argv[1])
+        global_limit = int(argv[2])
+        ttl = int(argv[3])
+
+        v_cnt = self.values.get(visitor_key, 0)
+        ip_cnt = self.values.get(ip_key, 0)
+        g_cnt = self.values.get(global_key, 0)
+
+        if v_cnt >= visitor_limit:
+            return [0, v_cnt, ip_cnt, g_cnt, "visitor_quota_exhausted"]
+        if ip_cnt >= ip_limit:
+            return [0, v_cnt, ip_cnt, g_cnt, "visitor_quota_exhausted"]
+        if g_cnt >= global_limit:
+            return [0, v_cnt, ip_cnt, g_cnt, "global_quota_exhausted"]
+
+        self.values[visitor_key] = v_cnt + 1
+        self.values[ip_key] = ip_cnt + 1
+        self.values[global_key] = g_cnt + 1
+        for k in (visitor_key, ip_key, global_key):
+            self.expirations[k] = ttl
+        return [1, self.values[visitor_key], self.values[ip_key], self.values[global_key], "allowed"]
+
 
 def fixed_now() -> datetime:
     return datetime(2026, 5, 30, 12, 0, tzinfo=timezone.utc)
@@ -83,3 +111,32 @@ async def test_missing_redis_disables_visitor_ai(monkeypatch: pytest.MonkeyPatch
     assert decision.quota.exhausted is True
     assert decision.quota.remaining == 0
     assert decision.reason == "quota_store_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_consume_generation_concurrent_race_condition_atomicity(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    monkeypatch.setattr(settings, "DEMO_DAILY_AI_QUOTA_PER_VISITOR", 3)
+    monkeypatch.setattr(settings, "DEMO_DAILY_AI_QUOTA_PER_IP", 10)
+    monkeypatch.setattr(settings, "DEMO_GLOBAL_DAILY_AI_QUOTA", 100)
+
+    redis = FakeRedis()
+    service = DemoQuotaService(redis_client=redis, now_func=fixed_now)
+
+    # Concurrently fire 20 requests for the same visitor
+    tasks = [service.consume_generation("visitor-concurrent", "ip-concurrent") for _ in range(20)]
+    results = await asyncio.gather(*tasks)
+
+    allowed_results = [r for r in results if r.allowed]
+    denied_results = [r for r in results if not r.allowed]
+
+    # Exactly 3 allowed, exactly 17 denied
+    assert len(allowed_results) == 3
+    assert len(denied_results) == 17
+    # Quota is strictly exhausted, count was not overrun
+    assert redis.values[f"demo:ai:20260530:visitor:visitor-concurrent"] == 3
+    for r in denied_results:
+        assert r.quota.exhausted is True
+        assert r.quota.remaining == 0
+

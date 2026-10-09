@@ -30,3 +30,17 @@ def test_database_target_accepts_mysql_url() -> None:
 
 def test_database_target_accepts_redis_url() -> None:
     assert preflight._database_target("redis://127.0.0.1:6380/0") == ("127.0.0.1", 6380)
+
+
+def test_env_file_preserves_quoted_hash_and_strips_inline_comments(tmp_path) -> None:
+    env_file = tmp_path / "sample.env"
+    env_file.write_text('LLM_PROVIDER=deepseek  # provider\nTOKEN="value#part"\n', encoding="utf-8")
+    assert preflight._load_env_file(env_file) == {"LLM_PROVIDER": "deepseek", "TOKEN": "value#part"}
+
+
+def test_database_target_defaults_to_mysql_port() -> None:
+    assert preflight._database_target("mysql+aiomysql://user:pass@db.local/geoai") == ("db.local", 3306)
+
+
+def test_database_target_defaults_to_redis_port() -> None:
+    assert preflight._database_target("redis://cache.local/0") == ("cache.local", 6379)

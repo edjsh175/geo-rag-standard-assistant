@@ -10,22 +10,18 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+from dotenv import dotenv_values
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "evals" / "geoai_agent_36_tasks.json"
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
     if not path.exists():
-        return values
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip().strip('"').strip("'")
-    return values
+        return {}
+    return {key: value for key, value in dotenv_values(path).items() if value is not None}
+
 
 
 def _config() -> dict[str, str]:
@@ -61,7 +57,9 @@ def _database_target(database_url: str | None) -> tuple[str, int] | None:
     parsed = urlparse(normalized)
     if not parsed.hostname:
         return None
-    return parsed.hostname, parsed.port or 5432
+    scheme = parsed.scheme.split("+", 1)[0]
+    default_port = {"mysql": 3306, "redis": 6379, "rediss": 6379}.get(scheme, 5432)
+    return parsed.hostname, parsed.port or default_port
 
 
 def run_preflight(

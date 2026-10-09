@@ -110,6 +110,9 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-q"
+filterwarnings = [
+    "ignore:datetime.datetime.utcnow\\(\\) is deprecated.*:DeprecationWarning:jose.*",
+]
 
 [tool.coverage.run]
 source = ["Backend/app"]

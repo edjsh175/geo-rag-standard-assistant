@@ -10,4 +10,14 @@ describe('frontend authority contract', () => {
     expect(appSource).not.toContain('regionFromQuery');
     expect(appSource).toContain('const regionContext = activeRegion;');
   });
+
+  it('does not persist plaintext tokens in localStorage to prevent XSS credential exfiltration', () => {
+    const authSource = fs.readFileSync(path.resolve(process.cwd(), 'src/services/authService.ts'), 'utf8');
+    const configSource = fs.readFileSync(path.resolve(process.cwd(), 'src/lib/api/config.ts'), 'utf8');
+    const sseSource = fs.readFileSync(path.resolve(process.cwd(), 'src/lib/api/contractClient.ts'), 'utf8');
+
+    expect(authSource).not.toContain("localStorage.setItem('geoai_token'");
+    expect(configSource).not.toContain("localStorage.getItem('geoai_token'");
+    expect(sseSource).not.toContain("localStorage.getItem('geoai_token'");
+  });
 });

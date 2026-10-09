@@ -3,16 +3,16 @@
 """
 
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import json
 
 
 class Point(BaseModel):
     """点几何"""
     type: str = Field("Point", description="几何类型")
-    coordinates: List[float] = Field(..., description="坐标 [经度, 纬度]", min_items=2, max_items=3)
+    coordinates: List[float] = Field(..., description="坐标 [经度, 纬度]", min_length=2, max_length=3)
 
-    @validator('coordinates')
+    @field_validator('coordinates')
     def validate_coordinates(cls, v):
         """验证坐标范围"""
         if len(v) >= 2:

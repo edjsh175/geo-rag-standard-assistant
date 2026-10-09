@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from app.models.search_models import SearchRequest, SearchResponse
 from app.services.agent.context.admission import admit_map_context
+from app.services.agent.distributed_lock import SessionLockAcquisitionError
 from app.services.agent.evidence import EvidenceLedger
 from app.services.agent.events import AgentEvent
 from app.services.agent.publication import PublishedResult
@@ -368,6 +369,8 @@ class SearchApplicationService:
                         remaining_seconds=getattr(run_result, "remaining_seconds", None),
                     )
                 )
+        except SessionLockAcquisitionError:
+            raise
         except Exception:
             # Once an SSE response has started, raising cannot be converted to
             # an HTTP 500 reliably. Emit a terminal result so clients always

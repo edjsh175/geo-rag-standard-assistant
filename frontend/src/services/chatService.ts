@@ -4,6 +4,7 @@ import type { components } from '../lib/api/generated/schema';
 import { executeBrowserTool, getBrowserMapContext } from '../gis/browserBridge';
 import type { BrowserMapAction, BrowserToolReceipt } from '../gis/contracts';
 import type { AgentEventMessage } from '../components/agent/types';
+import { parseProblemDetails } from '../types/problemDetails';
 
 export type ChatHistoryMessage = components['schemas']['ChatHistoryMessage'];
 export type DocumentResult = components['schemas']['DocumentResult'];
@@ -347,6 +348,10 @@ export const chatService = {
             }
           } else if (eventType === 'chunk' || eventType === 'token') {
             onChunk?.(data);
+          } else if (eventType === 'error') {
+            const problem = parseProblemDetails(data);
+            const msg = problem ? (problem.detail || problem.title) : data;
+            throw new Error(`SSE error (${problem?.status || 500}): ${msg}`);
           } else {
             let parsed: Record<string, unknown>;
             try {

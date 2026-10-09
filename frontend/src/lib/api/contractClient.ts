@@ -136,11 +136,7 @@ export async function apiPostSse<P extends PathsWithMethod<'post'>>(
   onEvent?: (eventType: string, data: string) => void,
   options?: { signal?: AbortSignal }
 ): Promise<void> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('geoai_token') : null;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
   const response = await fetch(resolveApiUrl(String(path)), {
     method: 'POST',
     credentials: 'include',

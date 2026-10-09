@@ -1,12 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { Bot, Sparkles, Send, Mic, X, Download, FileText, Paperclip, ShieldCheck } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { cn } from '../lib/utils';
 import { glassLightStyle } from '../lib/glass';
 import { ChatMessage as ChatMessageType, Citation, Document } from '../types';
 import LoadingIndicator from './LoadingIndicator';
+import AnswerMarkdown from './AnswerMarkdown';
 import { useAutoScroll } from '../hooks/useAutoScroll';
 import { AgentProcess } from './agent/AgentProcess';
 import { AgentTurnViewModel } from './agent/types';
@@ -72,7 +71,7 @@ const Chat: React.FC<ChatProps> = ({
   const vectorFileInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const processDisclosureRef = useRef(new Map<string, boolean>());
-  const processKey = (turn: AgentTurnViewModel) => `${turn.sessionId}:${turn.turnId}`;
+  const processKey = (turn: AgentTurnViewModel) => turn.turnId ? `${turn.sessionId || 'active'}:${turn.turnId}` : 'active';
 
   const { scrollToBottom, lockAutoScroll, unlockAutoScroll, isAutoScrollLocked } =
     useAutoScroll(chatContainerRef, { threshold: 50 });
@@ -186,14 +185,14 @@ const Chat: React.FC<ChatProps> = ({
         ))}
 
         {isLoading && (
-          <div className="flex gap-3 items-start" style={{ marginRight: '32px' }}>
+          <div className="flex min-w-0 max-w-full gap-3 items-start" style={{ marginRight: '24px' }}>
             <div
               className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
               style={{ background: 'rgba(240,112,64,0.10)', border: '0.5px solid rgba(240,112,64,0.25)', boxShadow: '0 0 10px rgba(240,112,64,0.12)' }}
             >
               <Sparkles className="w-3.5 h-3.5 animate-pulse-soft" style={{ color: '#f07040' }} />
             </div>
-            <div className="flex-1 space-y-3">
+            <div className="min-w-0 flex-1 space-y-3">
               {activeTurn && <AgentProcess turn={activeTurn}
                 defaultExpanded={processDisclosureRef.current.get(processKey(activeTurn))}
                 onExpandedChange={(expanded) => processDisclosureRef.current.set(processKey(activeTurn), expanded)}
@@ -372,9 +371,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, onCitationClick, pro
           }}
         >
           {!isUser ? (
-            <div className="prose max-w-full">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-            </div>
+            <AnswerMarkdown key={message.id} content={message.content} />
           ) : (
             message.content
           )}

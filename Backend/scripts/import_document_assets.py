@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import sys
@@ -155,7 +155,7 @@ async def run_import(args: argparse.Namespace) -> int:
                         "file_size_bytes": file_size,
                         "asset_status": "ready",
                         "asset_error": None,
-                        "asset_imported_at": datetime.utcnow(),
+                        "asset_imported_at": datetime.now(timezone.utc).replace(tzinfo=None),
                     },
                 )
                 ready_rows += 1

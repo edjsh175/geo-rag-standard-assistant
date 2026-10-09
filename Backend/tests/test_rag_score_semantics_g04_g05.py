@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -40,7 +40,7 @@ def _make_doc(
         spatial_info=None,
         file_type="pdf",
         file_size=1024,
-        upload_time=datetime.utcnow(),
+        upload_time=datetime.now(timezone.utc).replace(tzinfo=None),
         source_url=None,
     )
 
@@ -74,7 +74,7 @@ def test_g04_document_result_score_model_defaults_and_explicit_fields() -> None:
         metadata={},
         file_type="pdf",
         file_size=100,
-        upload_time=datetime.utcnow(),
+        upload_time=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     assert doc2.vector_similarity == 0.75
     assert doc2.keyword_score == 0.60
@@ -146,7 +146,7 @@ def test_g04_retrieval_candidate_maps_canonical_scores() -> None:
         metadata={"chunk_id": "chunk-123", "document_name": "空间规划总则"},
         file_type="pdf",
         file_size=2048,
-        upload_time=datetime.utcnow(),
+        upload_time=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
     candidate = RetrievalCandidate.from_document_result(doc)
