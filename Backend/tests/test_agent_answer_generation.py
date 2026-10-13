@@ -330,3 +330,43 @@ async def test_answer_generator_rejects_map_action_side_effect_field() -> None:
         )
 
     assert len(client.calls) == 2
+
+
+def test_extract_json_object_robust_with_comments_and_surrounding_text() -> None:
+    from app.services.agent.structured_candidate import extract_json_object
+
+    content = """Here is the result:
+```json
+// Informational comment before JSON
+{
+  "kind": "knowledge_answer",
+  "units": [
+    {"unit_id": "u1", "text": "内容", "citations": ["E1"]}
+  ]
+}
+```
+Hope this helps!"""
+    data = extract_json_object(content)
+    # The comment before the opening brace is trimmed because we slice from the first {
+    assert data["kind"] == "knowledge_answer"
+    assert len(data["units"]) == 1
+
+
+def test_answer_generator_tolerates_benign_metadata_fields() -> None:
+    snapshot = make_snapshot()
+    payload = json.dumps(
+        {
+            "kind": "knowledge_answer",
+            "answer": "这里是顶层总结，虽然存在但不应导致异常。",
+            "thought": "模型思考过程",
+            "units": [
+                {"unit_id": "u1", "text": "合规段落内容。", "citations": ["E1"]},
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    answer = AnswerGenerator._parse(payload, snapshot=snapshot)
+    assert answer.answer == "合规段落内容。"
+    assert answer.citations == ("E1",)
+    assert len(answer.units) == 1

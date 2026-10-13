@@ -28,16 +28,11 @@ def extract_json_object(content: str | None) -> dict[str, Any]:
                 code_lines.append(line)
         if code_lines:
             raw = "\n".join(code_lines).strip()
-        else:
-            start = raw.find("{")
-            end = raw.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                raw = raw[start : end + 1]
-    elif not raw.startswith("{"):
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            raw = raw[start : end + 1]
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        raw = raw[start : end + 1]
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:

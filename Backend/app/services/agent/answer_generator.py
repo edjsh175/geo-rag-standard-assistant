@@ -268,7 +268,22 @@ class AnswerGenerator:
         snapshot: FrozenEvidenceSnapshot,
     ) -> GeneratedAnswer:
         payload = extract_json_object(content)
-        if set(payload) - {"kind", "units"}:
+        forbidden_fields = {"map_action", "tool_call", "tool_calls", "action", "actions"}
+        if any(f in payload for f in forbidden_fields):
+            raise ValueError("answer generator returned disallowed side-effect or control fields")
+
+        allowed_fields = {
+            "kind",
+            "units",
+            "answer",
+            "summary",
+            "thought",
+            "thoughts",
+            "reasoning",
+            "explanation",
+            "commentary",
+        }
+        if set(payload) - allowed_fields:
             raise ValueError("answer generator returned fields outside grounded answer contract")
 
         kind = payload.get("kind")

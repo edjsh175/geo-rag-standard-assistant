@@ -10,6 +10,7 @@ _SAFE_ERROR_MESSAGES = {
     "TOOL_INVALID_ARGUMENTS": "工具输入未通过校验。",
     "TOOL_UNAVAILABLE": "工具当前不可用。",
     "TOOL_TIMEOUT": "工具执行超时。",
+    "TOOL_CONFIRMATION_REQUIRED": "操作需要用户确认批准。",
     "REVIEW_FAILED": "证据审查执行失败。",
     "REPAIR_MODEL_FAILED": "答案修复模型执行失败。",
     "REPAIR_PROTOCOL_INVALID": "答案修复输出未满足结构化协议。",

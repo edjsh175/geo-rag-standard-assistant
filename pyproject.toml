@@ -70,7 +70,7 @@ run-gui = "scripts.run_gui:main"
 fix-db-schema = "scripts.fix_db_schema:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["Backend", "src"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "*.conf", "*.json"]

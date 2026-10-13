@@ -78,6 +78,11 @@ class ToolExecutionCoordinator:
                 payload={"error": str(exc)},
                 is_terminal=False,
             )
+            err_code = (
+                "TOOL_CONFIRMATION_REQUIRED"
+                if "TOOL_CONFIRMATION_REQUIRED" in str(exc)
+                else "TOOL_INVALID_ARGUMENTS"
+            )
             return ToolExecutionOutcome(
                 call=runtime_call,
                 observation=observation,
@@ -91,7 +96,7 @@ class ToolExecutionCoordinator:
                             "tool_name": runtime_call.name,
                             "tool_call_id": runtime_call.tool_call_id,
                             "status": "denied",
-                            "error": safe_error("TOOL_INVALID_ARGUMENTS"),
+                            "error": safe_error(err_code),
                             "result_summary": {},
                         },
                     ),
