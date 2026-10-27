@@ -265,12 +265,26 @@ async def test_o02_run_job_skips_when_claim_fails() -> None:
     mock_repo.claim_job = AsyncMock(return_value=False)  # Already claimed by another worker
     mock_repo.get_indexing_payload = AsyncMock()
 
-    service = DocumentIndexingService(repository=mock_repo)
+    storage = MagicMock()
+    parser = MagicMock()
+    chunker = MagicMock()
+    embeddings = MagicMock()
+    service = DocumentIndexingService(
+        repository=mock_repo,
+        storage=storage,
+        parser=parser,
+        chunker=chunker,
+        embedding_provider=embeddings,
+    )
     await service.run_job("job-dup-1")
 
     # Should exit immediately after failing to claim
     mock_repo.claim_job.assert_awaited_once()
     mock_repo.get_indexing_payload.assert_not_called()
+    storage.download_version_to_temp.assert_not_called()
+    parser.parse.assert_not_called()
+    chunker.chunk.assert_not_called()
+    embeddings.embed_texts.assert_not_called()
 
 
 # ==============================================================================

@@ -1,0 +1,58 @@
+[
+  {
+    "query_id": "Q01",
+    "query": "城镇开发边界划定技术规程核心指标要求",
+    "category": "spatial_planning",
+    "relevant_doc_ids": ["doc_urban_boundary_01", "doc_spatial_rules_02"],
+    "expected_keywords": ["城镇开发边界", "扩展倍数", "容积率", "避让安全底线"]
+  },
+  {
+    "query_id": "Q02",
+    "query": "生态保护红线划定原则与管控要求",
+    "category": "environmental",
+    "relevant_doc_ids": ["doc_eco_redline_01", "doc_natural_reserves_03"],
+    "expected_keywords": ["生态保护红线", "生态脆弱区", "生物多样性", "严控开发"]
+  },
+  {
+    "query_id": "Q03",
+    "query": "永久基本农田保护红线划定与核实整改",
+    "category": "farmland",
+    "relevant_doc_ids": ["doc_farmland_protection_01"],
+    "expected_keywords": ["永久基本农田", "粮食安全", "质量等级", "坡度"]
+  },
+  {
+    "query_id": "Q04",
+    "query": "地质灾害气象风险预警等级与滑坡崩塌防御标准",
+    "category": "disaster_prevention",
+    "relevant_doc_ids": ["doc_geological_hazard_01", "doc_landslide_monitoring_02"],
+    "expected_keywords": ["滑坡", "崩塌", "泥石流", "预警等级", "避险转移"]
+  },
+  {
+    "query_id": "Q05",
+    "query": "国土空间规划基础空间数据库标准与坐标系规范",
+    "category": "data_standards",
+    "relevant_doc_ids": ["doc_gis_standard_01", "doc_cgcs2000_specs_02"],
+    "expected_keywords": ["CGCS2000", "高程系统", "图层分层", "数据字典"]
+  },
+  {
+    "query_id": "Q06",
+    "query": "工业用地容积率与建筑密度控制指标",
+    "category": "spatial_planning",
+    "relevant_doc_ids": ["doc_industrial_land_01"],
+    "expected_keywords": ["工业用地", "容积率", "建筑密度", "绿地率"]
+  },
+  {
+    "query_id": "Q07",
+    "query": "城市防洪排涝规划设计重现期标准",
+    "category": "disaster_prevention",
+    "relevant_doc_ids": ["doc_flood_prevention_01"],
+    "expected_keywords": ["防洪标准", "重现期", "排涝模数", "河道整治"]
+  },
+  {
+    "query_id": "Q08",
+    "query": "历史文化名城名镇保护规划编制规范",
+    "category": "cultural_heritage",
+    "relevant_doc_ids": ["doc_heritage_protection_01"],
+    "expected_keywords": ["核心保护区", "建设控制地带", "历史建筑", "风貌保护"]
+  }
+]

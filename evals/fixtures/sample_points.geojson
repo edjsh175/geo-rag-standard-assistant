@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "crs": {
+    "type": "name",
+    "properties": {
+      "name": "urn:ogc:def:crs:OGC:1.3:CRS84"
+    }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "id": "pt-1",
+      "properties": {
+        "id": 1,
+        "name": "天府广场监测点",
+        "category": "station"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          104.0657,
+          30.6595
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "pt-2",
+      "properties": {
+        "id": 2,
+        "name": "春熙路观测站",
+        "category": "station"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          104.0722,
+          30.6635
+        ]
+      }
+    }
+  ]
+}
