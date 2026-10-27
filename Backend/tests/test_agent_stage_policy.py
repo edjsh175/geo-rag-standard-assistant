@@ -356,8 +356,12 @@ async def test_adapter_sends_the_resolved_model_identity_to_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_client_uses_native_tool_call_channel_when_tools_are_bound() -> None:
+async def test_model_client_uses_native_tool_call_channel_when_tools_are_bound(monkeypatch) -> None:
     from langchain_core.messages import AIMessage
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "test-key")
 
     class FakeLLMConfig:
         supports_reasoning = False
@@ -428,8 +432,12 @@ async def test_model_client_uses_native_tool_call_channel_when_tools_are_bound()
 
 
 @pytest.mark.asyncio
-async def test_model_client_does_not_mix_response_format_with_tool_binding() -> None:
+async def test_model_client_does_not_mix_response_format_with_tool_binding(monkeypatch) -> None:
     from langchain_core.messages import AIMessage
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "test-key")
 
     class FakeLLMConfig:
         supports_reasoning = False

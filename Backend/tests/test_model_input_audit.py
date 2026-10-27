@@ -20,7 +20,12 @@ from app.services.agent.reviewer import GroundingReviewer
 
 
 @pytest.mark.asyncio
-async def test_controller_provider_messages_match_persisted_model_input_audit_hash() -> None:
+async def test_controller_provider_messages_match_persisted_model_input_audit_hash(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "test-key")
+
     class FakeLLMConfig:
         supports_reasoning = False
 
